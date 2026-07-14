@@ -69,4 +69,6 @@ python tools/inspect_cache.py caches/apfsds_vs_rha
 
 ## License
 
-MIT — see [`LICENSE`](LICENSE).
+Boyko Non-Commercial License v1.0 (BNCL-1.0) — non-commercial use only; see
+[`LICENSE`](LICENSE) and [`NOTICE`](NOTICE). Commercial use requires a separate
+license from the copyright holder.
