@@ -22,12 +22,13 @@ fragmentation.
 > **The solver and the visualizer are two independent programs that share
 > exactly one thing: the on-disk cache format. Nothing else.**
 
-The solver (Python + Taichi, MLS-MPM) *bakes* a scenario offline to a cache on
-disk. The visualizer (Godot 4) plays that cache back. Neither imports the
+The solver (Python + NVIDIA Warp, MLS-MPM) *bakes* a scenario offline to a cache
+on disk. The visualizer (Godot 4) plays that cache back. Neither imports the
 other; the only bridge is the language-neutral cache format specified in
 [`docs/CACHE_FORMAT.md`](docs/CACHE_FORMAT.md). This decoupling is deliberate —
-the solver is disposable and may be rewritten (Taichi → Warp → CUDA/Rust)
-without touching a line of visualizer code.
+the solver is disposable and may be rewritten (Warp → CUDA/Rust) without
+touching a line of visualizer code. (It already paid off: the original Taichi
+plan was swapped for Warp with zero viewer changes.)
 
 ## Layout
 
@@ -41,17 +42,14 @@ caches/       gitignored bake outputs (large)
 
 ## Status
 
-Early scaffold. The repository structure, the cache-format contract, and a
-tiny golden fixture are in place. The solver kernels are stubs — see the
-per-directory `CLAUDE.md` files and issue tracker for what's next.
+The repository structure, the cache-format contract, and a tiny golden fixture
+are in place. The solver runs **milestone 1: elastic MLS-MPM** (NVIDIA Warp) —
+`apfsds_vs_rha` bakes end-to-end on the RTX 5090 and passes `validate_cache`,
+showing an elastic impact (rod decelerates and rebounds, plate bulges; no
+perforation yet). Next: von Mises plasticity, then damage/spall. See the
+per-directory `CLAUDE.md` files for the build order.
 
 ## Quick start
-
-> ⚠️ **Solver deps are pending an engine decision.** A toolchain probe on the
-> dev machine found Taichi has no wheel for Python 3.14 while NVIDIA Warp runs
-> on the target GPU (sm_120). The solver will likely target Warp, not Taichi —
-> see [`solver/CLAUDE.md`](solver/CLAUDE.md). Until then `pip install -e .` in
-> `solver/` may fail to resolve `taichi`.
 
 ```bash
 # --- Solver (Python) ---

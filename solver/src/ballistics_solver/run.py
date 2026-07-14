@@ -30,25 +30,27 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    device = "cpu" if args.cpu else "cuda:0"
+
     scenario = load_scenario(args.scenario)
     print(f"loaded scenario {scenario.name!r}: "
           f"{len(scenario.armor)} armor layer(s), "
           f"{scenario.solver.frame_count} frames requested")
 
-    # Deferred imports so `--help` and scenario parsing work without Taichi.
+    # Deferred imports so `--help` and scenario parsing work without Warp.
     from .cache_writer import CacheWriter
     from . import mpm
 
     # GPU sanity check first — a silent CPU fallback is a real hazard (§11).
+    import warp as wp
+    wp.init()
     if not args.cpu:
-        import taichi as ti
-        ti.init(arch=ti.cuda)
-        mpm.assert_gpu()
+        mpm.assert_gpu(device)
 
     writer = CacheWriter(
         args.out,
         scenario=scenario.name,
-        particle_count=0,  # set by the solver once particles are seeded
+        particle_count=0,  # set by mpm.bake once particles are seeded (§ below)
         attributes=["pos_x", "pos_y", "vel_mag", "stress", "damage", "material_id"],
         frame_dt=scenario.solver.total_time / scenario.solver.frame_count,
         domain={
@@ -60,7 +62,7 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     with writer:
-        mpm.bake(scenario, writer)  # <-- not implemented yet (scaffold)
+        mpm.bake(scenario, writer, device=device)  # seeds particles, sets writer.particle_count
 
     print(f"wrote cache to {args.out}")
     return 0

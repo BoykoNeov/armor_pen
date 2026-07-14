@@ -10,7 +10,7 @@ readme = "../README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
 dependencies = [
-    "taichi>=1.7.0",   # MLS-MPM kernels; swap to NVIDIA Warp if Blackwell/sm_120 fights back (CLAUDE.md §5)
+    "warp-lang>=1.5",  # MLS-MPM kernels on CUDA; the Blackwell/sm_120 swap root §5 anticipated (Taichi has no py3.14 wheel)
     "numpy>=1.24",
     "pyyaml>=6.0",     # scenario decks are YAML data, not code
 ]

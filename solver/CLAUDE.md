@@ -7,8 +7,8 @@ first** — this file only adds solver-local notes.
 
 - **Never import or reference the visualizer / Godot.** The only output is a
   cache directory per `docs/CACHE_FORMAT.md`. (root §2)
-- **Assert the GPU.** After `ti.init(arch=ti.cuda)`, call `mpm.assert_gpu()`.
-  A silent CPU fallback is the #1 gotcha (root §11).
+- **Assert the GPU.** After `wp.init()`, call `mpm.assert_gpu(device)`. A
+  silent CPU fallback is the #1 gotcha (root §11).
 - **One unit system: mm-ms-g.** All constants live in `materials.py`. Never
   put raw SI in a kernel. (root §7)
 - **Scenarios are data.** New setups are YAML in `scenarios/`, parsed by
@@ -19,36 +19,47 @@ first** — this file only adds solver-local notes.
 | File | Role | Status |
 |---|---|---|
 | `config.py` | Scenario schema (dataclasses), YAML loader | working |
-| `materials.py` | Material library, all constants in mm-ms-g | data stub |
+| `materials.py` | Material library, all constants in mm-ms-g | data (used by mpm; plasticity/damage fields unused until those milestones) |
 | `cache_writer.py` | Writes manifest.json + frames.bin (the contract) | working |
-| `mpm.py` | MLS-MPM transfer kernels + substep loop | **stub** |
-| `run.py` | CLI: scenario.yaml → cache dir | plumbing works, bake stubbed |
+| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic (milestone 1)** — see below |
+| `run.py` | CLI: scenario.yaml → cache dir | working (Warp init + GPU assert + bake) |
 
-## Build order (root §9)
+## Build order (root §9) — where we are
 
 Grow the reference MLS-MPM incrementally, validating visually with
-`tools/inspect_cache.py` at each step: elasticity → von Mises plasticity →
-damage/spall → multi-material armor stack. Don't rewrite from scratch.
+`tools/inspect_cache.py` at each step:
+
+1. **elasticity** — ✅ done. Fixed-corotated MLS-MPM in Warp; rod + plate seeded
+   from the deck, elastic *impact* (rod decelerates and rebounds, plate bulges;
+   **no** perforation — correct for elastic-only). `apfsds_vs_rha` bakes clean
+   on the RTX 5090 and passes `validate_cache`.
+2. **von Mises plasticity** — next. Radial-return in the P2G stress; this is
+   what lets the metal flow/mushroom instead of bouncing.
+3. **damage/spall** — detach particles past `damage_threshold` (fixed particle
+   count; flag via the `damage` attribute).
+4. **multi-material armor stack** — layered/spaced/NERA targets.
+
+Don't rewrite from scratch.
 
 ## Commands
 
 ```bash
-cd solver && pip install -e ".[dev]"
+cd solver && pip install -e ".[dev]"     # installs warp-lang; or PYTHONPATH=src for a no-install run
 pytest                                   # schema smoke tests (no GPU)
 python -m ballistics_solver.run scenarios/apfsds_vs_rha.yaml --out ../caches/apfsds_vs_rha
+python -m ballistics_solver.run <deck> --out <dir> --cpu   # CPU fallback for debugging
 ```
 
-## Toolchain status (probed 2026-07-14) — likely Warp, not Taichi
+## Toolchain: Warp, not Taichi (decided & migrated 2026-07-14)
 
-Empirical result on the target machine: **Taichi has no wheel for the machine's
-Python 3.14** (`pip install taichi` → no matching distribution), so the
-Taichi-default stack does not install here. **Warp (`warp-lang` 1.15.0) works**:
-it detects the RTX 5090 as `cuda:0` / **sm_120** and a trivial kernel compiled
-and ran on the GPU (verified, not a CPU fallback). This is exactly the swap root
-§5 anticipates. The scaffold still lists `taichi` in `pyproject.toml` and
-`mpm.py`/`run.py` still `import taichi`; migrating the solver to Warp is the
-clear next task — tracked as a GitHub issue. Engine choice is the user's call
-(Warp-first recommended; alternative is a side Python 3.11/3.12 env for Taichi).
+**Taichi has no wheel for the machine's Python 3.14** (`pip install taichi` → no
+matching distribution), so the Taichi-default stack never installed here.
+**Warp (`warp-lang` 1.15.0)** is the engine: it detects the RTX 5090 as
+`cuda:0` / **sm_120** and the MLS-MPM kernels compile and run on the GPU
+(`assert_gpu` guards against a silent CPU fallback). This is exactly the swap
+root §5 anticipates, and it cost **zero** visualizer code — the cache is the
+only bridge. `pyproject.toml` depends on `warp-lang`; `mpm.py`/`run.py` use
+Warp. Milestone-1 elastic bake verified end-to-end on the real GPU.
 
 ## If Taichi fights Blackwell (sm_120)
 
