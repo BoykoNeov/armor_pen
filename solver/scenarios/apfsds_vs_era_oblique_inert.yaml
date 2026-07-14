@@ -1,0 +1,36 @@
+# INERT A/B TWIN of apfsds_vs_era_oblique.yaml (milestone 6). Byte-identical in
+# geometry, obliquity (55°) and areal mass — the ONLY difference is the filler:
+# era_filler_inert (same density/stiffness, reactivity OFF) instead of the
+# reactive era_filler. Comparing the rod's degradation between the two decks
+# isolates the *reactive* detonation contribution from "the oblique line-of-sight
+# path simply holds more material". The LOS path lengthens at obliquity, so this
+# twin is what makes the oblique reactive result trustworthy (exactly as the 0°
+# apfsds_vs_era / _inert pair made the null trustworthy at milestone 5).
+#
+# See apfsds_vs_era_oblique.yaml for the full mechanism/geometry rationale.
+# Scenarios are DATA, not code (CLAUDE.md §9); numbers are representative
+# order-of-magnitude values, not any real system (CLAUDE.md §10).
+name: apfsds_vs_era_oblique_inert
+
+domain: { xmin: 0, xmax: 200, ymin: 0, ymax: 180 }   # mm
+
+projectile:
+  kind: kinetic
+  material: tungsten_rod
+  length: 60.0
+  diameter: 8.0
+  velocity: 1600
+  angle_deg: 55.0
+
+armor:
+  - { material: rha,              thickness: 6.0 }                  # steel flyer plate
+  - { material: era_filler_inert, thickness: 12.0 }                 # INERT interlayer (A/B)
+  - { material: rha,              thickness: 6.0 }                  # steel back plate
+  - { material: rha,              thickness: 24.0, standoff: 12.0 } # main plate, 12 mm gap
+
+solver:
+  grid_resolution: 512
+  particles_per_cell: 4
+  dt: 1.0e-7
+  total_time: 1.0e-4
+  frame_count: 120

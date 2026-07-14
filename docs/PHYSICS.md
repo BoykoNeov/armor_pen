@@ -166,13 +166,61 @@ material than the inert rod that keeps its filler in the channel — no protecti
 benefit either way). This is **correct physics, not a bug**: at 0° the detonation flings the
 plates *laterally, symmetric about the rod axis*, so the debris sweeps sideways
 and never crosses the rod path to cut it. Real reactive armor gets its
-effectiveness from **obliquity**, where the moving plates sweep *across* a long
-rod and erode/deflect it. The A/B decks (`apfsds_vs_era` /
+effectiveness from **obliquity**. The A/B decks (`apfsds_vs_era` /
 `apfsds_vs_era_inert`) are byte-identical in geometry, areal mass, and timing, so
 the near-zero delta cleanly isolates "the reactive contribution at 0° is
-negligible." Oblique decks (rotating the rod *rectangle* — `angle_deg` currently
-tilts only the projectile velocity — and seeding oblique slabs) are a follow-on
-milestone; that is where the layer is expected to visibly degrade the rod.
+negligible." Obliquity is milestone 6, below.
+
+### 3.2 Oblique reactive armor (milestone 6)
+
+At obliquity the rod is tilted relative to the plate normal, so the
+detonation-flung plates gain a velocity component **perpendicular to the rod**
+(zero at 0°, `∝ sin θ`) and the interaction is no longer symmetric about the rod
+axis. Implementation is minimal and protects the validated M1–M5 physics: the
+projectile **rectangle** is rotated by `angle_deg` about its tip so the rod
+strikes *nose-first* along its velocity (mpm.py `_seed`), while the armor slabs
+stay vertical/axis-aligned. Only the *relative* rod-axis/plate-normal angle is
+physical, so rotating the rod against fixed slabs is frame-equivalent to tilting
+the slabs against a horizontal rod — and `angle_deg=0` is exact identity, so
+every normal-incidence deck seeds bit-for-bit as before. Decks:
+`apfsds_vs_era_oblique` (+ its `_inert` twin), 55° from the normal, in a taller
+(180 mm) domain so the tilted 60 mm rod fits its body above the tip **and** its
+descent through the target (the rod drops `~tan 55° ≈ 1.4` mm in y per mm of x).
+
+**Verified result — protection, but not rod-cutting.** Measured against the
+equal-areal-mass inert twin, at 55° the reactive layer **measurably protects the
+backing plate**, where 0° was a null:
+
+- **Main-plate spall ≈ 40 % lower** for the reactive deck (0.071 vs 0.117 at the
+  final frame), and the gap **grows monotonically** over the event
+  (0.017 → 0.035 → 0.046 across frames 70/90/119). At 0° the same A/B was a null
+  of the *opposite* sign (reactive marginally *worse*, 0.152 vs 0.133), so
+  obliquity flips the layer from no-benefit to clear protection.
+- **The rod itself is essentially unaffected** — the coherent rod tip reaches the
+  same depth frame-for-frame in both decks, and net rod damage / path angle are
+  equal (0.49 vs 0.50; 57° vs 56°). The lateral-sweep mechanism is present but a
+  tough tungsten rod is not cut or deflected by thin, few-hundred-m/s flyers.
+  (The "erode/deflect the rod" outcome was an *a priori* expectation; the sim
+  says protection comes through the backing plate instead — reported honestly.)
+- **Mechanism.** The detonation **accelerates the main plate forward** earlier and
+  faster (front displaced ~8.4 mm / ~180 m/s reactive vs ~4.2 mm / ~143 m/s
+  inert) and disperses the coherent flyer-plate + filler mass that, in the inert
+  deck, is driven into the plate as a follow-through/tamping slug. The plate
+  moving *with* the rod reduces the effective (rod-relative) penetration: with the
+  tip near x ≈ 162 in both and the plate front at ~144 (reactive) vs ~140 (inert),
+  rod-relative penetration is ~17 vs ~21 mm — **~18 % shallower**. This is the
+  textbook "moving/standoff plate defeats less penetrator." *(Order-of-magnitude:
+  a centroid-based estimate, and the front face is also cratering.)*
+
+Honesty caveats (root §1/§10): a steeper angle was **not** chased (it only moves
+`sin θ` 0.82→0.91 and worsens domain-fit/bottom-wall descent), and
+`detonation_pressure` was **not** cranked to force rod degradation (that would be
+confirmation-bias tuning toward defeating a system — off-limits per §10). Rod and
+debris reach the bottom domain wall (`y ≈ 1`) in **both** decks — a *shared*
+artifact, so the A/B **delta** and its time-evolution are the meaningful signal,
+not the absolute spall numbers. One bake per condition; the monotonic divergence
+across 120 frames plus the sign-flip vs 0° is what makes it clearly not MPM
+non-determinism, rather than a repeat bake.
 
 ---
 

@@ -1,0 +1,59 @@
+# APFSDS-like long-rod KE penetrator vs a REACTIVE-armor sandwich at HIGH
+# OBLIQUITY (milestone 6): [thin steel flyer | reactive filler | thin steel
+# plate] :: gap :: main RHA plate, struck at 55° from the plate normal.
+#
+# WHY OBLIQUE: the 0° A/B (apfsds_vs_era vs _inert) was an honest NULL — at
+# normal incidence the detonation flings the sandwich plates *laterally,
+# symmetric about the rod axis*: the debris sweeps sideways and never crosses
+# the rod to cut it (residual penetration reactive == inert, within noise). Real
+# reactive armor earns its keep at obliquity: the rod is tilted relative to the
+# plate normal, so the detonation-flung plates gain a velocity component
+# PERPENDICULAR to the long rod and sweep across it, bending and eroding it.
+#
+# HOW: angle_deg rotates the projectile RECTANGLE (not just its velocity) so it
+# strikes nose-first at 55°; the armor slabs stay vertical/axis-aligned. Only the
+# relative rod-axis/plate-normal angle is physical, so this is frame-equivalent
+# to tilting the slabs — and it leaves the validated M1-M5 armor seeding
+# untouched (see mpm.py _seed / PHYSICS §3.1).
+#
+# A/B NOTE: apfsds_vs_era_oblique_inert.yaml is this deck with the filler swapped
+# for the inert twin (era_filler_inert — identical mass/stiffness, reactivity
+# OFF). The two decks are byte-identical in geometry, obliquity and areal mass,
+# so comparing the rod's degradation isolates the *reactive* contribution from
+# "the oblique line-of-sight path simply holds more material" (the LOS path
+# lengthens at obliquity, which makes the inert twin essential here).
+#
+# Scenarios are DATA, not code (CLAUDE.md §9). Numbers are representative /
+# illustrative order-of-magnitude values, not any real system (CLAUDE.md §10).
+name: apfsds_vs_era_oblique
+
+# Tall domain (180 mm) so the 60 mm rod, tilted at 55°, fits its body ABOVE the
+# tip at t=0 (~51 mm) AND has room to descend as it penetrates (the rod drops
+# ~tan55 ≈ 1.4 mm in y per mm of x it advances). Domain size is data (CLAUDE.md
+# §9): steeper obliquity just needs a taller domain, not a shallower angle.
+domain: { xmin: 0, xmax: 200, ymin: 0, ymax: 180 }   # mm
+
+projectile:
+  kind: kinetic
+  material: tungsten_rod
+  length: 60.0        # mm
+  diameter: 8.0       # mm
+  velocity: 1600      # m/s (== mm/ms)
+  angle_deg: 55.0     # obliquity from the plate normal (horizontal); high enough
+  #                     that plate_v·sin55 ≈ 0.82·plate_v of the fling velocity is
+  #                     perpendicular to the rod (vs 0 at normal incidence).
+
+armor:
+  - { material: rha,        thickness: 6.0 }                  # steel flyer plate
+  - { material: era_filler, thickness: 12.0 }                 # reactive interlayer
+  - { material: rha,        thickness: 6.0 }                  # steel back plate
+  - { material: rha,        thickness: 24.0, standoff: 12.0 } # main plate, 12 mm gap
+
+solver:
+  grid_resolution: 512
+  particles_per_cell: 4
+  dt: 1.0e-7          # substep dt (CFL-bound); NOT frame_dt
+  total_time: 1.0e-4  # ~100 us — the oblique path advances in x only ~cos55 as
+  #                     fast as a normal hit, so the rod needs a longer window to
+  #                     transit the sandwich and reach the main plate.
+  frame_count: 120

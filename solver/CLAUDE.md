@@ -111,10 +111,27 @@ Grow the reference MLS-MPM incrementally, validating visually with
      `apfsds_vs_era_inert`) are byte-identical in geometry, areal mass, and timing,
      so the near-zero delta cleanly isolates the reactive contribution. See
      PHYSICS §3.1.
-6. **Oblique reactive armor** — next. Rotate the rod *rectangle* (`angle_deg`
-   currently tilts only the projectile velocity) + seed oblique slabs, so the
-   lateral flyer sweep can actually erode/deflect the rod — where ERA earns its
-   keep.
+6. **Oblique reactive armor** — ✅ done. `_seed` now rotates the projectile
+   *rectangle* by `angle_deg` about its tip so the rod strikes nose-first along
+   its velocity (armor slabs stay vertical — only the relative rod/plate-normal
+   angle is physical, so this is frame-equivalent to tilting the slabs and leaves
+   the M1–M5 armor seeding untouched; `angle_deg=0` is exact identity, verified:
+   `apfsds_vs_rha` re-bakes at 96637 particles / 15.6 % RHA spall, no regression).
+   New decks `apfsds_vs_era_oblique` (+ `_inert` twin) at 55° in a taller (180 mm)
+   domain. **Result (verified, PHYSICS §3.2): at 55° the reactive layer
+   measurably protects the backing plate — main-plate spall ≈40 % lower (0.071 vs
+   0.117), the gap growing monotonically over the event — where the 0° A/B was a
+   null of the opposite sign.** But the tungsten **rod is NOT cut or deflected**
+   (equal tip depth frame-for-frame, equal rod damage 0.49 vs 0.50): thin
+   few-hundred-m/s flyers can't erode a tough long rod. The protection comes
+   *through the backing plate*: the detonation shoves it forward earlier/faster
+   (~8.4 mm/180 m/s vs ~4.2 mm/143 m/s) and disperses the coherent flyer/filler
+   follow-through, cutting rod-relative penetration ~18 % (~17 vs ~21 mm). NOT
+   chased steeper (marginal) and det_pressure NOT cranked (confirmation-bias
+   tuning, §10). Shared bottom-wall contact (`y≈1`) means only the A/B **delta**
+   is meaningful. Verified visually (M:\claud_projects\temp\m6_oblique\era_oblique_AB.png).
+   The earlier "flyer sweep erodes/deflects the rod" expectation did not hold —
+   reported honestly as backing-plate protection instead.
 
 Don't rewrite from scratch.
 

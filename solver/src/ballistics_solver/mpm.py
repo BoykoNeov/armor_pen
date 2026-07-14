@@ -38,10 +38,16 @@ Verified on the RTX 5090: ``apfsds_vs_rha`` / ``apfsds_vs_composite`` /
 RHA spall stays ~16% (ductile path unchanged), the ceramic core shatters
 (interface cracks + comminution ahead of the rod), the spaced front plate is
 defeated across a preserved standoff gap, and the reactive deck detonates and
-flings the sandwich plates apart (milestone 5). NB: at 0° that detonation does
-NOT meaningfully degrade the rod (it sweeps laterally, symmetric about the rod
-axis) — verified against an equal-areal-mass inert twin; real ERA needs
-obliquity. Correct physics, not a bug — see PHYSICS §3.1.
+flings the sandwich plates apart (milestone 5). At 0° that detonation does NOT
+meaningfully degrade the rod (it sweeps laterally, symmetric about the rod axis).
+**Milestone 6 (oblique):** ``_seed`` rotates the projectile *rectangle* by
+``angle_deg`` about its tip so it strikes nose-first; the armor slabs stay
+axis-aligned (only the relative rod/plate-normal angle is physical, so this is
+frame-equivalent to tilting the slabs and leaves M1–M5 seeding untouched;
+``angle_deg=0`` is exact identity). At 55° the reactive layer measurably protects
+the backing plate (main-plate spall ~40% lower vs an equal-areal-mass inert twin,
+absent at 0°) by shoving it forward + dispersing the flyer/filler follow-through —
+though the tough tungsten rod itself is not cut. Verified — see PHYSICS §3.1/§3.2.
 
 Two hard rules for whoever grows this (root §2, §11):
 
@@ -663,7 +669,17 @@ def _seed(scenario, dx: float, spacing: float):
         vol_list.append(np.full(n, p_vol))
         mid_list.append(np.full(n, float(mat.material_id)))
 
-    # Projectile: leading (+x) tip a small gap before the armor front.
+    # Projectile: leading (+x) tip a small gap before the armor front. At
+    # obliquity the rod RECTANGLE is rotated so its long axis stays parallel to
+    # its velocity — a real APFSDS flies nose-first, so this is a yawed-zero
+    # oblique strike, not a broadside. Only the RELATIVE angle between the rod
+    # axis and the plate normal matters, so rotating the rod against fixed
+    # vertical slabs is frame-equivalent to tilting the slabs against a
+    # horizontal rod — and it leaves the validated armor seeding (milestones
+    # 1-5) completely untouched. This is where reactive armor earns its keep
+    # (milestone 6): the detonation-flung plates gain a velocity component
+    # perpendicular to the tilted rod and sweep laterally across it. See
+    # PHYSICS §3.1.
     gap = 3.0 * dx
     tip_x = armor_front - gap
     rod = _fill_rect(
@@ -672,8 +688,20 @@ def _seed(scenario, dx: float, spacing: float):
         spacing,
     )
     ang = math.radians(proj.angle_deg)
+    ca, sa = math.cos(ang), math.sin(ang)
+    # Rotate the rod by -ang about its tip (tip_x, y_center) so local +x maps to
+    # the velocity direction (cos, -sin): tip stays put and LEADS into the plate
+    # (down-and-right), the body trails up-and-left. angle_deg=0 gives ca=1,sa=0
+    # -> exact identity, so every normal-incidence deck seeds bit-for-bit as
+    # before.
+    rx = rod[:, 0] - tip_x
+    ry = rod[:, 1] - y_center
+    rod = np.stack([
+        tip_x + ca * rx + sa * ry,
+        y_center - sa * rx + ca * ry,
+    ], axis=1)
     add_region(rod, materials.get(proj.material),
-               proj.velocity * math.cos(ang), -proj.velocity * math.sin(ang))
+               proj.velocity * ca, -proj.velocity * sa)
 
     # Armor stack, front to back.
     x_cursor = armor_front
