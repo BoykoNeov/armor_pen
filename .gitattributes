@@ -1,0 +1,13 @@
+# Normalize text to LF in the repo; let Git handle working-copy checkout.
+* text=auto eol=lf
+
+# Cache binaries are raw little-endian float32 — NEVER apply text/EOL filters.
+*.bin binary
+frames.bin binary
+
+# Godot / Python source stay LF.
+*.gd text eol=lf
+*.py text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.md text eol=lf

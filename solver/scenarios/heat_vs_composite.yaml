@@ -1,0 +1,26 @@
+# Shaped-charge (HEAT) jet vs a spaced composite stack (steel / ceramic / steel).
+# Representative / illustrative only (CLAUDE.md §10). The HEAT-jet erosion model
+# is future work (SPH may return for fluid-like erosion — docs/PHYSICS.md §1).
+name: heat_vs_composite
+
+domain: { xmin: 0, xmax: 240, ymin: 0, ymax: 120 }   # mm
+
+projectile:
+  kind: heat_jet
+  material: tungsten_rod   # jet stand-in until a proper jet model exists
+  length: 120.0            # mm (a jet is long and thin)
+  diameter: 3.0            # mm
+  velocity: 7000           # m/s tip velocity (== mm/ms)
+  angle_deg: 0.0
+
+armor:
+  - { material: rha,     thickness: 10.0 }                 # front plate
+  - { material: ceramic, thickness: 25.0, standoff: 30.0 } # spaced ceramic
+  - { material: rha,     thickness: 20.0 }                 # backing plate
+
+solver:
+  grid_resolution: 640
+  particles_per_cell: 4
+  dt: 5.0e-8
+  total_time: 5.0e-5
+  frame_count: 100

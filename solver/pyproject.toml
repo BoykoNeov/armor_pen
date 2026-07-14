@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ballistics_solver"
+version = "0.0.1"
+description = "Offline MLS-MPM terminal-ballistics solver — bakes a scenario to a cache. Knows nothing about the visualizer."
+readme = "../README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "taichi>=1.7.0",   # MLS-MPM kernels; swap to NVIDIA Warp if Blackwell/sm_120 fights back (CLAUDE.md §5)
+    "numpy>=1.24",
+    "pyyaml>=6.0",     # scenario decks are YAML data, not code
+]
+
+[project.optional-dependencies]
+# Cache-inspection helpers live in ../tools and only need matplotlib.
+inspect = ["matplotlib>=3.7"]
+dev = ["pytest>=7.4", "ruff>=0.4"]
+
+[project.scripts]
+ballistics-bake = "ballistics_solver.run:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
