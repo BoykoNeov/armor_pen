@@ -21,7 +21,7 @@ first** — this file only adds solver-local notes.
 | `config.py` | Scenario schema (dataclasses), YAML loader | working |
 | `materials.py` | Material library, all constants in mm-ms-g | data (used by mpm; plasticity/damage fields unused until those milestones) |
 | `cache_writer.py` | Writes manifest.json + frames.bin (the contract) | working |
-| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + von Mises plasticity (milestone 2)** — see below |
+| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + von Mises plasticity + damage/spall (milestone 3)** — see below |
 | `run.py` | CLI: scenario.yaml → cache dir | working (Warp init + GPU assert + bake) |
 
 ## Build order (root §9) — where we are
@@ -44,11 +44,21 @@ Grow the reference MLS-MPM incrementally, validating visually with
    Equivalent plastic strain accumulates into an internal `alpha` array (guarded
    against inversion/over-compression spikes via `MAX_DALPHA`) — wired for
    milestone 3; the `damage` cache column stays 0 until then.
-3. **damage/spall** — next. Detach particles past `damage_threshold` (fixed
-   particle count; flag via the `damage` attribute) driven by `alpha`. NOTE: the
-   `MAX_DALPHA` guard already keeps shock-front `alpha` sane so those particles
-   don't spall spuriously the moment this milestone lands.
-4. **multi-material armor stack** — layered/spaced/NERA targets.
+3. **damage/spall** — ✅ done. `_update_damage` latches `damage=1` once `alpha`
+   (equivalent plastic strain) crosses the material's `damage_threshold`; `_p2g`
+   then drops that particle's stress term so it becomes a cohesion-free free
+   fragment (mass + momentum only, still grid-coupled so it collides but can't
+   hold tension). `_return_mapping` keeps running on spalled particles to pin
+   their deviatoric F to yield (no F blow-up / NaN readout). Fixed particle count
+   — spall = flagged + detached, never created/destroyed (contract §4); no schema
+   bump (filled the existing `damage` zeros column). `apfsds_vs_rha` bakes clean
+   on the RTX 5090 (no NaN/Inf), passes `validate_cache`, and shows a
+   **penetration channel lined with spall + a crater-lip spall spray** — ~16% of
+   RHA spalls, localized to the impact axis (not whole-plate). The `MAX_DALPHA`
+   guard held: shock-front particles don't spall spuriously. Rod erodes/perforates
+   into the plate (leading edge 99→137 mm over the window). Threshold reachability
+   is the tuning knob: too high → no spall, too low → whole plate flags.
+4. **multi-material armor stack** — next. Layered/spaced/NERA targets.
 
 Don't rewrite from scratch.
 

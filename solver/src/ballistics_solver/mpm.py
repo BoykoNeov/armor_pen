@@ -1,14 +1,19 @@
 """MLS-MPM transfer kernels (NVIDIA Warp) — the physics core.
 
-STATUS: milestone 2 — **elastic + von Mises plasticity** MLS-MPM. Two materials
-(KE rod + armor plate) are seeded from the scenario and run through a P2G /
-grid-update / G2P substep cycle with fixed-corotated hyperelasticity, followed
-by a perfectly-plastic von Mises radial return (``_return_mapping``) that caps
-deviatoric stress at each material's yield and lets metal flow. The rod now
-**mushrooms** and the plate **craters/bulges plastically** — but there is still
-**no perforation hole**: material separation needs the *damage/spall* milestone
-(build order, root §9), where particles detach past ``damage_threshold``. A
-cratered plate with no clean hole is the correct milestone-2 result, not a bug.
+STATUS: milestone 3 — **elastic + von Mises plasticity + damage/spall** MLS-MPM.
+Two materials (KE rod + armor plate) are seeded from the scenario and run through
+a P2G / grid-update / G2P substep cycle with fixed-corotated hyperelasticity,
+followed by a perfectly-plastic von Mises radial return (``_return_mapping``)
+that caps deviatoric stress at each material's yield and lets metal flow.
+Equivalent plastic strain accumulates into ``alpha``; once it crosses a
+material's ``damage_threshold`` (``_update_damage``) the particle is latched
+``damage=1`` and ``_p2g`` drops its stress term — it becomes a cohesion-free
+**free fragment** (mass + momentum only). Failed material can no longer hold
+tension, so a **penetration channel lined with spall** opens and a **spall spray**
+peels off the crater lip. Particle count is fixed — spall = flagged + detached,
+never created/destroyed (cache contract §4). Verified on the RTX 5090: bakes
+clean (no NaN/Inf), passes ``validate_cache``, ~16% of RHA spalls localized to
+the impact axis (channel walls + ejecta), not the whole plate.
 
 Two hard rules for whoever grows this (root §2, §11):
 
@@ -204,6 +209,27 @@ def _return_mapping(
 
 
 @wp.kernel
+def _update_damage(
+    alpha: wp.array(dtype=float),
+    dthr: wp.array(dtype=float),
+    damage: wp.array(dtype=float),
+):
+    """Latch a particle as spalled once its plastic strain crosses threshold.
+
+    Milestone 3: ``alpha`` (equivalent plastic strain, accumulated in
+    ``_return_mapping`` and guarded by ``MAX_DALPHA``) is compared to the
+    material's ``damage_threshold``. Once crossed, ``damage`` flips to 1.0 and
+    stays there — fracture is irreversible. This is the ONLY writer of the
+    ``damage`` array; ``_p2g`` reads it to drop a failed particle's cohesion
+    (it becomes a free fragment: mass + momentum, no stress). Fixed particle
+    count — nothing is created or destroyed, only flagged (cache contract §4).
+    """
+    p = wp.tid()
+    if damage[p] < 0.5 and alpha[p] >= dthr[p] and dthr[p] > 0.0:
+        damage[p] = 1.0
+
+
+@wp.kernel
 def _p2g(
     x: wp.array(dtype=wp.vec2),
     v: wp.array(dtype=wp.vec2),
@@ -213,6 +239,7 @@ def _p2g(
     vol0: wp.array(dtype=float),
     mu: wp.array(dtype=float),
     lam: wp.array(dtype=float),
+    damage: wp.array(dtype=float),
     grid_v: wp.array2d(dtype=wp.vec2),
     grid_m: wp.array2d(dtype=float),
     origin: wp.vec2,
@@ -227,14 +254,21 @@ def _p2g(
     wx = _bspline_w(fx[0])
     wy = _bspline_w(fx[1])
 
-    # Fixed-corotated Kirchhoff stress term P(F) F^T (root §6, PHYSICS §3).
-    J = wp.determinant(F[p])
-    R = _polar_r(F[p])
-    PFt = 2.0 * mu[p] * (F[p] - R) * wp.transpose(F[p]) + wp.mat22(
-        lam[p] * (J - 1.0) * J, 0.0, 0.0, lam[p] * (J - 1.0) * J
-    )
-    stress = (-dt * vol0[p] * 4.0 * inv_dx * inv_dx) * PFt
-    affine = stress + mass[p] * C[p]
+    # Fixed-corotated Kirchhoff stress term P(F) F^T (root §6, PHYSICS §3). A
+    # spalled particle (damage>=0.5) is a free fragment: it drops its stress
+    # term entirely — it can no longer hold tension or shear, so failed material
+    # loses cohesion and a perforation channel / back-face spall spray opens up.
+    # It KEEPS its mass and APIC momentum so grid momentum is conserved and it
+    # still collides (grid-shared contact) instead of ghosting through the rod.
+    affine = mass[p] * C[p]
+    if damage[p] < 0.5:
+        J = wp.determinant(F[p])
+        R = _polar_r(F[p])
+        PFt = 2.0 * mu[p] * (F[p] - R) * wp.transpose(F[p]) + wp.mat22(
+            lam[p] * (J - 1.0) * J, 0.0, 0.0, lam[p] * (J - 1.0) * J
+        )
+        stress = (-dt * vol0[p] * 4.0 * inv_dx * inv_dx) * PFt
+        affine = stress + affine
 
     for i in range(3):
         for j in range(3):
@@ -350,8 +384,8 @@ def _seed(scenario, dx: float, spacing: float):
     armor_front = dom.xmin + 0.5 * (dom.xmax - dom.xmin)
     margin = 0.1 * height  # keep the plate off the domain walls
 
-    pos_list, vel_list, mu_list, lam_list, yield_list, mass_list, vol_list, mid_list = (
-        [], [], [], [], [], [], [], [],
+    pos_list, vel_list, mu_list, lam_list, yield_list, dthr_list, mass_list, vol_list, mid_list = (
+        [], [], [], [], [], [], [], [], [],
     )
     p_vol = spacing * spacing  # 2D "volume" (area) per particle
 
@@ -363,6 +397,7 @@ def _seed(scenario, dx: float, spacing: float):
         mu_list.append(np.full(n, mu))
         lam_list.append(np.full(n, lam))
         yield_list.append(np.full(n, mat.yield_strength))
+        dthr_list.append(np.full(n, mat.damage_threshold))
         mass_list.append(np.full(n, mat.density * p_vol))
         vol_list.append(np.full(n, p_vol))
         mid_list.append(np.full(n, float(mat.material_id)))
@@ -397,6 +432,7 @@ def _seed(scenario, dx: float, spacing: float):
         "mu": np.concatenate(mu_list).astype(np.float32),
         "lam": np.concatenate(lam_list).astype(np.float32),
         "yield": np.concatenate(yield_list).astype(np.float32),
+        "dthr": np.concatenate(dthr_list).astype(np.float32),
         "mass": np.concatenate(mass_list).astype(np.float32),
         "vol0": np.concatenate(vol_list).astype(np.float32),
         "mat_id": np.concatenate(mid_list).astype(np.float32),
@@ -506,7 +542,9 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
     mu = wp.array(seed["mu"], dtype=float, device=device)
     lam = wp.array(seed["lam"], dtype=float, device=device)
     yield_k = wp.array(seed["yield"], dtype=float, device=device)
+    dthr = wp.array(seed["dthr"], dtype=float, device=device)  # damage threshold
     alpha = wp.zeros(n, dtype=float, device=device)  # equiv. plastic strain
+    damage = wp.zeros(n, dtype=float, device=device)  # 0 intact, 1 spalled (latched)
 
     nx = grid_res + 3
     ny = int(math.ceil((dom.ymax - dom.ymin) * inv_dx)) + 3
@@ -520,25 +558,36 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
         grid_v.zero_()
         grid_m.zero_()
         wp.launch(_p2g, dim=n, device=device, inputs=[
-            x, v, C, F, mass, vol0, mu, lam, grid_v, grid_m, origin, inv_dx, dx, dt])
+            x, v, C, F, mass, vol0, mu, lam, damage, grid_v, grid_m,
+            origin, inv_dx, dx, dt])
         wp.launch(_grid_op, dim=(nx, ny), device=device, inputs=[
             grid_v, grid_m, nx, ny])
         wp.launch(_g2p, dim=n, device=device, inputs=[
             x, v, C, F, grid_v, origin, inv_dx, dt])
         # von Mises radial return caps deviatoric stress at yield -> plastic
-        # flow (mushrooming/cratering) instead of pure elastic rebound.
+        # flow (mushrooming/cratering) instead of pure elastic rebound. It runs
+        # on spalled particles too: it pins their deviatoric F to the yield
+        # surface so F can't blow up and NaN the stress readout.
         wp.launch(_return_mapping, dim=n, device=device, inputs=[
             F, mu, yield_k, alpha])
+        # Latch damage once accumulated plastic strain crosses threshold; _p2g
+        # then treats those particles as free fragments (spall).
+        wp.launch(_update_damage, dim=n, device=device, inputs=[
+            alpha, dthr, damage])
 
     def dump_frame():
         pos = x.numpy()
         vel = v.numpy()
         Fn = F.numpy().reshape(n, 2, 2)
+        dmg = damage.numpy()
         vel_mag = np.linalg.norm(vel, axis=1)
         stress = _von_mises(Fn, seed["mu"], seed["lam"])
+        # A spalled particle carries no stress (it lost cohesion); zero the
+        # readout so the colormap isn't skewed by a broken fragment's stale F.
+        stress = np.where(dmg > 0.5, 0.0, stress)
         frame = np.column_stack([
             pos[:, 0], pos[:, 1], vel_mag, stress,
-            np.zeros(n, dtype=np.float32),  # damage: 0 until the damage milestone
+            dmg,  # 0 intact, 1 spalled (latched past damage_threshold)
             mat_id,
         ]).astype(np.float32)
         writer.write_frame(frame)
