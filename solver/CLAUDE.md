@@ -38,6 +38,18 @@ pytest                                   # schema smoke tests (no GPU)
 python -m ballistics_solver.run scenarios/apfsds_vs_rha.yaml --out ../caches/apfsds_vs_rha
 ```
 
+## Toolchain status (probed 2026-07-14) — likely Warp, not Taichi
+
+Empirical result on the target machine: **Taichi has no wheel for the machine's
+Python 3.14** (`pip install taichi` → no matching distribution), so the
+Taichi-default stack does not install here. **Warp (`warp-lang` 1.15.0) works**:
+it detects the RTX 5090 as `cuda:0` / **sm_120** and a trivial kernel compiled
+and ran on the GPU (verified, not a CPU fallback). This is exactly the swap root
+§5 anticipates. The scaffold still lists `taichi` in `pyproject.toml` and
+`mpm.py`/`run.py` still `import taichi`; migrating the solver to Warp is the
+clear next task — tracked as a GitHub issue. Engine choice is the user's call
+(Warp-first recommended; alternative is a side Python 3.11/3.12 env for Taichi).
+
 ## If Taichi fights Blackwell (sm_120)
 
 Don't sink time into it — switch to NVIDIA Warp (root §5). The architecture is
