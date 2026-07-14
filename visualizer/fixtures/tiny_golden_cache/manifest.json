@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "scenario": "tiny_golden_cache",
+  "particle_count": 20,
+  "frame_count": 3,
+  "attributes": [
+    "pos_x",
+    "pos_y",
+    "vel_mag",
+    "stress",
+    "damage",
+    "material_id"
+  ],
+  "dtype": "float32",
+  "frame_dt": 2e-06,
+  "domain": {
+    "xmin": 0.0,
+    "xmax": 200.0,
+    "ymin": 0.0,
+    "ymax": 100.0
+  },
+  "units": "mm-ms-g (see docs/PHYSICS.md)",
+  "materials": {
+    "0": "tungsten_rod",
+    "1": "rha"
+  }
+}
