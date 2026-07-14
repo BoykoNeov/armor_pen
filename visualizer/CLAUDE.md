@@ -20,7 +20,8 @@ adds viewer-local notes.
 | `project.godot` | Godot 4 project; main scene = `main.tscn` |
 | `main.tscn` | Minimal scene: one `MultiMeshInstance2D` + `particle_view.gd` |
 | `scripts/cache_loader.gd` | Parses manifest + streams `frames.bin` (the contract reader) |
-| `scripts/particle_view.gd` | `MultiMeshInstance2D` playback + per-instance color |
+| `scripts/particle_view.gd` | `MultiMeshInstance2D` playback + per-instance color/heat, HUD, glow env |
+| `shaders/particle.gdshader` | Soft-disc particle shader; per-instance "heat" drives size + HDR glow |
 | `fixtures/tiny_golden_cache/` | Canonical 3-frame cache (regenerate via `tools/make_golden_cache.py`) |
 
 ## Why MultiMeshInstance2D
