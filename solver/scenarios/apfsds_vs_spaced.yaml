@@ -1,0 +1,29 @@
+# APFSDS-like long-rod KE penetrator vs a SPACED steel array: a thin front plate,
+# an air gap (standoff), then a thicker main plate behind it. This is the "spaced"
+# multi-material demonstrator (milestone 4) — same proven KE parameters as
+# apfsds_vs_rha, so the only new variable is the standoff gap between plates.
+#
+# Scenarios are DATA, not code (CLAUDE.md §9). Numbers are representative /
+# illustrative order-of-magnitude values, not any real system (CLAUDE.md §10).
+name: apfsds_vs_spaced
+
+domain: { xmin: 0, xmax: 200, ymin: 0, ymax: 100 }   # mm
+
+projectile:
+  kind: kinetic
+  material: tungsten_rod
+  length: 60.0        # mm
+  diameter: 8.0       # mm
+  velocity: 1600      # m/s (== mm/ms)
+  angle_deg: 0.0
+
+armor:
+  - { material: rha, thickness: 15.0 }                  # front plate
+  - { material: rha, thickness: 30.0, standoff: 30.0 }  # main plate, 30 mm gap ahead
+
+solver:
+  grid_resolution: 512
+  particles_per_cell: 4
+  dt: 1.0e-7          # substep dt (CFL-bound); NOT frame_dt
+  total_time: 4.0e-5  # ~40 microseconds
+  frame_count: 90

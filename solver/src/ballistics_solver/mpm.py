@@ -1,19 +1,28 @@
 """MLS-MPM transfer kernels (NVIDIA Warp) — the physics core.
 
-STATUS: milestone 3 — **elastic + von Mises plasticity + damage/spall** MLS-MPM.
-Two materials (KE rod + armor plate) are seeded from the scenario and run through
-a P2G / grid-update / G2P substep cycle with fixed-corotated hyperelasticity,
-followed by a perfectly-plastic von Mises radial return (``_return_mapping``)
-that caps deviatoric stress at each material's yield and lets metal flow.
-Equivalent plastic strain accumulates into ``alpha``; once it crosses a
-material's ``damage_threshold`` (``_update_damage``) the particle is latched
-``damage=1`` and ``_p2g`` drops its stress term — it becomes a cohesion-free
-**free fragment** (mass + momentum only). Failed material can no longer hold
-tension, so a **penetration channel lined with spall** opens and a **spall spray**
-peels off the crater lip. Particle count is fixed — spall = flagged + detached,
-never created/destroyed (cache contract §4). Verified on the RTX 5090: bakes
-clean (no NaN/Inf), passes ``validate_cache``, ~16% of RHA spalls localized to
-the impact axis (channel walls + ejecta), not the whole plate.
+STATUS: milestone 4 — **elastic + von Mises plasticity + ductile & brittle damage
++ multi-material armor stack** MLS-MPM. A KE rod and an arbitrary front-to-back
+armor stack (any number of layers, each its own material, with optional standoff
+gaps) are seeded from the scenario and run through a P2G / grid-update / G2P
+substep cycle with fixed-corotated hyperelasticity, followed by a
+perfectly-plastic von Mises radial return (``_return_mapping``) that caps
+deviatoric stress at each material's yield and lets metal flow. Every material
+constant is a per-particle array (``mu/lam/yield/dthr/brittle``), so heterogeneous
+stacks just work.
+
+Failure has two modes (``_update_damage``): **ductile** metals accumulate
+equivalent plastic strain into ``alpha`` and spall once it crosses
+``damage_threshold``; **brittle** ceramics latch on a *stress* trigger instead
+(von Mises Cauchy ≥ yield, or max tensile principal ≥ 0.1·yield) so they shatter
+with ~zero plastic flow rather than acting as an indestructible ductile wall. A
+failed particle is latched ``damage=1`` and ``_p2g`` drops its stress term — it
+becomes a cohesion-free **free fragment** (mass + momentum only). Particle count
+is fixed — spall = flagged + detached, never created/destroyed (cache contract
+§4). Verified on the RTX 5090: ``apfsds_vs_rha`` / ``apfsds_vs_composite`` /
+``apfsds_vs_spaced`` all bake clean (no NaN/Inf) and pass ``validate_cache``;
+RHA spall stays ~16% (ductile path unchanged), the ceramic core now shatters
+(interface cracks + comminution ahead of the rod), and the spaced front plate is
+defeated across a preserved standoff gap.
 
 Two hard rules for whoever grows this (root §2, §11):
 
@@ -139,6 +148,23 @@ SQRT23 = 0.8164965809277260
 # the damage milestone compares ``alpha`` to ``damage_threshold`` (0.8-2.0).
 MAX_DALPHA: float = 0.02
 
+# Brittle fracture (milestone 4). Ductile metals fail by accumulating plastic
+# strain to a threshold (the ``alpha`` path); brittle materials (ceramics,
+# glass) have essentially no plastic reserve — they shatter the instant the
+# stress state reaches their strength surface, with ~zero plastic flow. So a
+# brittle particle latches ``damage`` on a *stress* trigger instead:
+#   * von Mises Cauchy stress >= yield_strength — compressive comminution /
+#     shatter directly under the penetrator (the intense contact zone), and
+#   * max tensile principal stress >= BRITTLE_TENSILE_FRAC * yield_strength —
+#     tensile mode-I cracking at free surfaces (back-face spall, lateral edges,
+#     the fracture conoid). Ceramics crack in tension at a small fraction of
+#     their compressive strength; ~0.1 is a representative order-of-magnitude
+#     ratio (root §10 — illustrative, not a spec-sheet number).
+# yield_strength doubles as the brittle fracture strength — no new material
+# field. Ductile materials (brittle flag off) are untouched: they stay on the
+# alpha path, so the all-metal apfsds_vs_rha bake is bit-for-bit unchanged.
+BRITTLE_TENSILE_FRAC: float = 0.1
+
 
 @wp.kernel
 def _return_mapping(
@@ -208,25 +234,74 @@ def _return_mapping(
         alpha[p] = alpha[p] + wp.min(SQRT23 * (norm_ed - e_yield), MAX_DALPHA)
 
 
+@wp.func
+def _stress_invariants(F: wp.mat22, mu: float, lam: float):
+    """Von Mises and max tensile principal of the fixed-corotated Cauchy stress.
+
+    Cauchy sigma = (1/J) P(F) F^T with the same fixed-corotated P used in _p2g
+    and the host-side ``_von_mises`` readout. Returns wp.vec2(vm, s_max_principal)
+    in MPa. Used by the brittle fracture trigger. ``J`` is floored positive so a
+    momentarily inverted/over-compressed shock-front element can't divide-by-zero
+    or flip principal signs into a spurious tensile reading.
+    """
+    J = wp.determinant(F)
+    R = _polar_r(F)
+    lp = lam * (J - 1.0) * J
+    PFt = 2.0 * mu * (F - R) * wp.transpose(F) + wp.mat22(lp, 0.0, 0.0, lp)
+    invJ = 1.0 / wp.max(J, 1.0e-6)
+    sxx = PFt[0, 0] * invJ
+    syy = PFt[1, 1] * invJ
+    sxy = PFt[0, 1] * invJ
+    syx = PFt[1, 0] * invJ
+    # Plane-stress vM invariant, consistent with the host `stress` column.
+    vm = wp.sqrt(wp.max(sxx * sxx - sxx * syy + syy * syy + 3.0 * sxy * syx, 0.0))
+    # 2D principal stresses of the (near-symmetric) Cauchy tensor.
+    avg = 0.5 * (sxx + syy)
+    rad = wp.sqrt(wp.max(0.25 * (sxx - syy) * (sxx - syy) + sxy * syx, 0.0))
+    return wp.vec2(vm, avg + rad)  # (von Mises, max principal — tension positive)
+
+
 @wp.kernel
 def _update_damage(
+    F: wp.array(dtype=wp.mat22),
+    mu: wp.array(dtype=float),
+    lam: wp.array(dtype=float),
+    yield_k: wp.array(dtype=float),
+    brittle: wp.array(dtype=float),
     alpha: wp.array(dtype=float),
     dthr: wp.array(dtype=float),
     damage: wp.array(dtype=float),
 ):
-    """Latch a particle as spalled once its plastic strain crosses threshold.
+    """Latch a particle as spalled once it fails — ductile or brittle path.
 
-    Milestone 3: ``alpha`` (equivalent plastic strain, accumulated in
-    ``_return_mapping`` and guarded by ``MAX_DALPHA``) is compared to the
-    material's ``damage_threshold``. Once crossed, ``damage`` flips to 1.0 and
-    stays there — fracture is irreversible. This is the ONLY writer of the
-    ``damage`` array; ``_p2g`` reads it to drop a failed particle's cohesion
-    (it becomes a free fragment: mass + momentum, no stress). Fixed particle
-    count — nothing is created or destroyed, only flagged (cache contract §4).
+    Two failure modes (root §6). **Ductile** metals (``brittle`` off): ``alpha``
+    (equivalent plastic strain, accumulated in ``_return_mapping`` and guarded by
+    ``MAX_DALPHA``) crossing the material's ``damage_threshold`` — the milestone-3
+    path, unchanged. **Brittle** materials (ceramics; ``brittle`` on): a *stress*
+    trigger instead — von Mises Cauchy stress reaching ``yield_strength`` (shatter
+    under the penetrator) or max tensile principal stress reaching
+    ``BRITTLE_TENSILE_FRAC * yield_strength`` (tensile cracking at free surfaces).
+    Brittle materials thus fail with ~zero plastic flow, the defining brittle
+    signature, rather than acting as an indestructible ductile wall.
+
+    Once set, ``damage`` stays 1.0 — fracture is irreversible. This is the ONLY
+    writer of the ``damage`` array; ``_p2g`` reads it to drop a failed particle's
+    cohesion (it becomes a free fragment: mass + momentum, no stress). Fixed
+    particle count — nothing is created or destroyed, only flagged (contract §4).
     """
     p = wp.tid()
-    if damage[p] < 0.5 and alpha[p] >= dthr[p] and dthr[p] > 0.0:
-        damage[p] = 1.0
+    if damage[p] >= 0.5:
+        return  # already failed; latched
+
+    if brittle[p] > 0.5:
+        ys = yield_k[p]
+        if ys > 0.0:
+            inv = _stress_invariants(F[p], mu[p], lam[p])
+            if inv[0] >= ys or inv[1] >= BRITTLE_TENSILE_FRAC * ys:
+                damage[p] = 1.0
+    else:
+        if alpha[p] >= dthr[p] and dthr[p] > 0.0:
+            damage[p] = 1.0
 
 
 @wp.kernel
@@ -384,8 +459,8 @@ def _seed(scenario, dx: float, spacing: float):
     armor_front = dom.xmin + 0.5 * (dom.xmax - dom.xmin)
     margin = 0.1 * height  # keep the plate off the domain walls
 
-    pos_list, vel_list, mu_list, lam_list, yield_list, dthr_list, mass_list, vol_list, mid_list = (
-        [], [], [], [], [], [], [], [], [],
+    pos_list, vel_list, mu_list, lam_list, yield_list, dthr_list, brittle_list, mass_list, vol_list, mid_list = (
+        [], [], [], [], [], [], [], [], [], [],
     )
     p_vol = spacing * spacing  # 2D "volume" (area) per particle
 
@@ -398,6 +473,7 @@ def _seed(scenario, dx: float, spacing: float):
         lam_list.append(np.full(n, lam))
         yield_list.append(np.full(n, mat.yield_strength))
         dthr_list.append(np.full(n, mat.damage_threshold))
+        brittle_list.append(np.full(n, 1.0 if mat.brittle else 0.0))
         mass_list.append(np.full(n, mat.density * p_vol))
         vol_list.append(np.full(n, p_vol))
         mid_list.append(np.full(n, float(mat.material_id)))
@@ -433,6 +509,7 @@ def _seed(scenario, dx: float, spacing: float):
         "lam": np.concatenate(lam_list).astype(np.float32),
         "yield": np.concatenate(yield_list).astype(np.float32),
         "dthr": np.concatenate(dthr_list).astype(np.float32),
+        "brittle": np.concatenate(brittle_list).astype(np.float32),
         "mass": np.concatenate(mass_list).astype(np.float32),
         "vol0": np.concatenate(vol_list).astype(np.float32),
         "mat_id": np.concatenate(mid_list).astype(np.float32),
@@ -543,6 +620,7 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
     lam = wp.array(seed["lam"], dtype=float, device=device)
     yield_k = wp.array(seed["yield"], dtype=float, device=device)
     dthr = wp.array(seed["dthr"], dtype=float, device=device)  # damage threshold
+    brittle = wp.array(seed["brittle"], dtype=float, device=device)  # 1 brittle, 0 ductile
     alpha = wp.zeros(n, dtype=float, device=device)  # equiv. plastic strain
     damage = wp.zeros(n, dtype=float, device=device)  # 0 intact, 1 spalled (latched)
 
@@ -570,10 +648,12 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
         # surface so F can't blow up and NaN the stress readout.
         wp.launch(_return_mapping, dim=n, device=device, inputs=[
             F, mu, yield_k, alpha])
-        # Latch damage once accumulated plastic strain crosses threshold; _p2g
-        # then treats those particles as free fragments (spall).
+        # Latch damage: ductile metals once accumulated plastic strain crosses
+        # threshold; brittle ceramics once the stress state reaches strength
+        # (von Mises or tensile principal). _p2g then treats failed particles as
+        # free fragments (spall / shatter).
         wp.launch(_update_damage, dim=n, device=device, inputs=[
-            alpha, dthr, damage])
+            F, mu, lam, yield_k, brittle, alpha, dthr, damage])
 
     def dump_frame():
         pos = x.numpy()

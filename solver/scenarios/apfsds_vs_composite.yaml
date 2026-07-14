@@ -1,0 +1,32 @@
+# APFSDS-like long-rod KE penetrator vs a BONDED multi-material composite stack:
+# RHA front / ceramic core / RHA backing, laid back-to-back (no standoff).
+# This is the "layered" multi-material demonstrator (milestone 4). It reuses the
+# proven apfsds KE parameters (1600 m/s, tungsten rod) so the only new variable
+# vs. apfsds_vs_rha is the heterogeneous target — isolating multi-material
+# behavior from the hypervelocity chaos of the HEAT deck.
+#
+# Scenarios are DATA, not code (CLAUDE.md §9). Numbers are representative /
+# illustrative order-of-magnitude values, not any real system (CLAUDE.md §10).
+name: apfsds_vs_composite
+
+domain: { xmin: 0, xmax: 200, ymin: 0, ymax: 100 }   # mm
+
+projectile:
+  kind: kinetic
+  material: tungsten_rod
+  length: 60.0        # mm
+  diameter: 8.0       # mm
+  velocity: 1600      # m/s (== mm/ms)
+  angle_deg: 0.0
+
+armor:
+  - { material: rha,     thickness: 15.0 }   # mm — front steel plate
+  - { material: ceramic, thickness: 30.0 }   # mm — bonded ceramic core
+  - { material: rha,     thickness: 20.0 }   # mm — steel backing plate
+
+solver:
+  grid_resolution: 512
+  particles_per_cell: 4
+  dt: 1.0e-7          # substep dt (CFL-bound); NOT frame_dt
+  total_time: 4.0e-5  # ~40 microseconds
+  frame_count: 90

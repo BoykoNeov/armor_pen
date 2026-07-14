@@ -19,9 +19,9 @@ first** — this file only adds solver-local notes.
 | File | Role | Status |
 |---|---|---|
 | `config.py` | Scenario schema (dataclasses), YAML loader | working |
-| `materials.py` | Material library, all constants in mm-ms-g | data (used by mpm; plasticity/damage fields unused until those milestones) |
+| `materials.py` | Material library, all constants in mm-ms-g | data (all fields now consumed: elasticity, yield, ductile `damage_threshold`, `brittle`) |
 | `cache_writer.py` | Writes manifest.json + frames.bin (the contract) | working |
-| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + von Mises plasticity + damage/spall (milestone 3)** — see below |
+| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + von Mises plasticity + ductile & brittle damage + multi-material stack (milestone 4)** — see below |
 | `run.py` | CLI: scenario.yaml → cache dir | working (Warp init + GPU assert + bake) |
 
 ## Build order (root §9) — where we are
@@ -58,7 +58,29 @@ Grow the reference MLS-MPM incrementally, validating visually with
    guard held: shock-front particles don't spall spuriously. Rod erodes/perforates
    into the plate (leading edge 99→137 mm over the window). Threshold reachability
    is the tuning knob: too high → no spall, too low → whole plate flags.
-4. **multi-material armor stack** — next. Layered/spaced/NERA targets.
+4. **multi-material armor stack** — ✅ layered + spaced + brittle done (NERA
+   deferred to its own milestone). The seeding loop and per-particle constitutive
+   arrays (`mu/lam/yield/dthr/brittle/mass/mat_id`) already handled multiple
+   layers and standoff gaps from milestone 1; this milestone added the two decks
+   (`apfsds_vs_composite` bonded RHA/ceramic/RHA, `apfsds_vs_spaced` spaced RHA)
+   and the **brittle fracture model** that was the one genuine physics gap.
+   Brittle materials (`brittle: true`, ceramics) latch damage on a *stress*
+   trigger — von Mises Cauchy ≥ `yield_strength`, or max tensile principal ≥
+   `0.1·yield_strength` — independent of plastic strain, so they shatter with
+   ~zero plastic flow (PHYSICS §3). Without it, ceramic was a near-indestructible
+   ductile wall at KE velocities (empirically confirmed before implementing).
+   Ductile metals are untouched: with the `brittle` flag off the `alpha` path is
+   unchanged, and `apfsds_vs_rha` RHA spall stays ~16% as before (spall %
+   verified, not bytes — MPM grid `atomic_add` ordering isn't deterministic).
+   All three KE decks bake clean on the RTX 5090 and pass `validate_cache`;
+   verified visually (M:\claud_projects\temp\m4_probe\*.png). No schema bump —
+   `brittle` is solver-internal, cache columns unchanged.
+   - **Probe lesson:** `heat_vs_composite` (7000 m/s HEAT stand-in) is the *wrong*
+     multi-material test — its plate fly-away / wall pile-up are momentum
+     artifacts of the deferred jet model, not multi-material issues. Use the KE
+     decks. Plate anchoring is NOT needed at sane KE velocity (stacks stay put).
+5. **NERA/ERA reactive layer** — next. Reactive impulse degrading the penetrator
+   (different mechanism; `era_filler` constants exist, mechanism unwired).
 
 Don't rewrite from scratch.
 

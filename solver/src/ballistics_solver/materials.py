@@ -5,8 +5,11 @@ mm-ms-g system (density g/mm^3, modulus MPa). Values are **representative and
 illustrative**, order-of-magnitude from public literature (CLAUDE.md §10) —
 not spec-sheet numbers for any real system.
 
-STATUS: data-only stub. The constitutive kernels (elastic + von Mises return
-mapping + damage detach) live in mpm.py and are not implemented yet.
+STATUS: data library, fully consumed by mpm.py. Every field drives the solver:
+elasticity (``youngs_modulus``/``poisson_ratio``), ``yield_strength`` (von Mises
+return mapping — and the fracture strength for brittle materials), ductile
+``damage_threshold`` (plastic-strain spall), and ``brittle`` (stress-triggered
+shatter). See mpm.py and docs/PHYSICS.md §3.
 """
 
 from __future__ import annotations
@@ -23,9 +26,10 @@ class Material:
     density: float  # g/mm^3
     youngs_modulus: float  # MPa
     poisson_ratio: float
-    yield_strength: float  # MPa (von Mises)
-    damage_threshold: float  # accumulated plastic strain at which a particle detaches
-    brittle: bool = False  # ceramics/composites fail with little plastic flow
+    yield_strength: float  # MPa (von Mises); also the fracture strength if brittle
+    damage_threshold: float  # ductile spall: equiv. plastic strain at detachment
+    #                          (ignored for brittle materials — they use a stress trigger)
+    brittle: bool = False  # ceramics/composites: shatter on stress, ~zero plastic flow
 
 
 # Representative library. Numbers are public-literature order-of-magnitude.

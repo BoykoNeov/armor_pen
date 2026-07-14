@@ -80,11 +80,33 @@ Elasticity + rate-independent plasticity + a damage threshold:
   extreme volumetric compression at the shock front, since fixed-corotated has
   no equation of state (`λ(J−1)J → 0` as `J → 0`). This is a pre-existing
   property of the elastic model, best tamed viewer-side by a percentile clamp.
-- **Damage:** a scalar in `[0, 1]` driven past a **material-specific threshold**
-  by accumulated plastic strain / tensile stress. When a particle exceeds the
-  threshold it **detaches** into a free fragment — this is the spall spray. The
-  particle is *flagged*, never created or destroyed (fixed particle count, see
-  CACHE_FORMAT §5).
+- **Damage:** a scalar in `[0, 1]` (latched, irreversible). When a particle
+  fails it **detaches** into a free fragment — `_p2g` drops its stress term so it
+  keeps mass + momentum but can no longer hold tension/shear. This is the spall
+  spray. The particle is *flagged*, never created or destroyed (fixed particle
+  count, see CACHE_FORMAT §5). Two failure modes, selected per material:
+  - **Ductile (metals)** *— implemented, milestone 3:* accumulated equivalent
+    plastic strain `alpha` crossing the material's `damage_threshold`. Metals
+    flow and mushroom, then spall along the plastic channel walls / crater lip.
+  - **Brittle (ceramics)** *— implemented, milestone 4:* a **stress** trigger,
+    independent of plastic strain — brittle solids have no plastic reserve, so
+    they shatter the instant the stress state reaches their strength surface.
+    A brittle particle latches damage when the fixed-corotated Cauchy **von Mises
+    stress ≥ `yield_strength`** (compressive comminution directly under the
+    penetrator) **or** the **max tensile principal stress ≥ 0.1·`yield_strength`**
+    (mode-I tensile cracking at free surfaces — back-face spall, interface
+    debonding at impedance mismatches, the fracture conoid ahead of the rod).
+    Note the von Mises branch is evaluated *after* the radial return has already
+    capped deviatoric stress at yield, so in practice it fires for **any brittle
+    particle that yielded at all** — the model is "brittle = shatters where a
+    metal would instead have flowed," not a separate higher fracture stress above
+    yield. The tensile branch is the independent one, catching low-stress cracking
+    the deviatoric criterion misses.
+    `yield_strength` doubles as the fracture strength (no separate field); the
+    0.1 tensile ratio is illustrative (ceramics crack in tension at a small
+    fraction of their compressive strength). This is what makes a ceramic core
+    *shatter* into rubble and read visually distinct from a denting steel plate,
+    instead of behaving as a near-indestructible ductile wall at KE velocities.
 
 ### Material archetypes (illustrative)
 
@@ -92,8 +114,8 @@ Elasticity + rate-independent plasticity + a damage threshold:
 |---|---|
 | Tungsten / DU rod | Very dense, stiff, high yield — the KE penetrator. |
 | RHA (steel) | Baseline ductile armor; mushrooms and spalls. |
-| Ceramic / composite | Higher stiffness, **lower** damage threshold → brittle-ish. |
-| ERA filler | An impulse layer that degrades the penetrator on contact. |
+| Ceramic / composite | Higher stiffness, **brittle** (`brittle: true`) — fails on the stress trigger above, shattering with ~zero plastic flow. |
+| ERA filler | An impulse layer that degrades the penetrator on contact. *(reactive impulse — future milestone; the material constants exist but the reactive mechanism is not wired yet.)* |
 
 ---
 
