@@ -1,0 +1,9 @@
+[gd_scene load_steps=2 format=3]
+
+; Minimal playback scene: a single MultiMeshInstance2D driven by particle_view.gd.
+; Defaults to the golden fixture, so the viewer runs with no solver present.
+
+[ext_resource type="Script" path="res://scripts/particle_view.gd" id="1"]
+
+[node name="ParticleView" type="MultiMeshInstance2D"]
+script = ExtResource("1")

@@ -1,0 +1,19 @@
+; Godot 4 project — armor_pen visualizer.
+;
+; This program knows ONLY how to read the cache format (docs/CACHE_FORMAT.md).
+; It must never import or reference the solver / Python / Taichi (CLAUDE.md §2).
+; It can be developed entirely against fixtures/tiny_golden_cache/ with no
+; solver present.
+
+config_version=5
+
+[application]
+
+config/name="armor_pen visualizer"
+config/description="Plays back a baked terminal-ballistics cache. Reads only the cache format."
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.2")
+
+[rendering]
+
+renderer/rendering_method="gl_compatibility"
