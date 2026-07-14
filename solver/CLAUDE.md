@@ -21,7 +21,7 @@ first** — this file only adds solver-local notes.
 | `config.py` | Scenario schema (dataclasses), YAML loader | working |
 | `materials.py` | Material library, all constants in mm-ms-g | data (used by mpm; plasticity/damage fields unused until those milestones) |
 | `cache_writer.py` | Writes manifest.json + frames.bin (the contract) | working |
-| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic (milestone 1)** — see below |
+| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + von Mises plasticity (milestone 2)** — see below |
 | `run.py` | CLI: scenario.yaml → cache dir | working (Warp init + GPU assert + bake) |
 
 ## Build order (root §9) — where we are
@@ -33,10 +33,21 @@ Grow the reference MLS-MPM incrementally, validating visually with
    from the deck, elastic *impact* (rod decelerates and rebounds, plate bulges;
    **no** perforation — correct for elastic-only). `apfsds_vs_rha` bakes clean
    on the RTX 5090 and passes `validate_cache`.
-2. **von Mises plasticity** — next. Radial-return in the P2G stress; this is
-   what lets the metal flow/mushroom instead of bouncing.
-3. **damage/spall** — detach particles past `damage_threshold` (fixed particle
-   count; flag via the `damage` attribute).
+2. **von Mises plasticity** — ✅ done. Perfectly-plastic radial return in
+   log-strain space (2×2-SVD `_return_mapping`, run per particle after G2P);
+   isochoric, no hardening. `apfsds_vs_rha` bakes clean on the RTX 5090 (no
+   NaN/Inf), passes `validate_cache`, and the rod **mushrooms** (length 60→42 mm,
+   width 8→40 mm) while the plate craters — **no perforation hole** (that needs
+   damage, milestone 3). Bulk stress reads ~yield; a thin over-read tail at the
+   compression shock front is a fixed-corotated/no-EOS property, tamed
+   viewer-side by a percentile colormap clamp (see `_von_mises`, PHYSICS §3).
+   Equivalent plastic strain accumulates into an internal `alpha` array (guarded
+   against inversion/over-compression spikes via `MAX_DALPHA`) — wired for
+   milestone 3; the `damage` cache column stays 0 until then.
+3. **damage/spall** — next. Detach particles past `damage_threshold` (fixed
+   particle count; flag via the `damage` attribute) driven by `alpha`. NOTE: the
+   `MAX_DALPHA` guard already keeps shock-front `alpha` sane so those particles
+   don't spall spuriously the moment this milestone lands.
 4. **multi-material armor stack** — layered/spaced/NERA targets.
 
 Don't rewrite from scratch.

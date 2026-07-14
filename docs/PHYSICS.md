@@ -69,6 +69,17 @@ Elasticity + rate-independent plasticity + a damage threshold:
 - **Plasticity (metals):** **von Mises** plastic return-mapping — project the
   trial stress back onto the yield surface each step, storing plastic
   deformation. This is what lets the metal flow and mushroom rather than shatter.
+  *Implemented (milestone 2):* a perfectly-plastic (no hardening) **radial
+  return in log-strain (Hencky) space** — SVD `F = U Σ Vᵀ` per particle after
+  G2P, radially return the deviatoric log-strain onto `‖dev τ‖ = √(2/3)·σ_Y`,
+  reconstruct `F`. Plastic flow is isochoric (volumetric log-strain untouched).
+  Two plausibility notes (root §1): the `√(2/3)` and the deviatoric split use a
+  2D two-principal-strain convention, not exact 3D J2; and because the reported
+  stress is fixed-corotated Cauchy von Mises (the momentum-driving stress), it
+  reads *approximately* capped near yield — with a small over-read tail at
+  extreme volumetric compression at the shock front, since fixed-corotated has
+  no equation of state (`λ(J−1)J → 0` as `J → 0`). This is a pre-existing
+  property of the elastic model, best tamed viewer-side by a percentile clamp.
 - **Damage:** a scalar in `[0, 1]` driven past a **material-specific threshold**
   by accumulated plastic strain / tensile stress. When a particle exceeds the
   threshold it **detaches** into a free fragment — this is the spall spray. The

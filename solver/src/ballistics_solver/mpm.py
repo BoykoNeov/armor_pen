@@ -1,12 +1,14 @@
 """MLS-MPM transfer kernels (NVIDIA Warp) — the physics core.
 
-STATUS: milestone 1 — **elastic** MLS-MPM. Two materials (KE rod + armor plate)
-are seeded from the scenario and run through a P2G / grid-update / G2P substep
-cycle with fixed-corotated hyperelasticity. There is **no plasticity and no
-damage yet** (build order, root §9): the rod does not mushroom and the plate
-does not fail. The correct first result is an *elastic impact* — stress waves
-travel, the rod decelerates against the plate through the shared grid, and it
-rebounds. That is not a bug; plasticity/damage are the next milestones.
+STATUS: milestone 2 — **elastic + von Mises plasticity** MLS-MPM. Two materials
+(KE rod + armor plate) are seeded from the scenario and run through a P2G /
+grid-update / G2P substep cycle with fixed-corotated hyperelasticity, followed
+by a perfectly-plastic von Mises radial return (``_return_mapping``) that caps
+deviatoric stress at each material's yield and lets metal flow. The rod now
+**mushrooms** and the plate **craters/bulges plastically** — but there is still
+**no perforation hole**: material separation needs the *damage/spall* milestone
+(build order, root §9), where particles detach past ``damage_threshold``. A
+cratered plate with no clean hole is the correct milestone-2 result, not a bug.
 
 Two hard rules for whoever grows this (root §2, §11):
 
@@ -91,6 +93,114 @@ def _polar_r(F: wp.mat22):
     c = xx / d
     s = yy / d
     return wp.mat22(c, -s, s, c)
+
+
+@wp.func
+def _svd22(M: wp.mat22):
+    """Closed-form 2x2 SVD: M = U diag(sx, sy) V^T with U = R(phi), V = R(theta).
+
+    Returns (phi, sx, sy, theta) packed in a vec4. Warp has no ``svd2``; this is
+    the standard analytic form. ``sy`` carries sign(det M), so it can be negative
+    when an element momentarily inverts (det<=0) under a violent impact substep —
+    the caller must floor the singular values before ``log`` or NaNs propagate.
+    """
+    a = M[0, 0]
+    b = M[0, 1]
+    c = M[1, 0]
+    d = M[1, 1]
+    e = (a + d) * 0.5
+    f = (a - d) * 0.5
+    g = (c + b) * 0.5
+    h = (c - b) * 0.5
+    q = wp.sqrt(e * e + h * h)
+    r = wp.sqrt(f * f + g * g)
+    a1 = wp.atan2(g, f)
+    a2 = wp.atan2(h, e)
+    theta = (a2 - a1) * 0.5
+    phi = (a2 + a1) * 0.5
+    return wp.vec4(phi, q + r, q - r, theta)
+
+
+# Frobenius-norm form of the J2 yield surface: ||dev tau|| = SQRT23 * sigma_Y.
+# SQRT23 = sqrt(2/3) is the 3D von Mises convention, reused here in 2D as a
+# plausibility knob (root §1) — the plane-strain deviatoric split uses only two
+# principal log-strains, so this is not exact 3D J2.
+SQRT23 = 0.8164965809277260
+
+# Per-substep cap on the accumulated equivalent-plastic-strain increment. A
+# legitimate increment over one tiny CFL substep is minute; a particle that
+# momentarily inverts or over-compresses at the shock front would otherwise book
+# a garbage-huge increment in a single step and then spuriously spall the instant
+# the damage milestone compares ``alpha`` to ``damage_threshold`` (0.8-2.0).
+MAX_DALPHA: float = 0.02
+
+
+@wp.kernel
+def _return_mapping(
+    F: wp.array(dtype=wp.mat22),
+    mu: wp.array(dtype=float),
+    yield_k: wp.array(dtype=float),
+    alpha: wp.array(dtype=float),
+):
+    """Perfectly-plastic von Mises radial return in log-strain (Hencky) space.
+
+    Applied per particle after G2P. SVD the (elastic) deformation gradient,
+    take principal log-strains, split off the volumetric part, and radially
+    return the deviatoric part onto the yield surface. Plastic flow is
+    isochoric (the volumetric log-strain is untouched) — correct for metals.
+    Accumulates equivalent plastic strain into ``alpha`` (feeds the damage
+    milestone; unused this milestone). No hardening: perfectly plastic.
+    """
+    p = wp.tid()
+    ys = yield_k[p]
+    if ys <= 0.0:
+        return
+
+    s = _svd22(F[p])
+    phi = s[0]
+    theta = s[3]
+    inverted = s[2] <= 0.0  # det(F)<=0: element flipped this substep
+    # Floor both singular values positive before log: an inverted element
+    # (det<=0) makes sy<=0 and log(sy) NaN, which then poisons everything.
+    # Reconstructing from positive singular values also recovers from inversion.
+    s1 = wp.max(s[1], 1.0e-4)
+    s2 = wp.max(s[2], 1.0e-4)
+
+    e1 = wp.log(s1)
+    e2 = wp.log(s2)
+    e_mean = (e1 + e2) * 0.5  # volumetric (pressure) log-strain — preserved
+    ed1 = e1 - e_mean
+    ed2 = e2 - e_mean
+    norm_ed = wp.sqrt(ed1 * ed1 + ed2 * ed2)
+
+    # Deviatoric elastic log-strain the yield surface allows: ||dev tau|| = 2 mu
+    # ||e_dev||, yielding when it reaches SQRT23 * sigma_Y.
+    e_yield = SQRT23 * ys / (2.0 * mu[p])
+    if norm_ed <= e_yield or norm_ed < 1.0e-12:
+        return  # elastic step, F unchanged
+
+    scale = e_yield / norm_ed
+    e1n = e_mean + ed1 * scale
+    e2n = e_mean + ed2 * scale
+    s1n = wp.exp(e1n)
+    s2n = wp.exp(e2n)
+
+    # Reconstruct F = U diag(s1n, s2n) V^T with U = R(phi), V^T = R(theta)^T.
+    cphi = wp.cos(phi)
+    sphi = wp.sin(phi)
+    cth = wp.cos(theta)
+    sth = wp.sin(theta)
+    U = wp.mat22(cphi, -sphi, sphi, cphi)
+    Sn = wp.mat22(s1n, 0.0, 0.0, s2n)
+    Vt = wp.mat22(cth, sth, -sth, cth)  # R(theta)^T
+    F[p] = U * Sn * Vt
+
+    # Equivalent plastic strain increment (J2, Frobenius convention), guarded so
+    # inverted / over-compressed shock-front particles don't book a garbage
+    # increment that would spuriously spall at the damage milestone (see
+    # MAX_DALPHA). F is still returned above; only the accumulation is guarded.
+    if not inverted:
+        alpha[p] = alpha[p] + wp.min(SQRT23 * (norm_ed - e_yield), MAX_DALPHA)
 
 
 @wp.kernel
@@ -240,8 +350,8 @@ def _seed(scenario, dx: float, spacing: float):
     armor_front = dom.xmin + 0.5 * (dom.xmax - dom.xmin)
     margin = 0.1 * height  # keep the plate off the domain walls
 
-    pos_list, vel_list, mu_list, lam_list, mass_list, vol_list, mid_list = (
-        [], [], [], [], [], [], [],
+    pos_list, vel_list, mu_list, lam_list, yield_list, mass_list, vol_list, mid_list = (
+        [], [], [], [], [], [], [], [],
     )
     p_vol = spacing * spacing  # 2D "volume" (area) per particle
 
@@ -252,6 +362,7 @@ def _seed(scenario, dx: float, spacing: float):
         vel_list.append(np.tile([vx, vy], (n, 1)))
         mu_list.append(np.full(n, mu))
         lam_list.append(np.full(n, lam))
+        yield_list.append(np.full(n, mat.yield_strength))
         mass_list.append(np.full(n, mat.density * p_vol))
         vol_list.append(np.full(n, p_vol))
         mid_list.append(np.full(n, float(mat.material_id)))
@@ -285,6 +396,7 @@ def _seed(scenario, dx: float, spacing: float):
         "vel": np.concatenate(vel_list).astype(np.float32),
         "mu": np.concatenate(mu_list).astype(np.float32),
         "lam": np.concatenate(lam_list).astype(np.float32),
+        "yield": np.concatenate(yield_list).astype(np.float32),
         "mass": np.concatenate(mass_list).astype(np.float32),
         "vol0": np.concatenate(vol_list).astype(np.float32),
         "mat_id": np.concatenate(mid_list).astype(np.float32),
@@ -294,7 +406,16 @@ def _seed(scenario, dx: float, spacing: float):
 def _von_mises(F: np.ndarray, mu: np.ndarray, lam: np.ndarray) -> np.ndarray:
     """Von Mises equivalent of the Cauchy stress (MPa), for the `stress` column.
 
-    Cauchy sigma = (1/J) P(F) F^T with fixed-corotated P; plane-strain vM.
+    Cauchy sigma = (1/J) P(F) F^T with fixed-corotated P. This is the
+    plane-*stress* vM invariant (drops sigma_zz) used in a plane-strain sim —
+    fine for a plausibility readout; it nudges the bulk median slightly above
+    yield. With plasticity active this reads *approximately* capped near each
+    material's yield, not exactly: the small-strain elastic offset and 2D
+    deviatoric convention account for the bulk, and a thin tail over-reads at
+    extreme volumetric compression (small J) at the shock front, because
+    fixed-corotated has no EOS. That tail is a pre-existing property of the
+    elastic model (latent since milestone 1), not a plasticity artifact; tame it
+    viewer-side with a percentile clamp on the colormap (see ``_return_mapping``).
     """
     a, b, c, d = F[:, 0, 0], F[:, 0, 1], F[:, 1, 0], F[:, 1, 1]
     J = a * d - b * c
@@ -384,6 +505,8 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
     vol0 = wp.array(seed["vol0"], dtype=float, device=device)
     mu = wp.array(seed["mu"], dtype=float, device=device)
     lam = wp.array(seed["lam"], dtype=float, device=device)
+    yield_k = wp.array(seed["yield"], dtype=float, device=device)
+    alpha = wp.zeros(n, dtype=float, device=device)  # equiv. plastic strain
 
     nx = grid_res + 3
     ny = int(math.ceil((dom.ymax - dom.ymin) * inv_dx)) + 3
@@ -402,6 +525,10 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
             grid_v, grid_m, nx, ny])
         wp.launch(_g2p, dim=n, device=device, inputs=[
             x, v, C, F, grid_v, origin, inv_dx, dt])
+        # von Mises radial return caps deviatoric stress at yield -> plastic
+        # flow (mushrooming/cratering) instead of pure elastic rebound.
+        wp.launch(_return_mapping, dim=n, device=device, inputs=[
+            F, mu, yield_k, alpha])
 
     def dump_frame():
         pos = x.numpy()
