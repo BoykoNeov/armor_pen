@@ -1,0 +1,36 @@
+# --- Bake outputs (large, regenerable) -------------------------------------
+# The one exception is the committed golden fixture under visualizer/fixtures/.
+/caches/
+*.bin
+!visualizer/fixtures/**/*.bin
+
+# --- Python (solver) --------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- Godot (visualizer) -----------------------------------------------------
+.godot/
+.import/
+export.cfg
+export_presets.cfg
+*.translation
+
+# --- Editors / OS -----------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- Claude Code local overrides --------------------------------------------
+.claude/settings.local.json
