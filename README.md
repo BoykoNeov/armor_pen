@@ -47,6 +47,12 @@ per-directory `CLAUDE.md` files and issue tracker for what's next.
 
 ## Quick start
 
+> ⚠️ **Solver deps are pending an engine decision.** A toolchain probe on the
+> dev machine found Taichi has no wheel for Python 3.14 while NVIDIA Warp runs
+> on the target GPU (sm_120). The solver will likely target Warp, not Taichi —
+> see [`solver/CLAUDE.md`](solver/CLAUDE.md). Until then `pip install -e .` in
+> `solver/` may fail to resolve `taichi`.
+
 ```bash
 # --- Solver (Python) ---
 cd solver && pip install -e .

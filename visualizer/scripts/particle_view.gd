@@ -17,7 +17,11 @@ extends MultiMeshInstance2D
 ## Seconds of wall-clock per render frame during playback.
 @export var seconds_per_frame: float = 0.05
 
-var _loader := CacheLoader.new()
+# Explicit preload rather than relying on the global `class_name` registry, so
+# this script parses regardless of project-import order.
+const CacheLoaderScript = preload("res://scripts/cache_loader.gd")
+
+var _loader := CacheLoaderScript.new()
 var _frame: int = 0
 var _accum: float = 0.0
 var _pos_x: int = 0
