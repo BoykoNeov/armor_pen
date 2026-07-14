@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(pytest:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python -m ballistics_solver.run:*)",
+      "Bash(python tools/validate_cache.py:*)",
+      "Bash(python tools/inspect_cache.py:*)",
+      "Bash(python tools/make_golden_cache.py:*)"
+    ]
+  }
+}
