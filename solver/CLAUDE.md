@@ -19,9 +19,9 @@ first** — this file only adds solver-local notes.
 | File | Role | Status |
 |---|---|---|
 | `config.py` | Scenario schema (dataclasses), YAML loader | working |
-| `materials.py` | Material library, all constants in mm-ms-g | data (all fields now consumed: elasticity, yield, ductile `damage_threshold`, `brittle`) |
+| `materials.py` | Material library, all constants in mm-ms-g | data (all fields now consumed: elasticity, yield, ductile `damage_threshold`, `brittle`, reactive block) |
 | `cache_writer.py` | Writes manifest.json + frames.bin (the contract) | working |
-| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + von Mises plasticity + ductile & brittle damage + multi-material stack (milestone 4)** — see below |
+| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + von Mises plasticity + ductile & brittle damage + multi-material stack + reactive ERA/NERA layer (milestone 5)** — see below |
 | `run.py` | CLI: scenario.yaml → cache dir | working (Warp init + GPU assert + bake) |
 
 ## Build order (root §9) — where we are
@@ -79,8 +79,42 @@ Grow the reference MLS-MPM incrementally, validating visually with
      multi-material test — its plate fly-away / wall pile-up are momentum
      artifacts of the deferred jet model, not multi-material issues. Use the KE
      decks. Plate anchoring is NOT needed at sane KE velocity (stacks stay put).
-5. **NERA/ERA reactive layer** — next. Reactive impulse degrading the penetrator
-   (different mechanism; `era_filler` constants exist, mechanism unwired).
+5. **NERA/ERA reactive layer** — ✅ mechanism done (0° honest; obliquity deferred
+   to milestone 6). A reactive filler (`era_filler`, `reactive: true`) ignites on
+   shock (`det(F) < ignition_compression`) and releases an isotropic detonation
+   overpressure for `burn_time` — a **pressure source term in `_p2g`** that flings
+   the sandwich plates apart through the ordinary grid (emergent, not a scripted
+   rod kick). Reactive particles run a self-contained elastic → detonation →
+   debris state machine (`_update_reactive`) and are excluded from the
+   ductile-spall path (else the soft filler would spall in the same substep it
+   should ignite and silently no-op the detonation — see the reactive note in
+   `mpm.py`). A persistent NERA bulge is the unignited soft-elastic branch held
+   open — `ignition_compression=0` so the filler *never* ignites — **not** merely
+   `detonation_pressure=0` (that still ignites on the impact shock and collapses
+   to debris: bulge-then-collapse). Untested — no NERA deck baked yet. Two
+   stability guards, reactive-particles-only: burning **and** spent
+   filler get `F` pinned to identity (no elastic memory; return-mapping skips
+   them so `F` would otherwise drift to inf and overflow the host readout), and
+   speed is clamped at `REACTIVE_VMAX` (the `F`-independent source would otherwise
+   drive unconfined debris to a CFL-breaking ~14 km/s once the plates separate).
+   All gated on `reactive > 0.5`, so the three non-reactive KE decks are byte-for-
+   effect unchanged. Both ERA decks bake clean on the RTX 5090 (no NaN/Inf) and
+   pass `validate_cache`; verified visually (M:\claud_projects\temp\era_react_vs_inert.png).
+   - **Honest limitation (verified, not a bug):** at **0° the reactive layer does
+     not meaningfully degrade the rod.** Measured against an equal-areal-mass
+     inert twin (`era_filler_inert`), residual penetration into the main plate is
+     within noise (15.7 vs 15.5 mm; residual v, rod damage, main-plate spall all
+     within scatter). Physical reason: at normal incidence the detonation flings
+     the plates *laterally, symmetric about the rod axis* — the debris sweeps
+     sideways and never crosses the rod to cut it. Real ERA needs **obliquity**
+     (plates sweep across a long rod). The A/B decks (`apfsds_vs_era` /
+     `apfsds_vs_era_inert`) are byte-identical in geometry, areal mass, and timing,
+     so the near-zero delta cleanly isolates the reactive contribution. See
+     PHYSICS §3.1.
+6. **Oblique reactive armor** — next. Rotate the rod *rectangle* (`angle_deg`
+   currently tilts only the projectile velocity) + seed oblique slabs, so the
+   lateral flyer sweep can actually erode/deflect the rod — where ERA earns its
+   keep.
 
 Don't rewrite from scratch.
 

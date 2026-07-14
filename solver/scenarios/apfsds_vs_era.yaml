@@ -1,0 +1,48 @@
+# APFSDS-like long-rod KE penetrator vs a REACTIVE-armor sandwich in front of a
+# main plate: [thin steel flyer | reactive filler | thin steel plate] :: gap ::
+# main RHA plate. This is the ERA/NERA reactive demonstrator (milestone 5). When
+# the impact shock reaches the filler it ignites and flings the sandwiching
+# plates apart; the front flyer is driven back into the oncoming rod, eroding and
+# disrupting the penetrator before it reaches the main plate.
+#
+# A/B NOTE: apfsds_vs_era_inert.yaml is this deck with the filler swapped for the
+# inert twin (era_filler_inert — identical mass/stiffness, reactivity OFF). The
+# two decks are byte-identical in geometry and areal mass, so comparing the rod's
+# residual penetration into the main plate isolates the *reactive* contribution
+# from "there is simply more material in the path".
+#
+# OBLIQUITY CAVEAT: this deck is at 0° (normal incidence). Real reactive armor is
+# far more effective at obliquity, where the moving plates sweep laterally ACROSS
+# the rod and cut it. At 0° the mechanism is front-plate-slammed-back-into-rod
+# erosion + tamping only — a genuine but weaker degradation. Oblique decks need
+# the rod *rectangle* rotated too (angle_deg currently tilts only the projectile
+# velocity), deferred to a later milestone.
+#
+# Scenarios are DATA, not code (CLAUDE.md §9). Numbers are representative /
+# illustrative order-of-magnitude values, not any real system (CLAUDE.md §10).
+name: apfsds_vs_era
+
+domain: { xmin: 0, xmax: 200, ymin: 0, ymax: 100 }   # mm
+
+projectile:
+  kind: kinetic
+  material: tungsten_rod
+  length: 60.0        # mm
+  diameter: 8.0       # mm
+  velocity: 1600      # m/s (== mm/ms)
+  angle_deg: 0.0
+
+armor:
+  - { material: rha,        thickness: 6.0 }                  # steel flyer plate
+  - { material: era_filler, thickness: 12.0 }                 # reactive interlayer
+  - { material: rha,        thickness: 6.0 }                  # steel back plate
+  - { material: rha,        thickness: 30.0, standoff: 25.0 } # main plate, 25 mm gap
+
+solver:
+  grid_resolution: 512
+  particles_per_cell: 4
+  dt: 1.0e-7          # substep dt (CFL-bound); NOT frame_dt
+  total_time: 6.0e-5  # ~60 us — long enough for the rod to REACH the main plate
+  #                     (at 40 us the tip stopped ~6 mm short of it, so residual
+  #                     penetration into the protected plate was unmeasurable).
+  frame_count: 120

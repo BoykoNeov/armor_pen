@@ -115,7 +115,64 @@ Elasticity + rate-independent plasticity + a damage threshold:
 | Tungsten / DU rod | Very dense, stiff, high yield — the KE penetrator. |
 | RHA (steel) | Baseline ductile armor; mushrooms and spalls. |
 | Ceramic / composite | Higher stiffness, **brittle** (`brittle: true`) — fails on the stress trigger above, shattering with ~zero plastic flow. |
-| ERA filler | An impulse layer that degrades the penetrator on contact. *(reactive impulse — future milestone; the material constants exist but the reactive mechanism is not wired yet.)* |
+| ERA filler | An impulse layer that degrades the penetrator on contact. *(reactive impulse — implemented, milestone 5; see §3.1.)* |
+
+### 3.1 Reactive layer — ERA/NERA (milestone 5)
+
+A **reactive filler** (`era_filler`, `reactive: true`) models the interlayer of a
+reactive-armor sandwich `[plate | filler | plate]`. It is an **impulse layer**:
+when the impact shock reaches it, it ignites and releases an isotropic
+overpressure that flings the sandwiching plates apart. Modelled as a **pressure
+source term carried through the ordinary MLS-MPM grid** — the plate motion is
+*emergent* (the source drives the filler, the filler drives the plates through
+grid contact), **not** a scripted kick to the rod. Reactive particles run a
+self-contained state machine, deliberately excluded from the plastic /
+ductile-spall path (see mpm.py's reactive note — the soft filler would otherwise
+ductile-spall in the same shocked substep it should ignite, silently no-op-ing
+the detonation):
+
+- **unignited** → soft fixed-corotated elastic (the plates bulge from the raw
+  shock even with no detonation). A persistent **NERA** bulge is this branch held
+  open — a filler that *never ignites*, i.e. `ignition_compression=0` (stays
+  soft-elastic), **not** merely `detonation_pressure=0`: a filler with
+  `ignition_compression>0` still ignites on the 2% impact shock and, with zero
+  pressure, burns to limp debris — that is bulge-*then-collapse*, not a sustained
+  NERA bulge. *(Untested — no NERA deck is baked yet; this is the intended knob,
+  not a verified result.)*
+- **burning** → isotropic detonation overpressure for `burn_time` ms; ignition
+  triggers when shock compression drops `det(F)` below `ignition_compression`.
+- **spent** → cohesion-free debris (mass + momentum, no stress). `damage` is
+  repurposed as the reactive "ignited/spent" latch (and the viewer flag).
+
+Two plausibility guards keep this stable (root §1/§11): burning **and spent**
+filler have `F` pinned to identity each substep (a detonating gas / debris has no
+elastic reference configuration, and the return-mapping that would otherwise cap
+`F` skips reactive particles); and reactive-particle speed is clamped at a
+physical detonation-product scale (`REACTIVE_VMAX`), because the `F`-independent
+source would otherwise accelerate unconfined light debris to a CFL-breaking
+~14 km/s once the plates separate. Both touch reactive particles only.
+
+**Verified result — and an honest limitation.** The mechanism fires cleanly: the
+filler detonates and the sandwich plates fly apart at a few hundred m/s. But at
+**0° (normal incidence) the reactive layer produces negligible penetrator
+degradation** — measured against an *equal-areal-mass inert twin*
+(`era_filler_inert`: identical density/stiffness/thickness, reactivity off), the
+rod's residual penetration into the protected main plate is within noise
+(15.7 mm reactive vs 15.5 mm inert; rod residual velocity, damage fraction, and
+main-plate spall all within scatter — if anything the reactive rod is marginally
+*deeper* and *less* damaged, a coherent but noise-floor effect: the detonation
+clears filler off-axis, so the reactive rod pushes through slightly less on-path
+material than the inert rod that keeps its filler in the channel — no protective
+benefit either way). This is **correct physics, not a bug**: at 0° the detonation flings the
+plates *laterally, symmetric about the rod axis*, so the debris sweeps sideways
+and never crosses the rod path to cut it. Real reactive armor gets its
+effectiveness from **obliquity**, where the moving plates sweep *across* a long
+rod and erode/deflect it. The A/B decks (`apfsds_vs_era` /
+`apfsds_vs_era_inert`) are byte-identical in geometry, areal mass, and timing, so
+the near-zero delta cleanly isolates "the reactive contribution at 0° is
+negligible." Oblique decks (rotating the rod *rectangle* — `angle_deg` currently
+tilts only the projectile velocity — and seeding oblique slabs) are a follow-on
+milestone; that is where the layer is expected to visibly degrade the rod.
 
 ---
 

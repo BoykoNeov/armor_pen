@@ -8,8 +8,10 @@ not spec-sheet numbers for any real system.
 STATUS: data library, fully consumed by mpm.py. Every field drives the solver:
 elasticity (``youngs_modulus``/``poisson_ratio``), ``yield_strength`` (von Mises
 return mapping — and the fracture strength for brittle materials), ductile
-``damage_threshold`` (plastic-strain spall), and ``brittle`` (stress-triggered
-shatter). See mpm.py and docs/PHYSICS.md §3.
+``damage_threshold`` (plastic-strain spall), ``brittle`` (stress-triggered
+shatter), and the reactive block (``reactive`` + ``detonation_pressure`` /
+``burn_time`` / ``ignition_compression``) that drives the ERA/NERA impulse layer
+(milestone 5). See mpm.py and docs/PHYSICS.md §3.
 """
 
 from __future__ import annotations
@@ -30,6 +32,22 @@ class Material:
     damage_threshold: float  # ductile spall: equiv. plastic strain at detachment
     #                          (ignored for brittle materials — they use a stress trigger)
     brittle: bool = False  # ceramics/composites: shatter on stress, ~zero plastic flow
+
+    # --- Reactive block (ERA/NERA, milestone 5) -----------------------------
+    # A reactive filler is an impulse layer that degrades the penetrator: when
+    # the impact shock reaches it, it ignites and releases an isotropic pressure
+    # that flings the sandwiching plates apart (an ERA detonation). Modelled as a
+    # source term in mpm.py — reactive particles bypass the ductile-spall path
+    # entirely and run their own elastic → detonation-pressure → debris state
+    # machine, so this must not be confused with `brittle`/`damage_threshold`.
+    # A persistent NERA-style inert bulging layer is a filler that NEVER ignites
+    # (`ignition_compression=0`, so it stays on the soft-elastic branch and the
+    # plates move from the shock alone) — NOT merely `detonation_pressure=0`,
+    # which still ignites on the impact shock and then collapses to limp debris.
+    reactive: bool = False  # ERA/NERA filler: ignites and drives an impulse
+    detonation_pressure: float = 0.0  # MPa, isotropic outward pulse while burning
+    burn_time: float = 0.0  # ms the pulse lasts once ignited (physical time, not steps)
+    ignition_compression: float = 0.0  # ignites when det(F) drops below this (0 = never)
 
 
 # Representative library. Numbers are public-literature order-of-magnitude.
@@ -53,6 +71,22 @@ LIBRARY: dict[str, Material] = {
         name="era_filler", material_id=3,
         density=1.6e-3, youngs_modulus=5.0e3, poisson_ratio=0.40,
         yield_strength=0.05e3, damage_threshold=0.02,
+        # Reactive: ignites at ~2% shock compression and releases a ~4 GPa pulse
+        # for ~5 us. Illustrative order-of-magnitude (root §10): real detonation
+        # pressures are ~10x higher, but this is tuned to fling a few-mm steel
+        # flyer to a few hundred m/s, not to match an explosive formulation.
+        reactive=True,
+        detonation_pressure=4.0e3, burn_time=5.0e-3, ignition_compression=0.98,
+    ),
+    # Inert twin of era_filler: identical mass/stiffness, reactivity OFF. Exists
+    # solely for the equal-areal-mass A/B baseline (reactive vs inert filler in
+    # the same geometry), so the reactive contribution to penetrator degradation
+    # can be isolated from "there is simply more material in the path".
+    "era_filler_inert": Material(
+        name="era_filler_inert", material_id=4,
+        density=1.6e-3, youngs_modulus=5.0e3, poisson_ratio=0.40,
+        yield_strength=0.05e3, damage_threshold=0.02,
+        reactive=False,
     ),
 }
 

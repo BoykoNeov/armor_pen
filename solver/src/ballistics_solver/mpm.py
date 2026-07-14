@@ -1,14 +1,15 @@
 """MLS-MPM transfer kernels (NVIDIA Warp) — the physics core.
 
-STATUS: milestone 4 — **elastic + von Mises plasticity + ductile & brittle damage
-+ multi-material armor stack** MLS-MPM. A KE rod and an arbitrary front-to-back
-armor stack (any number of layers, each its own material, with optional standoff
-gaps) are seeded from the scenario and run through a P2G / grid-update / G2P
-substep cycle with fixed-corotated hyperelasticity, followed by a
-perfectly-plastic von Mises radial return (``_return_mapping``) that caps
-deviatoric stress at each material's yield and lets metal flow. Every material
-constant is a per-particle array (``mu/lam/yield/dthr/brittle``), so heterogeneous
-stacks just work.
+STATUS: milestone 5 — **elastic + von Mises plasticity + ductile & brittle damage
++ multi-material armor stack + reactive (ERA/NERA) impulse layer** MLS-MPM. A KE
+rod and an arbitrary front-to-back armor stack (any number of layers, each its
+own material, with optional standoff gaps) are seeded from the scenario and run
+through a P2G / grid-update / G2P substep cycle with fixed-corotated
+hyperelasticity, followed by a perfectly-plastic von Mises radial return
+(``_return_mapping``) that caps deviatoric stress at each material's yield and
+lets metal flow. Every material constant is a per-particle array
+(``mu/lam/yield/dthr/brittle/reactive/det_pressure/burn_time/ign_comp``), so
+heterogeneous stacks just work.
 
 Failure has two modes (``_update_damage``): **ductile** metals accumulate
 equivalent plastic strain into ``alpha`` and spall once it crosses
@@ -18,11 +19,29 @@ with ~zero plastic flow rather than acting as an indestructible ductile wall. A
 failed particle is latched ``damage=1`` and ``_p2g`` drops its stress term — it
 becomes a cohesion-free **free fragment** (mass + momentum only). Particle count
 is fixed — spall = flagged + detached, never created/destroyed (cache contract
-§4). Verified on the RTX 5090: ``apfsds_vs_rha`` / ``apfsds_vs_composite`` /
+§4).
+
+**Reactive layer (``_update_reactive``, milestone 5):** a reactive filler
+(``era_filler``) sandwiched between plates ignites when the impact shock
+compresses it past ``ignition_compression`` (``det(F)`` threshold) and releases
+an isotropic detonation overpressure for ``burn_time`` ms — a *source term* in
+``_p2g`` that flings the plates apart through the ordinary grid (emergent, not a
+scripted rod kick). Reactive particles run their own elastic → detonation →
+debris state machine and are excluded from the ductile-spall path so they can't
+spall before detonating (see the reactive note below). A persistent NERA
+(inert-bulge) layer is the *unignited* soft-elastic branch held open —
+``ignition_compression=0`` so it never ignites — not merely
+``detonation_pressure=0`` (which still ignites on the shock and collapses).
+
+Verified on the RTX 5090: ``apfsds_vs_rha`` / ``apfsds_vs_composite`` /
 ``apfsds_vs_spaced`` all bake clean (no NaN/Inf) and pass ``validate_cache``;
-RHA spall stays ~16% (ductile path unchanged), the ceramic core now shatters
-(interface cracks + comminution ahead of the rod), and the spaced front plate is
-defeated across a preserved standoff gap.
+RHA spall stays ~16% (ductile path unchanged), the ceramic core shatters
+(interface cracks + comminution ahead of the rod), the spaced front plate is
+defeated across a preserved standoff gap, and the reactive deck detonates and
+flings the sandwich plates apart (milestone 5). NB: at 0° that detonation does
+NOT meaningfully degrade the rod (it sweeps laterally, symmetric about the rod
+axis) — verified against an equal-areal-mass inert twin; real ERA needs
+obliquity. Correct physics, not a bug — see PHYSICS §3.1.
 
 Two hard rules for whoever grows this (root §2, §11):
 
@@ -110,6 +129,20 @@ def _polar_r(F: wp.mat22):
 
 
 @wp.func
+def _fixed_corotated_pft(F: wp.mat22, mu: float, lam: float):
+    """Fixed-corotated Kirchhoff stress term P(F) Fᵀ (root §6, PHYSICS §3).
+
+    The elastic stress that drives the P2G momentum scatter. Factored out so the
+    reactive filler's ``_p2g`` state machine (elastic → detonation → debris) can
+    reuse the exact same elastic branch as ordinary material without copy-paste.
+    """
+    J = wp.determinant(F)
+    R = _polar_r(F)
+    lp = lam * (J - 1.0) * J
+    return 2.0 * mu * (F - R) * wp.transpose(F) + wp.mat22(lp, 0.0, 0.0, lp)
+
+
+@wp.func
 def _svd22(M: wp.mat22):
     """Closed-form 2x2 SVD: M = U diag(sx, sy) V^T with U = R(phi), V = R(theta).
 
@@ -165,12 +198,53 @@ MAX_DALPHA: float = 0.02
 # alpha path, so the all-metal apfsds_vs_rha bake is bit-for-bit unchanged.
 BRITTLE_TENSILE_FRAC: float = 0.1
 
+# Reactive-filler velocity clamp (mm/ms == m/s). The detonation source in `_p2g`
+# is an additive per-particle overpressure that is independent of the particle's
+# deformation state; once the sandwich plates separate, the now-unconfined light
+# filler (density 1.6e-3, ~11x lighter than steel) keeps absorbing the pulse
+# every substep with nothing to react against, so a thin tail runs away to
+# ~14 km/s — unphysical (detonation-product gas is a few km/s at most) and a CFL
+# hazard (0.76 dx/substep). We cap reactive-particle speed at a physical
+# detonation-product scale. This bleeds a little energy from the runaway tail
+# only (reactive particles only — the rod and plates are untouched), the
+# stable/pretty tradeoff root §1/§11 explicitly endorses. Plate fling velocities
+# (~400-550 m/s) sit far below this, so the ERA mechanism is unaffected.
+REACTIVE_VMAX: float = 3000.0
+
+# Reactive impulse layer — ERA/NERA (milestone 5). A reactive filler (era_filler,
+# `reactive: true`) models the interlayer of a reactive-armor sandwich
+# [plate | filler | plate]. When the impact shock reaches it, it *ignites* and
+# releases an isotropic overpressure that flings the two sandwiching plates apart
+# — the front plate is driven back into the oncoming rod (tip erosion + tamping)
+# and disrupts the penetrator. This is modelled as a **pressure source term**
+# carried through the ordinary MLS-MPM grid (emergent plate motion), NOT a
+# scripted kick to the rod.
+#
+# Reactive particles run a self-contained state machine in `_p2g`, keyed off
+# `reactive`/`burn`/`damage` and NEVER the ductile-spall gate:
+#   * unignited  -> soft fixed-corotated elastic (the plates also bulge from the
+#                   raw shock even with no detonation). A persistent NERA bulge is
+#                   this branch held open: ignition_compression=0 so the filler
+#                   never ignites — NOT merely detonation_pressure=0 (that still
+#                   ignites on the shock, burns zero pressure, then collapses).
+#   * burning    -> isotropic detonation overpressure for `burn_time` ms.
+#   * spent      -> cohesion-free debris (mass + momentum, no stress).
+# They are deliberately excluded from `_return_mapping` and the ductile branch of
+# `_update_damage`: era_filler's yield (50 MPa) and `damage_threshold` (0.02, ==
+# MAX_DALPHA) would otherwise let it ductile-spall in the *same* shocked substep
+# it should ignite — `_p2g` drops the stress term for spalled particles, which
+# would silently no-op the detonation. `damage` is instead repurposed for
+# reactive particles as the "has ignited / is spent" latch (also the viewer flag)
+# and is written ONLY by `_update_reactive`. Everything is gated on
+# `reactive > 0.5`, so the three non-reactive KE decks bake identically.
+
 
 @wp.kernel
 def _return_mapping(
     F: wp.array(dtype=wp.mat22),
     mu: wp.array(dtype=float),
     yield_k: wp.array(dtype=float),
+    reactive: wp.array(dtype=float),
     alpha: wp.array(dtype=float),
 ):
     """Perfectly-plastic von Mises radial return in log-strain (Hencky) space.
@@ -181,8 +255,14 @@ def _return_mapping(
     isochoric (the volumetric log-strain is untouched) — correct for metals.
     Accumulates equivalent plastic strain into ``alpha`` (feeds the damage
     milestone; unused this milestone). No hardening: perfectly plastic.
+
+    Reactive filler is excluded (it has its own state machine and must not
+    accumulate ``alpha`` / ductile-spall before it detonates — see the reactive
+    note above); its F is left to the elastic + detonation path in ``_p2g``.
     """
     p = wp.tid()
+    if reactive[p] > 0.5:
+        return
     ys = yield_k[p]
     if ys <= 0.0:
         return
@@ -268,6 +348,7 @@ def _update_damage(
     lam: wp.array(dtype=float),
     yield_k: wp.array(dtype=float),
     brittle: wp.array(dtype=float),
+    reactive: wp.array(dtype=float),
     alpha: wp.array(dtype=float),
     dthr: wp.array(dtype=float),
     damage: wp.array(dtype=float),
@@ -284,12 +365,16 @@ def _update_damage(
     Brittle materials thus fail with ~zero plastic flow, the defining brittle
     signature, rather than acting as an indestructible ductile wall.
 
-    Once set, ``damage`` stays 1.0 — fracture is irreversible. This is the ONLY
-    writer of the ``damage`` array; ``_p2g`` reads it to drop a failed particle's
-    cohesion (it becomes a free fragment: mass + momentum, no stress). Fixed
-    particle count — nothing is created or destroyed, only flagged (contract §4).
+    Once set, ``damage`` stays 1.0 — fracture is irreversible. For non-reactive
+    material this is the only writer of ``damage`` (reactive filler is skipped
+    here and latched instead by ``_update_reactive``); ``_p2g`` reads it to drop a
+    failed particle's cohesion (it becomes a free fragment: mass + momentum, no
+    stress). Fixed particle count — nothing is created or destroyed, only flagged
+    (contract §4).
     """
     p = wp.tid()
+    if reactive[p] > 0.5:
+        return  # reactive filler owns its own `damage` latch (see _update_reactive)
     if damage[p] >= 0.5:
         return  # already failed; latched
 
@@ -305,6 +390,62 @@ def _update_damage(
 
 
 @wp.kernel
+def _update_reactive(
+    F: wp.array(dtype=wp.mat22),
+    reactive: wp.array(dtype=float),
+    ign_comp: wp.array(dtype=float),
+    burn_time: wp.array(dtype=float),
+    burn: wp.array(dtype=float),
+    damage: wp.array(dtype=float),
+    dt: float,
+):
+    """Drive the reactive filler's ignition + burn state (ERA/NERA, milestone 5).
+
+    Per reactive particle, after G2P, in three latched stages:
+
+      * **burning** (``burn > 0``) — count the detonation pulse down in physical
+        time (ms), by ``dt``, flooring at 0. Tracking real time (not a substep
+        count) keeps the pulse duration independent of ``grid_resolution`` /
+        substeps-per-frame.
+      * **spent** (``burn == 0``, ``damage`` latched) — do nothing; never
+        re-ignite.
+      * **unignited** — ignite when the impact shock compresses the filler past
+        ``ignition_compression`` (``det(F)`` drops below it). Ignition sets
+        ``burn = burn_time`` and latches ``damage = 1`` (marks the particle
+        reacting/consumed; also the viewer flag and the re-ignition guard).
+
+    ``burn`` is read by ``_p2g`` one substep later to add the detonation
+    overpressure — a negligible one-substep latency. Non-reactive particles are
+    skipped, so the non-reactive KE decks are unaffected.
+    """
+    p = wp.tid()
+    if reactive[p] < 0.5:
+        return
+    if burn[p] > 0.0:
+        burn[p] = wp.max(burn[p] - dt, 0.0)  # burning: age the pulse
+        # A detonating gas has no elastic reference configuration — reset F to
+        # identity so the (skipped-by-`_return_mapping`) filler F can't drift to
+        # huge/inverted values under the sustained overpressure and overflow the
+        # host `_von_mises` readout. The stress readout is masked for reactive
+        # particles anyway (damage>0.5 -> 0), so this is purely hygiene; the
+        # detonation momentum lives in `burn`/`_p2g`, not in F.
+        F[p] = wp.mat22(1.0, 0.0, 0.0, 1.0)
+        return
+    if damage[p] >= 0.5:
+        # Spent debris: still advected through G2P every substep but skipped by
+        # `_return_mapping`, so its (unused, stress-masked) F would otherwise
+        # drift to inf and overflow the host readout. Pin it to identity — like
+        # burning filler, spent debris carries no elastic memory.
+        F[p] = wp.mat22(1.0, 0.0, 0.0, 1.0)
+        return  # spent: ignited once already, never re-ignite
+    ic = ign_comp[p]
+    if ic > 0.0:
+        if wp.determinant(F[p]) < ic:  # shock arrived -> ignite
+            burn[p] = burn_time[p]
+            damage[p] = 1.0
+
+
+@wp.kernel
 def _p2g(
     x: wp.array(dtype=wp.vec2),
     v: wp.array(dtype=wp.vec2),
@@ -315,6 +456,9 @@ def _p2g(
     mu: wp.array(dtype=float),
     lam: wp.array(dtype=float),
     damage: wp.array(dtype=float),
+    reactive: wp.array(dtype=float),
+    det_pressure: wp.array(dtype=float),
+    burn: wp.array(dtype=float),
     grid_v: wp.array2d(dtype=wp.vec2),
     grid_m: wp.array2d(dtype=float),
     origin: wp.vec2,
@@ -329,21 +473,33 @@ def _p2g(
     wx = _bspline_w(fx[0])
     wy = _bspline_w(fx[1])
 
-    # Fixed-corotated Kirchhoff stress term P(F) F^T (root §6, PHYSICS §3). A
-    # spalled particle (damage>=0.5) is a free fragment: it drops its stress
-    # term entirely — it can no longer hold tension or shear, so failed material
-    # loses cohesion and a perforation channel / back-face spall spray opens up.
-    # It KEEPS its mass and APIC momentum so grid momentum is conserved and it
-    # still collides (grid-shared contact) instead of ghosting through the rod.
+    # Stress term P(F) F^T scattered as APIC momentum (root §6, PHYSICS §3). The
+    # scaling (-dt * vol0 * 4 * inv_dx^2) is shared by every branch below.
+    coeff = -dt * vol0[p] * 4.0 * inv_dx * inv_dx
     affine = mass[p] * C[p]
-    if damage[p] < 0.5:
-        J = wp.determinant(F[p])
-        R = _polar_r(F[p])
-        PFt = 2.0 * mu[p] * (F[p] - R) * wp.transpose(F[p]) + wp.mat22(
-            lam[p] * (J - 1.0) * J, 0.0, 0.0, lam[p] * (J - 1.0) * J
-        )
-        stress = (-dt * vol0[p] * 4.0 * inv_dx * inv_dx) * PFt
-        affine = stress + affine
+    if reactive[p] > 0.5:
+        # Reactive filler runs its OWN state machine, keyed off burn/damage and
+        # never the ductile-spall gate (see the reactive note above):
+        #   burning   -> isotropic detonation overpressure that flings the plates
+        #   unignited -> soft fixed-corotated elastic (a never-igniting filler,
+        #                ignition_compression=0, stays here: the NERA bulge)
+        #   spent     -> cohesion-free debris (no stress)
+        if burn[p] > 0.0:
+            # Negative-diagonal Kirchhoff term = internal overpressure pushing
+            # material OUTWARD (an EOS-free stand-in for detonation-product gas).
+            # Sign verified empirically: the sandwiching plates fly apart, not in.
+            pd = det_pressure[p]
+            affine = coeff * wp.mat22(-pd, 0.0, 0.0, -pd) + affine
+        elif damage[p] < 0.5:
+            affine = coeff * _fixed_corotated_pft(F[p], mu[p], lam[p]) + affine
+        # else spent: no stress term
+    elif damage[p] < 0.5:
+        # A spalled particle (damage>=0.5) is a free fragment: it drops its
+        # stress term entirely — it can no longer hold tension or shear, so a
+        # perforation channel / back-face spall spray opens up. It KEEPS its mass
+        # and APIC momentum so grid momentum is conserved and it still collides
+        # (grid-shared contact) instead of ghosting through the rod.
+        affine = coeff * _fixed_corotated_pft(F[p], mu[p], lam[p]) + affine
 
     for i in range(3):
         for j in range(3):
@@ -416,6 +572,28 @@ def _g2p(
     F[p] = (wp.mat22(1.0, 0.0, 0.0, 1.0) + dt * new_C) * F[p]
 
 
+@wp.kernel
+def _clamp_reactive_v(
+    v: wp.array(dtype=wp.vec2),
+    reactive: wp.array(dtype=float),
+    vmax: float,
+):
+    """Cap reactive-filler speed at a physical detonation-product scale.
+
+    The `_p2g` detonation source is F-independent, so an unconfined light filler
+    particle keeps gaining momentum from the pulse each substep and a thin tail
+    runs away to ~14 km/s (unphysical + CFL hazard). Clamp reactive particles
+    only — the rod and plates carry real momentum and are left untouched. See
+    REACTIVE_VMAX. Runs after G2P (on the post-transfer particle velocity).
+    """
+    p = wp.tid()
+    if reactive[p] < 0.5:
+        return
+    s = wp.length(v[p])
+    if s > vmax:
+        v[p] = v[p] * (vmax / s)
+
+
 # ===========================================================================
 # Host-side seeding + attribute extraction (pure numpy; kernels stay clean).
 # ===========================================================================
@@ -448,7 +626,8 @@ def _seed(scenario, dx: float, spacing: float):
     +x at the front face of the armor stack; each armor layer is a full-height
     (with margin) slab, laid front-to-back with any standoff gap.
 
-    Returns a dict of numpy arrays: pos, vel, mu, lam, mass, vol0, mat_id.
+    Returns a dict of numpy arrays: pos, vel, mu, lam, yield, dthr, brittle,
+    reactive, det_pressure, burn_time, ign_comp, mass, vol0, mat_id.
     """
     dom = scenario.domain
     proj = scenario.projectile
@@ -459,8 +638,10 @@ def _seed(scenario, dx: float, spacing: float):
     armor_front = dom.xmin + 0.5 * (dom.xmax - dom.xmin)
     margin = 0.1 * height  # keep the plate off the domain walls
 
-    pos_list, vel_list, mu_list, lam_list, yield_list, dthr_list, brittle_list, mass_list, vol_list, mid_list = (
-        [], [], [], [], [], [], [], [], [], [],
+    (pos_list, vel_list, mu_list, lam_list, yield_list, dthr_list, brittle_list,
+     reactive_list, detp_list, burnt_list, igncomp_list,
+     mass_list, vol_list, mid_list) = (
+        [], [], [], [], [], [], [], [], [], [], [], [], [], [],
     )
     p_vol = spacing * spacing  # 2D "volume" (area) per particle
 
@@ -474,6 +655,10 @@ def _seed(scenario, dx: float, spacing: float):
         yield_list.append(np.full(n, mat.yield_strength))
         dthr_list.append(np.full(n, mat.damage_threshold))
         brittle_list.append(np.full(n, 1.0 if mat.brittle else 0.0))
+        reactive_list.append(np.full(n, 1.0 if mat.reactive else 0.0))
+        detp_list.append(np.full(n, mat.detonation_pressure))
+        burnt_list.append(np.full(n, mat.burn_time))
+        igncomp_list.append(np.full(n, mat.ignition_compression))
         mass_list.append(np.full(n, mat.density * p_vol))
         vol_list.append(np.full(n, p_vol))
         mid_list.append(np.full(n, float(mat.material_id)))
@@ -510,6 +695,10 @@ def _seed(scenario, dx: float, spacing: float):
         "yield": np.concatenate(yield_list).astype(np.float32),
         "dthr": np.concatenate(dthr_list).astype(np.float32),
         "brittle": np.concatenate(brittle_list).astype(np.float32),
+        "reactive": np.concatenate(reactive_list).astype(np.float32),
+        "det_pressure": np.concatenate(detp_list).astype(np.float32),
+        "burn_time": np.concatenate(burnt_list).astype(np.float32),
+        "ign_comp": np.concatenate(igncomp_list).astype(np.float32),
         "mass": np.concatenate(mass_list).astype(np.float32),
         "vol0": np.concatenate(vol_list).astype(np.float32),
         "mat_id": np.concatenate(mid_list).astype(np.float32),
@@ -621,8 +810,13 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
     yield_k = wp.array(seed["yield"], dtype=float, device=device)
     dthr = wp.array(seed["dthr"], dtype=float, device=device)  # damage threshold
     brittle = wp.array(seed["brittle"], dtype=float, device=device)  # 1 brittle, 0 ductile
+    reactive = wp.array(seed["reactive"], dtype=float, device=device)  # 1 ERA/NERA filler
+    det_pressure = wp.array(seed["det_pressure"], dtype=float, device=device)  # MPa pulse
+    burn_time = wp.array(seed["burn_time"], dtype=float, device=device)  # ms pulse duration
+    ign_comp = wp.array(seed["ign_comp"], dtype=float, device=device)  # det(F) ignition thresh
     alpha = wp.zeros(n, dtype=float, device=device)  # equiv. plastic strain
-    damage = wp.zeros(n, dtype=float, device=device)  # 0 intact, 1 spalled (latched)
+    damage = wp.zeros(n, dtype=float, device=device)  # 0 intact, 1 spalled/reacting (latched)
+    burn = wp.zeros(n, dtype=float, device=device)  # ms of detonation pulse remaining
 
     nx = grid_res + 3
     ny = int(math.ceil((dom.ymax - dom.ymin) * inv_dx)) + 3
@@ -636,24 +830,35 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
         grid_v.zero_()
         grid_m.zero_()
         wp.launch(_p2g, dim=n, device=device, inputs=[
-            x, v, C, F, mass, vol0, mu, lam, damage, grid_v, grid_m,
-            origin, inv_dx, dx, dt])
+            x, v, C, F, mass, vol0, mu, lam, damage, reactive, det_pressure, burn,
+            grid_v, grid_m, origin, inv_dx, dx, dt])
         wp.launch(_grid_op, dim=(nx, ny), device=device, inputs=[
             grid_v, grid_m, nx, ny])
         wp.launch(_g2p, dim=n, device=device, inputs=[
             x, v, C, F, grid_v, origin, inv_dx, dt])
+        # Bound the reactive filler's post-transfer speed so the F-independent
+        # detonation source can't accelerate unconfined debris to a CFL-breaking
+        # ~14 km/s (reactive particles only; see REACTIVE_VMAX / _clamp_reactive_v).
+        wp.launch(_clamp_reactive_v, dim=n, device=device, inputs=[
+            v, reactive, REACTIVE_VMAX])
         # von Mises radial return caps deviatoric stress at yield -> plastic
         # flow (mushrooming/cratering) instead of pure elastic rebound. It runs
         # on spalled particles too: it pins their deviatoric F to the yield
-        # surface so F can't blow up and NaN the stress readout.
+        # surface so F can't blow up and NaN the stress readout. Reactive filler
+        # is skipped (owns its own state machine).
         wp.launch(_return_mapping, dim=n, device=device, inputs=[
-            F, mu, yield_k, alpha])
+            F, mu, yield_k, reactive, alpha])
         # Latch damage: ductile metals once accumulated plastic strain crosses
         # threshold; brittle ceramics once the stress state reaches strength
         # (von Mises or tensile principal). _p2g then treats failed particles as
-        # free fragments (spall / shatter).
+        # free fragments (spall / shatter). Reactive filler is skipped here.
         wp.launch(_update_damage, dim=n, device=device, inputs=[
-            F, mu, lam, yield_k, brittle, alpha, dthr, damage])
+            F, mu, lam, yield_k, brittle, reactive, alpha, dthr, damage])
+        # Reactive impulse (ERA/NERA): ignite filler on shock arrival, age the
+        # detonation pulse. Writes `burn` (read by next substep's _p2g) and the
+        # reactive `damage` latch. No-op for non-reactive particles.
+        wp.launch(_update_reactive, dim=n, device=device, inputs=[
+            F, reactive, ign_comp, burn_time, burn, damage, dt])
 
     def dump_frame():
         pos = x.numpy()
