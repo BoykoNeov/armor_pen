@@ -1,0 +1,67 @@
+# Velocity sweep vs the HYDRODYNAMIC ASYMPTOTE -- milestone 9. This deck is the
+# copper arm at 1500 m/s; it means nothing alone and is only readable as part of
+# its family.
+# Scenarios are DATA, not code (CLAUDE.md §9). Representative / illustrative
+# order-of-magnitude values, not any real system (CLAUDE.md §10).
+#
+# THE FAMILY: tungsten_rod and copper_jet, each at 1500/2500/3500/5000/7000 m/s,
+# into an identical semi-infinite RHA half-space. Ten decks, one factorial.
+# Everything is held fixed except (material, velocity) so the TREND is the claim.
+#
+# WHAT IT TESTS. Ideal hydrodynamic (Tate-Alekseevskii) penetration says the
+# penetration velocity u obeys a pressure balance 0.5*rho_p*(v-u)^2 = 0.5*rho_t*u^2,
+# so as strength becomes negligible u/v approaches a pure DENSITY ratio:
+#
+#     u/v  ->  1 / (1 + sqrt(rho_t/rho_p))
+#              tungsten -> 0.600      copper -> 0.517
+#
+# Two different asymptotes from one physics. That is what makes this falsifiable
+# rather than illustrative: a single arm approaching a single number could be
+# coincidence; two arms approaching two *different* numbers, each predicted a
+# priori from density alone, could not. Below the asymptote, strength (Y_p, R_t)
+# holds u down -- so u/v should RISE with v and flatten, not sit flat throughout.
+#
+# WHY u/v AND NOT DEPTH. Depth is cumulative and rides on the erosion history,
+# which has a partly-numerical component (crushed particles latch `damage` and
+# leave the live set, so erosion rate is not purely physical -- PHYSICS §3.4).
+# u/v is an instantaneous rate, it is what the model actually predicts, and it is
+# a pressure BALANCE -- so the EOS's residual error largely cancels between the
+# two sides rather than accumulating. Milestone 8's honest limit still applies
+# (Murnaghan is a cold curve, so its pressure error IS velocity-dependent -- 0.93x
+# at J=0.9 vs 0.68x at a 7 km/s tip); this metric minimises that exposure, it does
+# not abolish it. Read the trend, not the third decimal.
+name: sweep_copper_v1500
+
+# Front face sits mid-domain at x=150 (mpm._seed hardcodes it), so the 120 mm
+# plate spans 150-270 and the rod tip starts ~1 mm out. The plate is thick
+# enough to act as a HALF-SPACE: the hydrodynamic limit for a 60 mm tungsten rod
+# is sqrt(17.6/7.85)*60 = 90 mm, so nothing here should reach the back face.
+# Perforation would void the measurement, not just dent it.
+domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 120 }   # mm
+
+projectile:
+  # `kind` is descriptive metadata the solver never reads. Both arms are
+  # `kinetic`: this sweep varies DENSITY, and a uniform copper rod is a kinetic
+  # penetrator made of copper, not a jet. No `tail_velocity` -- grading would add
+  # a second variable and confound the trend. Nose is the default conical in both
+  # arms, so geometry is not a variable either.
+  kind: kinetic
+  material: copper_jet
+  length: 60.0        # mm -- identical in both arms; only density and v vary
+  diameter: 8.0       # mm
+  velocity: 1500      # m/s (== mm/ms) -- THE VARIABLE
+  angle_deg: 0.0
+
+armor:
+  - { material: rha, thickness: 120.0 }   # mm -- semi-infinite half-space
+
+solver:
+  grid_resolution: 768
+  particles_per_cell: 4
+  dt: 1.0e-7          # upper bound only; the EOS-aware CFL bound in bake() wins
+  # Sized from the ideal-hydro consumption time: the rod erodes at (v-u), so a
+  # 60 mm rod is consumed in L/(v-u) = 82.7 us at this velocity. Strength only
+  # makes u SMALLER, hence erosion faster and this an UPPER bound. +40% carries
+  # the post-consumption phase (penetration stalls) into frame.
+  total_time: 1.158000e-04
+  frame_count: 579    # frame_dt = 2.0e-7 s, uniform across every deck

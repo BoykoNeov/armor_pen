@@ -650,11 +650,19 @@ compression, so the rest-state sound speed is no longer the CFL bound:
 `c(J) = √((K₀·J^−K′ + µ)/ρ)` climbs as `J^(−K′/2)`. `bake` now sizes `dt` from the
 compression the deck's own stagnation pressure predicts, with `EOS_CFL_J_MARGIN`
 of headroom for the ring above — and then **measures**, every frame, the sound
-speed actually reached, warning if the margin was breached. The first cut used a
-margin of 0.8 and survived only because that deck's ceramic donated headroom the
-copper tip borrowed; the measured overshoot ratio (0.648) says the honest number
-is 0.55. Cost: `heat_vs_composite` goes 18 → 98 substeps/frame. Irrelevant for an
-offline bake (root §1); a NaN at frame 300 would not be.
+speed actually reached, warning if the margin was breached.
+
+That audit is not decoration; it caught two things a clean-looking bake hid.
+**Margin 0.8** survived `heat_vs_composite` only because the deck's ceramic
+(stiffer, so a higher design sound speed) donated global headroom the copper tip
+borrowed — a jet into plain RHA has no such donor. **Margin 0.55** covered the jet
+(ratio 0.648) but let `apfsds_vs_nera` breach by **2.41×**: it validated clean,
+produced no NaN, and was wrong. The binding case is not the hypervelocity jet at
+all — see §3.6. The honest value is **0.35**, at which every deck passes (79 % of
+budget used on the deck that binds, 27–57 % elsewhere). Cost: `heat_vs_composite`
+goes 18 → 245 substeps/frame, and the whole 20-deck set bakes in ~20 minutes.
+Irrelevant for an offline solver (root §1); a bake that validates clean and is
+quietly wrong is not.
 
 **A bug the old law could not have had.** A divergent EOS makes degeneracies
 dangerous rather than merely wrong. With a raw negative `J` from a momentarily
@@ -666,6 +674,42 @@ paths floor identically, positioned as a **degeneracy backstop, not a physical
 limit** — it is ~25 000× beyond what a 7 km/s stagnation point demands, the
 measured worst live `J` is 8× above it, and `bake` warns if live material ever
 reaches it. `tests/test_stress_paths.py` pins both paths together.
+
+### 3.6 What the EOS did to the NERA filler (an unwelcome finding)
+
+The deck that binds the substep is not the 7 km/s jet. It is **`apfsds_vs_nera`**,
+and the reason is a real interaction rather than a numerical nuisance.
+
+`nera_filler` is `reactive=True` with `ignition_compression=0`, which means
+`mpm.py` skips **both** the return mapping and the ductile-spall gate for it, and
+it never ignites. So it can neither yield, nor break, nor self-vent — §3.3 and
+`materials.py` already say this outright ("it can neither yield nor break, so it
+stores elastic energy without dissipating it — stiffer-than-real"). It is soft
+(`K₀ ≈ 8.9 GPa`) with no dissipation path and nowhere to go.
+
+Under the pre-EOS law that was *harmless*: the rod squeezed it, `λ(J−1)J` decayed
+toward zero, and it went limp. Under a stiffening EOS the identical situation
+gives a **50 000 mm/ms sound speed**:
+
+| `EOS_CFL_J_MARGIN` | substeps/frame | worst live `J` | audit |
+|---|---|---|---|
+| 0.55 | 45 | 0.1942 | **BREACH, 2.41×** |
+| 0.35 | 110 | 0.2159 | OK, 79 % of budget |
+| 0.20 | 336 | 0.2120 | OK, 27 % of budget |
+
+**That `J ≈ 0.21` is real, not the instability eating itself.** Shrinking `dt` by
+3× moves it 1.8 %, so it is converged: the filler genuinely reaches ~79 % volume
+loss. Its predicted-vs-reached ratio is **0.394**, far worse than the copper jet's
+0.648 — which is why it, not the jet, sets `EOS_CFL_J_MARGIN`.
+
+The honest reading: this is **not a new defect the EOS introduced**, it is an old
+one the EOS made *visible*. A material with no dissipation path was always going
+to be squeezed arbitrarily far; the old law just hid it by going soft at exactly
+the moment it should have resisted. What §3.3 already flagged as
+"stiffer-than-real" is now quantified. Any conclusion that rests on the NERA
+filler's stiffness — notably the cohesive-bulge A/B against `era_filler_inert` —
+was confounded before and is still confounded, now measurably so. Giving the
+filler a real dissipation path is its own milestone; it is not done.
 
 ---
 

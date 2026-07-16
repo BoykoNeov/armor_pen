@@ -106,26 +106,36 @@ CFL: float = 0.3
 # is a CFL violation rather than a small error. Design for a J this fraction
 # BELOW the predicted equilibrium.
 #
-# MEASURED, not guessed. `heat_vs_composite` predicts a copper-tip equilibrium of
-# J_eq=0.6056 and the bake reaches J=0.3923 — an overshoot ratio of **0.648**. So
-# any margin above ~0.65 does not actually cover the transient; the first cut at
-# 0.8 only survived because that deck's ceramic (stiffer, so a higher design
-# sound speed) happened to leave global headroom the copper tip borrowed. A jet
-# into plain RHA has no such donor and breaches outright — which is exactly the
-# milestone 9 velocity-sweep geometry.
+# MEASURED, not guessed — and the binding case is not the one you would expect.
 #
-# 0.55 sits ~15 % under the measured ratio. That headroom covers the two things
-# the measurement does not: whether the ratio holds at other impact velocities
-# (unknown — the sweep will say), and shorter-than-a-frame excursions, which the
-# audit in ``bake`` samples too coarsely to see. Substeps scale as
-# (1/margin)^(K'/2), so this costs ~2x over an unmargined bound — irrelevant for
-# an offline solver (root §1), unlike a NaN at frame 300.
+#   copper jet tip  predicted J_eq=0.6056, reached 0.3971 -> ratio 0.648
+#   nera_filler     predicted J_eq=0.5480, reached 0.2159 -> ratio 0.394  <-- binds
 #
-# Why this transient exists at all: MPM resolves a shock front across a couple of
-# cells with no artificial (shock) viscosity to damp the elastic ring, so the
-# front overshoots its equilibrium. That is a separate, still-open defect from the
-# missing-EOS one this milestone fixed — see PHYSICS §3.5.
-EOS_CFL_J_MARGIN: float = 0.55
+# The **NERA filler** sets this constant, not the hypervelocity jet. `nera_filler`
+# is reactive with `ignition_compression=0`, so ``_p2g`` skips BOTH the return
+# mapping and the ductile-spall gate: it can neither yield nor break nor self-vent
+# (materials.py says so outright). It is soft (K0≈8.9 GPa) with no dissipation
+# path and nowhere to go, so the rod squeezes it to ~79 % volume loss. Under the
+# pre-EOS law that was harmless — it simply went limp. Under a stiffening EOS the
+# same state is a 50 000 mm/ms sound speed.
+#
+# That J≈0.21 is REAL, not an instability eating itself: at margins 0.35 and 0.20
+# (110 vs 336 substeps/frame) it lands at 0.2159 and 0.2120 — converged to 1.8 %.
+# So the filler genuinely goes there and the substep has to cover it.
+#
+# 0.35 is the measured value, verified by audit (79 % of budget used on the deck
+# that binds, 27-57 % elsewhere). Earlier cuts and why they were wrong: 0.8 only
+# survived `heat_vs_composite` because that deck's ceramic donated headroom the
+# copper tip borrowed; 0.55 covered the jet but let `apfsds_vs_nera` breach by
+# 2.41x. Substeps scale as (1/margin)^(K'/2), so this costs ~2.5x over an
+# unmargined bound — irrelevant for an offline solver (root §1), unlike a bake
+# that validates clean and is quietly wrong.
+#
+# Why an overshoot exists at all: MPM resolves a shock across a couple of cells
+# with no artificial (shock) viscosity to damp the elastic ring, so the front
+# overshoots its equilibrium. That is a separate, still-open defect from the
+# missing-EOS one milestone 8 fixed — see PHYSICS §3.5.
+EOS_CFL_J_MARGIN: float = 0.35
 
 # Volume-ratio floor: the most-compressed state the EOS will represent. Below it
 # the pressure saturates. Shared by every path that divides by J or raises it to a
@@ -224,11 +234,14 @@ def _eos_pressure(J: float, K0: float):
     (~1 %, measured — not zero). It is the large-strain branch that changes, by
     up to ~2x at a 7 km/s jet tip. See PHYSICS §3.5.
 
-    Honest limit (root §1, §10): Murnaghan is a *cold* curve — it carries no shock
-    heating, so it still under-predicts pressure at hypervelocity, just by tens of
-    percent instead of the 2x the no-EOS law gave. Getting the thermal term needs
-    Mie-Grüneisen and per-material c0/s/Γ, i.e. real new physical data. Plausible,
-    not predictive.
+    Honest limit (root §1, §10): Murnaghan is a *cold* curve — no shock heating, so
+    no thermal pressure. Against copper's public shock Hugoniot it reads 0.93x at
+    J=0.9 (a KE deck — negligible), 0.68x at a 7 km/s equilibrium, and 0.17x at the
+    measured tip excursion. So the pressure error is **smaller but still
+    velocity-dependent**: milestone 8 shrank it, it did not abolish it, and
+    anything that sweeps velocity or reads absolute pressure still inherits it.
+    The thermal term needs Mie-Grüneisen and per-material c0/s/Γ — real new
+    physical data. Plausible, not predictive.
 
     J is floored before the fractional power: an element that momentarily inverts
     (J≤0) under a violent shock substep would otherwise raise a negative base to a
