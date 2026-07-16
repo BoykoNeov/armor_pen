@@ -66,15 +66,19 @@ the armor spans the full field height: the target is a plate that continues past
 the frame (armor on a vehicle), not a block floating in vacuum.
 
 **Headline result (verified, `docs/PHYSICS.md` §3.1–3.2).** Measured against an
-equal-areal-mass *inert* twin, the reactive layer **protects the backing plate but
-never touches the rod**. Main-plate spall is ≈16% lower at 55° obliquity and ≈8%
-lower at 0°, tracking a single mechanism: the detonation shoves the main plate
-forward (+7.7 mm vs the twin at 55°, +1.6 mm at 0°), and a plate moving *with* the
-rod defeats less penetrator. The tungsten rod itself is **not** cut or deflected at
-either angle (penetration differs by <1%); only its residual velocity moves (−8.5%
-at 55°). **That is the honest null — it was always about the penetrator, not the
-plate.** The "flyer sweep erodes the rod" expectation did not hold, and is reported
-as it came out rather than tuned toward.
+equal-areal-mass *inert* twin, the reactive layer **protects the backing plate, and
+slows the rod without ever cutting it**. Main-plate spall is ≈16% lower at 55°
+obliquity and ≈8% lower at 0°, tracking a single mechanism: the detonation shoves
+the main plate forward (+7.7 mm vs the twin at 55°, +1.6 mm at 0°), and a plate
+moving *with* the rod defeats less penetrator.
+
+The rod is **not cut or deflected** at either angle — that specific expectation
+("the flyer sweep erodes the rod") is what failed, and it is reported as it came
+out rather than tuned toward. But "not cut" is **not** "not affected": at 55° the
+rod's residual velocity is **8.5% lower** (679 vs 741 m/s), a real degradation
+(~75× the noise floor below). A tough tungsten rod is slowed by thin
+few-hundred-m/s flyers; it is not severed by them. At 0° even that is absent
+(+2.2%, i.e. nothing), which is the honest null.
 
 *Read those numbers with two different error bars attached.* Run-to-run scatter is
 **≤0.11%** (measured by re-baking identical decks), so the protection is ~150× the

@@ -260,6 +260,11 @@ the penetrator** — robust, mechanistically explained, and unchanged across eve
 geometry tried — while the plate-side margin is real-but-not-portable, and only
 earns confidence at obliquity where it is twice the size and sign-stable.
 
+Note the penetrator null is *fully* a null only here at 0°, where even residual
+velocity moves by +2.2 % (i.e. nothing, and in the wrong direction for protection).
+At 55° the rod is still never cut, but it *is* measurably slowed — see §3.2. "Not
+cut" and "not affected" are different claims; only 0° supports the stronger one.
+
 The A/B decks (`apfsds_vs_era` / `apfsds_vs_era_inert`) are byte-identical in
 geometry, areal mass, nose, and timing, so these deltas cleanly isolate the
 *reactive* contribution. Obliquity is milestone 6, below.
@@ -292,13 +297,18 @@ reactive layer **measurably protects the backing plate**:
 
 - **Main-plate spall ≈ 16 % lower** for the reactive deck (0.137 vs 0.163 at the
   final frame) — roughly **double the ~8 % the same mechanism buys at 0°** (§3.1).
-- **The rod is not cut, deflected, or meaningfully slowed on-path.** Penetration
-  past the plate face differs by **+0.8 %** (50.7 vs 50.3 mm — the reactive rod is
-  marginally *deeper*) and rod damage by −0.5 %: both at the level of "no effect".
-  Residual velocity *is* ~8.5 % lower (679 vs 741 m/s) — the one real rod-side
-  effect. A tough tungsten rod is not severed by thin, few-hundred-m/s flyers.
-  (The "erode/deflect the rod" outcome was an *a priori* expectation; the sim says
-  protection arrives through the backing plate instead — reported as it came out.)
+- **The rod is not cut or deflected — but it *is* slowed. Do not conflate those.**
+  Rod damage differs by −0.5 % (no effect) and the rod is not severed or turned:
+  thin few-hundred-m/s flyers cannot cut a tough long rod, and the *a priori*
+  "flyer sweep erodes the rod" expectation is what failed here — reported as it
+  came out. But residual velocity **is 8.5 % lower** (679 vs 741 m/s), ~75× the
+  numerical floor below: that is a real, modest degradation. "Not cut" ≠ "not
+  affected"; only the first is a null.
+  *(Penetration past the plate face reads +0.8 % — reactive marginally deeper — but
+  do not lean on it: both rods fully perforate, so at the final frame that number is
+  a free-flight **position**, not penetration resistance. A rod 8.5 % slower sitting
+  at the same position is diverging, and given more window would fall short.
+  Velocity is the leading rod-degradation indicator; the position is a snapshot.)*
 - **Mechanism — and it scales with angle, which is the real evidence.** The
   detonation **shoves the main plate forward**: the plate body ends 7.7 mm further
   downrange than the inert twin's, and its front face 18.2 mm further (the inert
@@ -365,27 +375,33 @@ twin's latches 1.000 and is flung to 125.6 mm. Confirmed visually (viewer
 spall spray coming from the *steel plates*, not the filler. Cohesive, unignited,
 stable — no NaN, no collapse.
 
-**The bulge is a profile, not a number — and the old comparison was wrong.**
-Plate separation must be measured *beside* the rod channel: inside it the plates
-are perforated and their material is dragged downrange, which reads as a huge
-"gap" that is debris transport, not bulge. Measured as the median-x separation of
-the two steel plates, tracked by frame-0 identity, in a band `12 < |y − axis| <
-25 mm`, the NERA sandwich opens **18.0 → 21.1 mm** and holds — it does not collapse
-back. But the bulge **decays with distance from the channel** (24.3 mm at a
-10–20 mm band, 21.1 at 12–25, 18.4 at 15–30), so any single separation figure is
-an artifact of where it was sampled. Quote the *shape*, not the number.
+**The bulge is a profile, not a number — and *where* you measure decides the sign.**
+Two facts, both true, and they only look contradictory if the metric is left
+implicit:
 
-Against that, the inert twin reads **18.0 → 18.5 mm — flat at every band**: it
-does not bulge at all. **This reverses the earlier claim that "the NERA sandwich
-separates *less* than the inert one (21.1 vs 24.2 mm)".** It separates *more*, and
-the old figure of 24.2 is reproducible here only as *NERA measured at a different
-band* — i.e. the two arms of that comparison were almost certainly not sampled
-alike. The corrected result is also the one the construction predicts: `nera_filler`
-is `reactive=True`, so it skips both `_return_mapping` and `_update_damage` and is
-perfectly elastic — it *springs* the plates apart and holds them there — whereas
-the inert filler yields and shreds (damage 0.462) and dissipates the shock instead
-of storing it. A spring bulges; mush does not. (See the model-mechanics note below:
-this is a statement about the model's construction, not about armor.)
+- **Plate-wide** (median-x separation of the two steel plates over the full plate
+  height — the metric the original probe used): NERA **18.0 → 16.1 mm**, the inert
+  twin **18.0 → 18.5 mm**. The NERA sandwich ends up *tighter* than the inert one.
+- **Beside the channel** (same median, restricted to `12 < |y − axis| < 25 mm`):
+  NERA **18.0 → 21.1 mm**, the inert twin a flat **18.5 mm**. Locally the NERA
+  sandwich is *open wider*, and the bulge **decays with distance** (24.3 mm at a
+  10–20 mm band, 21.1 at 12–25, 18.4 at 15–30).
+
+Both readings describe one behaviour, and it is the one milestone 5 claimed: **a
+cohesive interlayer holds the bulge open where the rod passes while holding the
+plates together everywhere else.** A cohesive, never-spalling filler that is
+stretched open near the channel must pull the plates *in* further out; the inert
+filler shreds (damage 0.462), restrains nothing, and its plates simply stay at
+18.5 mm at every band. This is what the construction predicts: `nera_filler` is
+`reactive=True`, so it skips both `_return_mapping` and `_update_damage` and is
+perfectly elastic — it stores the shock and springs — where the inert filler yields
+and dissipates it. (See the model-mechanics note below: that is a statement about
+the model's construction, not about armor.)
+
+Never measure this *inside* the channel: there the plates are perforated and their
+material is dragged downrange, which reads as a large "gap" that is debris
+transport, not bulge. And never compare a plate-wide figure against a banded one —
+they disagree in *sign*, so quoting either without its definition is meaningless.
 
 *(These figures were re-measured after the domain/geometry change and again after
 the pointed nose; the branch verification — damage exactly 0.000, filler expanding

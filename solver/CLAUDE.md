@@ -98,16 +98,16 @@ Grow the reference MLS-MPM incrementally, validating visually with
    across two rebakes (geometry change, then the nose). Supporting signal is
    cohesion: filler thickness reaches only 39.5 mm, where the inert twin's shreds
    to damage 0.462 and spreads to 83.5 mm and the reactive twin's latches 1.000 and
-   is flung to 125.6 mm. The sandwich opens 18.0→21.1 mm and holds — but **measure
-   the bulge BESIDE the channel, not in it** (inside, the plates are perforated and
-   dragged downrange, which reads as a huge fake "gap"), and the bulge **decays with
-   distance** (24.3 mm at a 10–20 mm band, 21.1 at 12–25, 18.4 at 15–30) so no single
-   separation number is meaningful. **Correction:** the old claim that NERA separates
-   *less* than the inert twin (21.1 vs 24.2) is **reversed** — the inert twin reads
-   18.0→18.5 flat at every band and does not bulge at all; the 24.2 reproduces only
-   as *NERA at a different band*, so those two arms were not sampled alike. NERA
-   bulging *more* is what the construction predicts (it is perfectly elastic — it
-   springs; the inert filler yields/shreds and dissipates). Visually confirmed
+   is flung to 125.6 mm. **Separation: state the metric or the SIGN flips.**
+   Plate-wide median (the original probe's metric): NERA 18.0→**16.1** vs inert
+   18.0→**18.5** — NERA ends *tighter*, reproducing the milestone-5 claim that a
+   cohesive interlayer holds the plates together. Beside the channel
+   (`12<|y-axis|<25`): NERA 18.0→**21.1** vs inert flat 18.5 — locally *wider*, and
+   the bulge decays with distance (24.3 @10–20, 21.1 @12–25, 18.4 @15–30). Both are
+   one behaviour: **holds the bulge open where the rod passes, holds the plates
+   together elsewhere.** **Never** measure inside the channel (perforated plates
+   dragged downrange = a huge fake "gap") and **never** compare a plate-wide figure
+   to a banded one — they disagree in sign. Visually confirmed
    (`--shots`): the interlayer is still large coherent bent slabs, spall spray
    coming from the steel plates, not the filler. Stable, no NaN, passes
    `validate_cache`. **Caveat (PHYSICS §3.3):** the rod also ends up
@@ -148,11 +148,15 @@ Grow the reference MLS-MPM incrementally, validating visually with
    PHYSICS §3.2): at 55° the reactive layer measurably protects the backing plate
    — main-plate spall ≈16 % lower (0.137 vs 0.163)** — and the *same* mechanism
    buys ≈8 % at 0°, so the plate-side benefit is real at both angles and roughly
-   doubles with obliquity. But the tungsten **rod is NOT cut or deflected** at
-   either angle (penetration delta +0.8 % at 55°, +0.3 % at 0°; rod damage −0.5 %
-   / +2.3 %): thin few-hundred-m/s flyers can't erode a tough long rod. **That —
-   not the plate — is the honest null.** Residual velocity is the one real rod-side
-   effect (−8.5 % at 55°). Mechanism: the detonation shoves the main plate forward
+   doubles with obliquity. The tungsten **rod is NOT cut or deflected** at either
+   angle (rod damage delta −0.5 % at 55°, +2.3 % at 0°): thin few-hundred-m/s
+   flyers can't erode a tough long rod, and that failed *a priori* expectation —
+   not the plate — is the honest null. **But "not cut" ≠ "not affected":** at 55°
+   residual velocity is **−8.5 %** (679 vs 741 m/s), ~75× the noise floor — a real,
+   modest degradation. Only 0° is a full rod null (+2.2 %, nothing). Don't lean on
+   "penetration +0.8 %" as rod-unaffected evidence: both rods perforate, so that is
+   a free-flight *position* at the final frame, not resistance — a slower rod at
+   equal position is diverging. Mechanism: the detonation shoves the main plate forward
    (plate body +7.7 mm vs the inert twin at 55°, +1.6 mm at 0° — the shove and the
    protection scale together). NOT chased steeper and det_pressure NOT cranked
    (confirmation-bias tuning, §10). **Error bars are two different sizes and must
