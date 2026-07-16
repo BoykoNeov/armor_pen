@@ -40,6 +40,11 @@ class Projectile:
     diameter: float  # mm
     velocity: float  # m/s (== mm/ms in the mm-ms-g system)
     angle_deg: float = 0.0  # obliquity from horizontal
+    # Height (mm) at which the rod tip meets the armor face. None = mid-domain,
+    # which is what normal-incidence decks want. An oblique rod plunges in -y as
+    # it advances, so those decks aim high and spend the domain below the impact
+    # rather than wasting half of it as unused headroom.
+    impact_y: float | None = None
 
 
 @dataclass
@@ -78,6 +83,12 @@ class Scenario:
             raise ValueError("scenario has no armor layers")
         if self.solver.frame_count <= 0:
             raise ValueError("frame_count must be positive")
+        iy = self.projectile.impact_y
+        if iy is not None and not (self.domain.ymin < iy < self.domain.ymax):
+            raise ValueError(
+                f"impact_y={iy} is outside the domain "
+                f"(ymin={self.domain.ymin}, ymax={self.domain.ymax})"
+            )
 
 
 def load_scenario(path: str | Path) -> Scenario:

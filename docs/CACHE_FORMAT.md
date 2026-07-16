@@ -145,8 +145,13 @@ These keep the two halves loosely coupled — do not violate them casually:
   manifest. Appending an attribute is a backward-compatible change for readers
   that color by name.
 - **Substeps ≠ frames.** The solver runs thousands of tiny physics substeps and
-  dumps only every Nth as a render frame (target 60–120 frames total).
-  `frame_dt` documents the spacing; it is *not* the substep dt.
+  dumps only every Nth as a render frame. `frame_dt` documents the spacing; it
+  is *not* the substep dt. Decks target a **uniform `frame_dt`** (currently
+  `2.0e-7` s) rather than a fixed frame count, so playback smoothness is the
+  same regardless of how long an event runs; `frame_count` therefore varies with
+  `total_time` (200–700 today). This is a solver-side convention, not a format
+  rule — readers take `frame_count` from the manifest and must not assume a
+  range.
 - **No language-specific serialization.** JSON + raw `float32` only.
 
 ---

@@ -1,9 +1,19 @@
 # Shaped-charge (HEAT) jet vs a spaced composite stack (steel / ceramic / steel).
-# Representative / illustrative only (CLAUDE.md §10). The HEAT-jet erosion model
-# is future work (SPH may return for fluid-like erosion — docs/PHYSICS.md §1).
+# Representative / illustrative only (CLAUDE.md §10).
+#
+# STAND-IN: `material: tungsten_rod` is NOT a jet model — it is a long thin rod
+# flown at jet-like speed. A real shaped-charge jet stretches, is velocity-graded
+# tip-to-tail, and erodes fluid-dynamically; none of that is modelled here. This
+# deck exists to keep the `heat_jet` path baked and playable, not to say anything
+# about shaped-charge performance. The jet model is the open capability gap
+# (milestone 7; SPH may return for fluid-like erosion — docs/PHYSICS.md §1).
 name: heat_vs_composite
 
-domain: { xmin: 0, xmax: 240, ymin: 0, ymax: 120 }   # mm
+# The armor face sits mid-domain (x=150), leaving room for the 120 mm jet body
+# behind the tip AND for the residual to fly past the stack (which backs onto
+# x=235). Slabs span the full height against slip (= mirror) walls, so the target
+# reads as armor on a vehicle continuing past the frame.
+domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 120 }   # mm
 
 projectile:
   kind: heat_jet
@@ -19,8 +29,10 @@ armor:
   - { material: rha,     thickness: 20.0 }                 # backing plate
 
 solver:
-  grid_resolution: 640
+  grid_resolution: 768   # tracks the x-extent to hold dx ~= 0.39 mm
   particles_per_cell: 4
-  dt: 5.0e-8
-  total_time: 5.0e-5
-  frame_count: 100
+  dt: 5.0e-8          # substep dt (CFL-bound); NOT frame_dt
+  # ~40 us. At 7000 m/s the tip crosses the whole 85 mm stack in ~12 us, so this
+  # window is set by the 120 mm BODY needing to follow it through, not the tip.
+  total_time: 4.0e-5
+  frame_count: 200    # frame_dt = 2.0e-7 s, uniform across every deck

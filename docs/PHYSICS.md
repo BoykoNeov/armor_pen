@@ -32,6 +32,44 @@ SPH may return later, specifically for HEAT-jet fluid-like erosion.
 4. **Particle update** — advect positions; update deformation gradient `F`;
    apply the constitutive model (§3).
 
+### 1.1 Boundaries: the target is a plate, not a block
+
+The domain walls are **free-slip**: `_grid_op` zeroes only the velocity component
+heading *into* the wall and leaves the tangential component alone. (They were
+long mislabelled "sticky reflecting" in the source — sticky would zero the whole
+velocity, reflecting would negate the normal component. They do neither.)
+
+A free-slip wall is a **mirror plane**. That fact is what lets us model armor
+honestly: the armor slabs are seeded across the **full domain height**, so a slab
+plus its mirror images reads as a plate that *continues beyond the frame* — armor
+on a vehicle. Previously slabs stopped 10 % of the domain height short of each
+wall, which made every target a finite block floating in vacuum: its free top and
+bottom edges flared outward into the void, and crater ejecta escaped around them
+into empty space instead of interacting with armor.
+
+The projectile is left axis-aligned in this picture and the **rod** is rotated for
+oblique decks rather than the slabs (§3.2). That is not only frame-equivalence:
+mirroring a *tilted* slab would fold it into a V, so a tilted slab could never
+read as a continuous plate. Vertical slabs mirror onto themselves.
+
+Two consequences worth stating plainly:
+
+- **The mirror implies an image of the projectile one domain-height away.** A deck
+  must therefore be tall enough that the event resolves before the rod or its
+  spray nears a wall. This is per-deck sizing (domain size is data, CLAUDE.md §9),
+  not something the kernel can enforce.
+- **A finite domain cannot let far-field ejecta leave.** Late in a bake, spall
+  spray does reach the top/bottom walls and slide along them. What matters is that
+  the penetration channel is many rod-diameters from the wall, so the event we
+  measure is unaffected; the artifact is confined to the far-field debris.
+
+Both transfer kernels index the grid at `floor(Xp − 0.5) + {0,1,2}` with no bounds
+check, so a particle within half a cell of a low edge would scatter **out of
+bounds**. The old 10 % margin hid this; with slabs now at the wall for the whole
+bake, `_seed` insets them two cells and `_g2p` clamps particle positions one cell
+inside the domain. The clamp is memory safety, not physics — the slip wall
+already removes wall-normal velocity, so it almost never binds.
+
 ---
 
 ## 2. Unit system — mm · ms · g
@@ -184,44 +222,52 @@ stay vertical/axis-aligned. Only the *relative* rod-axis/plate-normal angle is
 physical, so rotating the rod against fixed slabs is frame-equivalent to tilting
 the slabs against a horizontal rod — and `angle_deg=0` is exact identity, so
 every normal-incidence deck seeds bit-for-bit as before. Decks:
-`apfsds_vs_era_oblique` (+ its `_inert` twin), 55° from the normal, in a taller
-(180 mm) domain so the tilted 60 mm rod fits its body above the tip **and** its
-descent through the target (the rod drops `~tan 55° ≈ 1.4` mm in y per mm of x).
+`apfsds_vs_era_oblique` (+ its `_inert` twin), 55° from the normal, in a 220 mm
+domain with the impact deliberately **off-centre** (`impact_y: 145`): the rod
+drops `~tan 55° ≈ 1.43` mm in y per mm of x, so it needs ~145 mm of descent below
+the impact but only its own tilted body-length (~49 mm) of headroom above it.
+Centring the impact would demand a domain ~2× taller — and ~2× the particles — to
+buy headroom the rod never uses.
 
 **Verified result — protection, but not rod-cutting.** Measured against the
-equal-areal-mass inert twin, at 55° the reactive layer **measurably protects the
-backing plate**, where 0° was a null:
+equal-areal-mass inert twin (both decks seed at **287 615** particles), at 55° the
+reactive layer **measurably protects the backing plate**:
 
-- **Main-plate spall ≈ 40 % lower** for the reactive deck (0.071 vs 0.117 at the
+- **Main-plate spall ≈ 21 % lower** for the reactive deck (0.131 vs 0.166 at the
   final frame), and the gap **grows monotonically** over the event
-  (0.017 → 0.035 → 0.046 across frames 70/90/119). At 0° the same A/B was a null
-  of the *opposite* sign (reactive marginally *worse*, 0.152 vs 0.133), so
-  obliquity flips the layer from no-benefit to clear protection.
-- **The rod itself is essentially unaffected** — the coherent rod tip reaches the
-  same depth frame-for-frame in both decks, and net rod damage / path angle are
-  equal (0.49 vs 0.50; 57° vs 56°). The lateral-sweep mechanism is present but a
-  tough tungsten rod is not cut or deflected by thin, few-hundred-m/s flyers.
-  (The "erode/deflect the rod" outcome was an *a priori* expectation; the sim
-  says protection comes through the backing plate instead — reported honestly.)
-- **Mechanism.** The detonation **accelerates the main plate forward** earlier and
-  faster (front displaced ~8.4 mm / ~180 m/s reactive vs ~4.2 mm / ~143 m/s
-  inert) and disperses the coherent flyer-plate + filler mass that, in the inert
-  deck, is driven into the plate as a follow-through/tamping slug. The plate
-  moving *with* the rod reduces the effective (rod-relative) penetration: with the
-  tip near x ≈ 162 in both and the plate front at ~144 (reactive) vs ~140 (inert),
-  rod-relative penetration is ~17 vs ~21 mm — **~18 % shallower**. This is the
-  textbook "moving/standoff plate defeats less penetrator." *(Order-of-magnitude:
-  a centroid-based estimate, and the front face is also cratering.)*
+  (0.023 → 0.032 → 0.035 across the 50 / 75 / 100 % marks).
+- **The rod is degraded only modestly.** Residual velocity is ~9 % lower (737 vs
+  814 m/s) and the tip ends 1.6 mm shallower (234.8 vs 236.4) — a real but small
+  effect, not the cutting the mechanism might suggest. A tough tungsten rod is not
+  severed or deflected by thin, few-hundred-m/s flyers. (The "erode/deflect the
+  rod" outcome was an *a priori* expectation; the sim says protection arrives
+  mostly through the backing plate instead — reported as it came out.)
+- **Mechanism.** The detonation **shoves the main plate forward**: its leading edge
+  ends at x ≈ 192.9, ~6.9 mm *ahead* of where it started (186), while the inert
+  twin's leading edge ends at 177.2 — ~8.8 mm *behind* the start, because that
+  plate is simply cratering and throwing lips backward. A plate moving *with* the
+  rod reduces effective (rod-relative) penetration — the textbook "moving /
+  standoff plate defeats less penetrator."
 
 Honesty caveats (root §1/§10): a steeper angle was **not** chased (it only moves
-`sin θ` 0.82→0.91 and worsens domain-fit/bottom-wall descent), and
-`detonation_pressure` was **not** cranked to force rod degradation (that would be
-confirmation-bias tuning toward defeating a system — off-limits per §10). Rod and
-debris reach the bottom domain wall (`y ≈ 1`) in **both** decks — a *shared*
-artifact, so the A/B **delta** and its time-evolution are the meaningful signal,
-not the absolute spall numbers. One bake per condition; the monotonic divergence
-across 120 frames plus the sign-flip vs 0° is what makes it clearly not MPM
-non-determinism, rather than a repeat bake.
+`sin θ` 0.82→0.91 and worsens domain fit), and `detonation_pressure` was **not**
+cranked to force rod degradation (that would be confirmation-bias tuning toward
+defeating a system — off-limits per §10). One bake per condition; the monotonic
+divergence is what argues this is not MPM non-determinism, rather than a repeat
+bake.
+
+**These numbers were re-measured after the geometry change, and the magnitude
+moved — take that as the error bar.** The same A/B on the old floating-block
+geometry read ≈ 40 % rather than ≈ 21 %, and reported the rod as *unaffected*
+where it now shows ~9 %. The **sign and the monotonic growth are robust; the
+magnitude is not.** The 0° arm makes the point sharper: it used to read 0.152 vs
+0.133 (reactive marginally **worse**) and now reads 0.229 vs 0.251 (reactive
+marginally **better**) — a margin whose *sign* flips with geometry is noise, so
+**0° remains an honest null**, and its instability is the best available estimate
+of how much a ~9 % difference is worth here. The 55° result clears that bar; a 0°
+result of the same size would not. Spalled rod fragments still reach the bottom
+wall late in the run (the intact rod clears it by ~35 mm), a *shared* artifact of
+both decks — another reason to read the A/B **delta**, not the absolutes.
 
 ### 3.3 NERA persistent bulge — the unignited branch (verified)
 
@@ -233,28 +279,36 @@ cohesive and the sandwich plates bulge apart on the impact shock alone. This is
 the particle spent, and collapses it to limp debris. That branch was implemented
 at milestone 5 but never baked. It is now verified by `apfsds_vs_nera`
 (`nera_filler`), geometry-identical to the two ERA decks — all three seed at
-126157 particles, so they are equal-areal-mass arms of one A/B family differing
-only in the filler's response path.
+**180 449** particles, so they are equal-areal-mass arms of one A/B family
+differing only in the filler's response path.
 
-**The branch works as specified.** Across all 120 frames the NERA filler's damage
+**The branch works as specified.** Across all 550 frames the NERA filler's damage
 fraction is **0.000** — it never ignites and never spalls — and the sandwich opens
-without ever collapsing back: front/back plate separation grows monotonically
-18.0 → 23.5 mm and is still opening at the end of the window.
+without ever collapsing back: front/back plate separation grows 18.0 → 21.1 mm and
+levels off there rather than closing.
 
-The decisive evidence is the **cohesion**, not the shape of the tail: the filler
-expands far less than either twin — thickness 10.6 → ~36 mm, levelling off over
-the last frames (36.1 at 100 → 35.7 at 119) — where the inert twin's filler
-shreds (damage 0.615, thickness still climbing at 50.7 mm) and the reactive
-twin's latches 1.000 by frame 20 and is flung to 69.7 mm with the plates driven
-58.5 mm apart. Confirmed visually (viewer `--shots` on the deck): at frame 119
-the interlayer is still **large coherent bent slabs**, split around the rod
-channel but intact, with the white spall spray coming from the *steel plates*,
-not the filler. Cohesive, unignited, stable — no NaN, no collapse.
+The decisive evidence is the **cohesion**: the filler expands far less than either
+twin — thickness 11.4 → 44.2 mm, flattening over the last quarter (42.5 → 44.1 →
+44.2) — where the inert twin's filler shreds (damage 0.523, thickness still
+climbing at 81.2 mm) and the reactive twin's latches 1.000 and is flung to
+119.6 mm with the plates driven 81.4 mm apart. Note the NERA sandwich separates
+*less* than the inert one (21.1 vs 24.2 mm): a cohesive interlayer **holds the
+plates together** as well as holding the bulge open — shredded filler offers no
+such restraint. Confirmed visually (viewer `--shots`): the interlayer stays
+**large coherent bent slabs**, split around the rod channel but intact, with the
+spall spray coming from the *steel plates*, not the filler. Cohesive, unignited,
+stable — no NaN, no collapse.
+
+*(These figures were re-measured after the domain/geometry change; the branch
+verification — damage exactly 0.000, filler expanding far less than either twin —
+reproduced, only the magnitudes moved. The earlier `bulge.py` probe hardcoded the
+old x-bands and silently reported `sep = nan` when the armor moved, which is why
+filler metrics are now keyed off `material_id` alone.)*
 
 **Model-mechanics note — NOT an armor-performance claim.** In the same bakes the
 rod ends up shallower, slower, and more damaged against the NERA filler than
-against either ERA twin (tip 160.0 vs 164.1/164.3 mm; median intact-rod speed
-1316 vs 1445/1435 m/s; rod damage 0.363 vs 0.275/0.244). **Do not read this as
+against either ERA twin (tip 259.1 vs 267.1/267.0 mm; median intact-rod speed
+1084 vs 1220/1223 m/s; rod damage 0.549 vs 0.482/0.532). **Do not read this as
 "non-explosive beats explosive."** The comparison is confounded by construction,
 twice over: `reactive=True` makes `mpm.py` skip *both* `_return_mapping`
 (plasticity) *and* `_update_damage` (ductile spall) for that particle, so

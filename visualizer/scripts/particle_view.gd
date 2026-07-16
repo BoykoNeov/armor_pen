@@ -86,7 +86,16 @@ var _jitter := PackedFloat32Array()
 var _prev_data := PackedFloat32Array()
 var _prev_frame: int = -2
 
+# Zoom factor per wheel notch, and the zoom range allowed relative to the
+# fit-the-whole-domain baseline (0.25x = pull back to see the field around the
+# domain; 40x = down to individual particles).
+const ZOOM_STEP := 1.15
+const MIN_ZOOM_REL := 0.25
+const MAX_ZOOM_REL := 40.0
+
 var _camera: Camera2D
+var _fit_zoom: float = 1.0     # zoom that frames the whole domain (the F-key reset)
+var _fit_center := Vector2.ZERO
 var _hud_info: Label
 var _legend_box: HBoxContainer
 var _timeline_fill: ColorRect
@@ -155,9 +164,36 @@ func _process(delta: float) -> void:
 
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventMouseButton and event.pressed:
+		match event.button_index:
+			MOUSE_BUTTON_WHEEL_UP:
+				_zoom_at_cursor(ZOOM_STEP)
+				return
+			MOUSE_BUTTON_WHEEL_DOWN:
+				_zoom_at_cursor(1.0 / ZOOM_STEP)
+				return
+	# Drag with middle or right button to pan. `relative` is in screen pixels, so
+	# dividing by zoom converts it to world units — the grab point stays under the
+	# cursor at any zoom level.
+	if event is InputEventMouseMotion:
+		# `int(...)`: button_mask is a BitField, whose `&` result GDScript cannot
+		# infer a type for, so `:=` is a parse error here.
+		var dragging: int = int(event.button_mask) & int(
+			MOUSE_BUTTON_MASK_MIDDLE | MOUSE_BUTTON_MASK_RIGHT)
+		if dragging != 0:
+			_camera.position -= event.relative / _camera.zoom
+			_update_hud()
+		return
+
 	if not (event is InputEventKey) or not event.pressed:
 		return
 	match event.keycode:
+		KEY_EQUAL, KEY_KP_ADD:
+			_zoom_at_cursor(ZOOM_STEP)
+		KEY_MINUS, KEY_KP_SUBTRACT:
+			_zoom_at_cursor(1.0 / ZOOM_STEP)
+		KEY_F:
+			_reset_view()
 		KEY_SPACE:
 			_playing = not _playing
 			_update_hud()
@@ -415,10 +451,38 @@ func _setup_camera() -> void:
 	var dom_w := maxf(xmax - xmin, 1e-6)
 	var dom_h := maxf(ymax - ymin, 1e-6)
 	var vp := get_viewport().get_visible_rect().size
-	var z := minf(vp.x / dom_w, vp.y / dom_h) * fit_margin
-	_camera.zoom = Vector2(z, z)
-	_camera.position = Vector2((xmin + xmax) * 0.5, (ymin + ymax) * 0.5)
+	_fit_zoom = minf(vp.x / dom_w, vp.y / dom_h) * fit_margin
+	_fit_center = Vector2((xmin + xmax) * 0.5, (ymin + ymax) * 0.5)
 	_camera.make_current()
+	_reset_view()
+
+
+## Zoom about the cursor: the world point under the mouse stays pinned there, so
+## you can drill into the crater without it sliding out of view.
+##
+## The camera offset is solved directly rather than by reading
+## get_global_mouse_position() before and after: the viewport's canvas transform
+## does not necessarily refresh within the same frame we write _camera.zoom, so
+## the "after" read can still be at the old zoom and the pivot drifts. With
+## anchor_mode DRAG_CENTER, world = position + (screen - viewport_centre) / zoom;
+## holding the world point fixed across a zoom change gives the shift below.
+func _zoom_at_cursor(factor: float) -> void:
+	var z0 := _camera.zoom.x
+	var z1 := clampf(z0 * factor, _fit_zoom * MIN_ZOOM_REL, _fit_zoom * MAX_ZOOM_REL)
+	if is_equal_approx(z0, z1):
+		return    # already at a zoom limit
+	var screen_off := get_viewport().get_mouse_position() \
+		- get_viewport().get_visible_rect().size * 0.5
+	_camera.position += screen_off * (1.0 / z0 - 1.0 / z1)
+	_camera.zoom = Vector2(z1, z1)
+	_update_hud()
+
+
+## Back to the framing the viewer opens with: whole domain, centred.
+func _reset_view() -> void:
+	_camera.zoom = Vector2(_fit_zoom, _fit_zoom)
+	_camera.position = _fit_center
+	_update_hud()
 
 
 func _setup_hud() -> void:
@@ -454,7 +518,8 @@ func _setup_hud() -> void:
 	box.add_child(_legend_box)
 
 	var keys := Label.new()
-	keys.text = "space play/pause   ←/→ step   ↑/↓ speed   C color   R reset   Esc quit"
+	keys.text = "space play/pause   ←/→ step   ↑/↓ speed   C color   R restart   " \
+		+ "wheel/±  zoom   drag pan   F fit   Esc quit"
 	keys.add_theme_font_size_override("font_size", 11)
 	keys.add_theme_color_override("font_color", Color(0.55, 0.58, 0.64))
 	box.add_child(keys)
@@ -532,8 +597,11 @@ func _update_hud() -> void:
 	if _hud_info == null:
 		return
 	var t_ms := _frame * _loader.frame_dt * 1000.0
-	_hud_info.text = "frame %d / %d    t = %.3f ms    %.0f fps%s" % [
-		_frame, _loader.frame_count - 1, t_ms, frames_per_second,
+	# Zoom reads as a percentage of the fit-the-domain baseline, so 100% is
+	# always "the whole field" no matter how big the scenario's domain is.
+	var zoom_pct := 100.0 if _camera == null else _camera.zoom.x / _fit_zoom * 100.0
+	_hud_info.text = "frame %d / %d    t = %.3f ms    %.0f fps    zoom %.0f%%%s" % [
+		_frame, _loader.frame_count - 1, t_ms, frames_per_second, zoom_pct,
 		"" if _playing else "    ⏸ paused",
 	]
 	if _timeline_fill != null and _loader.frame_count > 1:

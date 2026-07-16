@@ -105,7 +105,7 @@ Design commitments that keep this loosely coupled:
 
 - **Particle count is fixed** for a bake (MPM particles persist; "spall" = particles flagged via `damage` and detached, not created/destroyed). Simplifies everything downstream.
 - **The visualizer reads the attribute layout from the manifest** — it must NOT hardcode column offsets. The solver can add a new attribute (e.g. `temperature`) by appending to `attributes` and the viewer keeps working, coloring by whatever it's told to.
-- **Substeps ≠ frames.** The solver runs thousands of tiny physics substeps but dumps only every Nth as a render frame (target 60–120 frames total). `frame_dt` documents the spacing.
+- **Substeps ≠ frames.** The solver runs thousands of tiny physics substeps but dumps only every Nth as a render frame. `frame_dt` documents the spacing. **Target a uniform `frame_dt` (currently `2.0e-7` s), not a frame count**: smoothness is frames-per-simulated-microsecond, so a fixed frame budget makes long decks jerkier than short ones — the oblique decks used to be the least smooth precisely because they were the longest. Set `total_time` per deck to cover the whole event, then derive `frame_count = total_time / frame_dt`. Decks currently run 200–700 frames; frame count drives cache size and viewer cost, **not** solver cost (substeps are derived from `frame_dt` and the CFL bound).
 - Alternative per-frame files (`frame_00042.bin`) are allowed by the spec for crash-resilient/streamable bakes; v1 uses a single blob for simplicity. Either way the manifest is authoritative.
 
 **Rule: any change to what's in a cache is a change to `docs/CACHE_FORMAT.md` and a bump of `schema_version`.** `tools/validate_cache.py` must pass on every cache the solver emits.

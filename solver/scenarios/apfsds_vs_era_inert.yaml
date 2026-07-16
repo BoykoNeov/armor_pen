@@ -1,8 +1,7 @@
 # A/B BASELINE for apfsds_vs_era.yaml — IDENTICAL geometry and areal mass, with
 # the reactive filler swapped for its inert twin (era_filler_inert: same density,
 # stiffness, and thickness, reactivity OFF). Nothing detonates; the sandwich is
-# just three passive plates with a soft interlayer (a NERA-like bulge from the
-# raw shock is all the filler does).
+# just three passive plates with a soft interlayer.
 #
 # The point of this deck is the CONTROL: comparing the rod's residual penetration
 # into the main plate here vs. in apfsds_vs_era.yaml isolates the *reactive*
@@ -14,7 +13,8 @@
 # illustrative order-of-magnitude values, not any real system (CLAUDE.md §10).
 name: apfsds_vs_era_inert
 
-domain: { xmin: 0, xmax: 200, ymin: 0, ymax: 100 }   # mm
+# MUST match apfsds_vs_era.yaml exactly — see that deck for the rationale.
+domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 120 }   # mm
 
 projectile:
   kind: kinetic
@@ -31,9 +31,10 @@ armor:
   - { material: rha,              thickness: 30.0, standoff: 25.0 } # main plate, 25 mm gap
 
 solver:
-  grid_resolution: 512
+  grid_resolution: 768   # tracks the x-extent to hold dx ~= 0.39 mm
   particles_per_cell: 4
   dt: 1.0e-7          # substep dt (CFL-bound); NOT frame_dt
-  total_time: 6.0e-5  # ~60 us — matches apfsds_vs_era (A/B decks must be
-  #                     byte-identical in geometry AND timing to stay comparable).
-  frame_count: 120
+  # Matches apfsds_vs_era: A/B decks must share domain, geometry AND timing to
+  # stay comparable, so every number in this block is copied, not tuned.
+  total_time: 1.1e-4
+  frame_count: 550    # frame_dt = 2.0e-7 s, uniform across every deck

@@ -91,17 +91,21 @@ Grow the reference MLS-MPM incrementally, validating visually with
    `mpm.py`). A persistent NERA bulge is the unignited soft-elastic branch held
    open — `ignition_compression=0` so the filler *never* ignites — **not** merely
    `detonation_pressure=0` (that still ignites on the impact shock and collapses
-   to debris: bulge-then-collapse). ✅ **Now baked and verified** (`nera_filler`,
+   to debris: bulge-then-collapse). ✅ **Baked and verified** (`nera_filler`,
    deck `apfsds_vs_nera`, geometry-identical to the two ERA decks — all three seed
-   at 126157 particles): filler damage is **0.000 across all 120 frames** (never
+   at 180449 particles): filler damage is **0.000 across all 550 frames** (never
    ignites, never spalls) and the sandwich opens without collapsing back —
-   separation grows monotonically 18.0→23.5 mm, still opening at window end. The
-   decisive signal is cohesion: filler thickness reaches only ~36 mm and levels
-   off, where the inert twin's filler shreds to damage 0.615 (still climbing at
-   50.7 mm) and the reactive twin's latches 1.000 by frame 20 and blows the
-   plates 58.5 mm apart. Visually confirmed (`--shots`): the interlayer is still
-   large coherent bent slabs at frame 119, spall spray coming from the steel
-   plates, not the filler. Stable, no NaN, passes `validate_cache`. **Caveat (PHYSICS §3.3):** the rod also ends up
+   separation grows 18.0→21.1 mm and levels off there. The decisive signal is
+   cohesion: filler thickness reaches only 44.2 mm and flattens, where the inert
+   twin's filler shreds to damage 0.523 (still climbing at 81.2 mm) and the
+   reactive twin's latches 1.000 and blows the plates 81.4 mm apart. The NERA
+   sandwich separates *less* than the inert one — a cohesive interlayer holds the
+   plates together as well as holding the bulge open. Visually confirmed
+   (`--shots`): the interlayer is still large coherent bent slabs, spall spray
+   coming from the steel plates, not the filler. Stable, no NaN, passes
+   `validate_cache`. These figures were **re-measured after the domain/geometry
+   change** — the branch verification reproduced exactly (damage 0.000); only the
+   magnitudes moved. **Caveat (PHYSICS §3.3):** the rod also ends up
    shallower/slower/more-damaged vs NERA than vs either ERA twin, but that is
    confounded *by construction* and is NOT an armor-performance claim —
    `reactive=True` skips **both** `_return_mapping` (plasticity) and

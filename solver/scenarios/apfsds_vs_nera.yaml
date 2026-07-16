@@ -3,28 +3,36 @@
 # thin steel plate] :: gap :: main RHA plate.
 #
 # This deck exercises the **persistent-bulge branch** of the reactive layer
-# (milestone 5), which until now was implemented but never baked. NERA carries no
-# explosive: the impact shock alone drives the sandwich plates apart, and the
-# cohesive elastic interlayer *holds the bulge open* instead of collapsing.
+# (milestone 5). NERA carries no explosive: the impact shock alone drives the
+# sandwich plates apart, and the cohesive elastic interlayer *holds the bulge
+# open* instead of collapsing.
 #
 # GEOMETRY IS IDENTICAL to apfsds_vs_era.yaml / apfsds_vs_era_inert.yaml — same
-# layers, thicknesses, standoff, rod, and timing — so all three are equal-areal-
-# mass arms of one A/B family and differ ONLY in the filler's response path:
+# domain, layers, thicknesses, standoff, rod, and timing — so all three are
+# equal-areal-mass arms of one A/B family and differ ONLY in the filler's
+# response path:
 #
-#   apfsds_vs_era        era_filler        reactive, ignites  -> detonation
-#   apfsds_vs_era_inert  era_filler_inert  non-reactive       -> filler spalls away
+#   apfsds_vs_era        era_filler        reactive, ignites   -> detonation
+#   apfsds_vs_era_inert  era_filler_inert  non-reactive        -> filler spalls away
 #   apfsds_vs_nera       nera_filler       reactive, no ignite -> cohesive bulge
 #
-# The nera/era_inert pair is the interesting one: same inertia, same "no
-# detonation", but the NERA filler stays cohesive (mpm.py skips the ductile-spall
-# gate for reactive particles) where the inert filler shreds at its 0.02 damage
-# threshold. Any delta between them is the *cohesion* of the interlayer, not mass.
+# CONFOUND — READ BEFORE DRAWING AN ARMOR CONCLUSION: `reactive=True` makes
+# mpm.py skip BOTH `_return_mapping` (plasticity) AND `_update_damage` (ductile
+# spall) for this filler, so nera_filler can neither yield nor break, while the
+# inert twin shreds at its 0.02 damage threshold. A nera/era_inert delta is
+# therefore NOT a "non-explosive beats explosive" armor claim — "the unbreakable
+# filler resists better" is near-tautological. What it legitimately illustrates
+# is the damage model itself (a spalled particle keeps mass and momentum but
+# drops its stress term, so it stops resisting). A genuine single-variable
+# cohesion test would be a NON-reactive filler with a high damage_threshold.
+# See docs/PHYSICS.md §3.3.
 #
 # Scenarios are DATA, not code (CLAUDE.md §9). Numbers are representative /
 # illustrative order-of-magnitude values, not any real system (CLAUDE.md §10).
 name: apfsds_vs_nera
 
-domain: { xmin: 0, xmax: 200, ymin: 0, ymax: 100 }   # mm
+# MUST match apfsds_vs_era.yaml exactly — see that deck for the rationale.
+domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 120 }   # mm
 
 projectile:
   kind: kinetic
@@ -41,8 +49,9 @@ armor:
   - { material: rha,         thickness: 30.0, standoff: 25.0 } # main plate, 25 mm gap
 
 solver:
-  grid_resolution: 512
+  grid_resolution: 768   # tracks the x-extent to hold dx ~= 0.39 mm
   particles_per_cell: 4
   dt: 1.0e-7          # substep dt (CFL-bound); NOT frame_dt
-  total_time: 6.0e-5  # ~60 us — matches the ERA decks so the A/B is frame-aligned
-  frame_count: 120
+  # Matches the ERA decks so the three-arm A/B stays frame-aligned.
+  total_time: 1.1e-4
+  frame_count: 550    # frame_dt = 2.0e-7 s, uniform across every deck

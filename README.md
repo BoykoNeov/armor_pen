@@ -58,14 +58,24 @@ motion. Every KE deck bakes on the RTX 5090 (NVIDIA Warp, sm_120) and passes
    apart (emergent, not a scripted rod kick).
 6. **Oblique reactive armor** — the rod strikes nose-first at angle.
 
+Every deck runs long enough to resolve **perforate-or-stop**, in a domain sized so
+the armor spans the full field height: the target is a plate that continues past
+the frame (armor on a vehicle), not a block floating in vacuum.
+
 **Headline result (verified, `docs/PHYSICS.md` §3.1–3.2).** Measured against an
 equal-areal-mass *inert* twin, at 55° obliquity the reactive layer measurably
-protects the backing plate — main-plate spall ≈40% lower, the gap growing
-monotonically over the event — where the same A/B at 0° is a null. But the
-tungsten rod itself is **not** cut or deflected; the protection arrives through
-the backing plate being shoved forward, cutting rod-relative penetration ~18%.
-The "flyer sweep erodes the rod" expectation did not hold, and is reported as it
-came out rather than tuned toward.
+protects the backing plate — main-plate spall ≈21% lower, the gap growing
+monotonically over the event — where the same A/B at 0° is an honest null. But the
+tungsten rod itself is **not** cut or deflected; it is degraded only modestly (~9%
+residual velocity), and the protection arrives mainly through the backing plate
+being shoved forward. The "flyer sweep erodes the rod" expectation did not hold,
+and is reported as it came out rather than tuned toward.
+
+*Read that 21% with its error bar attached.* On the earlier, smaller-domain
+geometry the same A/B read ≈40%. The **sign and the monotonic growth are robust;
+the magnitude is not** — and the 0° arm's margin actually flipped sign between
+geometries, which is the clearest evidence available of what counts as noise here.
+Plausibility, not prediction (see the scope note above).
 
 **Next:** the shaped-charge (HEAT) jet is still a tungsten-rod stand-in — a real
 jet model is the open capability gap. See the per-directory `CLAUDE.md` files for
@@ -89,12 +99,16 @@ python tools/inspect_cache.py caches/apfsds_vs_rha
 # Or develop the viewer against visualizer/fixtures/tiny_golden_cache/ with no solver present.
 ```
 
-On Windows, each baked deck has a double-click launcher that opens it straight in
-the viewer — `play_apfsds_vs_rha.bat`, `play_apfsds_vs_composite.bat`,
-`play_apfsds_vs_spaced.bat`, `play_apfsds_vs_nera.bat`, and the reactive A/B pairs
-`play_apfsds_vs_era{,_inert}.bat` and `play_apfsds_vs_era_oblique{,_inert}.bat`.
-The `_inert` twins are the equal-areal-mass controls: play a deck against its twin
-to see what the *reactive* layer actually contributes.
+On Windows, **`play_viewer.bat`** is the one to double-click: it lists every deck
+and lets you pick a color mode (material / velocity / damage / stress) before
+launching. Each deck also has its own direct launcher (`play_apfsds_vs_rha.bat`,
+`play_apfsds_vs_era_oblique.bat`, …) if you'd rather skip the menu. The `_inert`
+twins are the equal-areal-mass controls: play a deck against its twin to see what
+the *reactive* layer actually contributes.
+
+Viewer controls: `space` play/pause, `←/→` step, `↑/↓` speed, `C` cycle color
+mode, **mouse wheel or `+`/`-` to zoom (about the cursor), drag with middle/right
+button to pan, `F` to fit the domain again**, `R` restart, `Esc` quit.
 
 ## License
 

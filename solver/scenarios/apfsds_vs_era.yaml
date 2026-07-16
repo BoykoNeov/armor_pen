@@ -9,20 +9,25 @@
 # inert twin (era_filler_inert — identical mass/stiffness, reactivity OFF). The
 # two decks are byte-identical in geometry and areal mass, so comparing the rod's
 # residual penetration into the main plate isolates the *reactive* contribution
-# from "there is simply more material in the path".
+# from "there is simply more material in the path". apfsds_vs_nera.yaml is the
+# third arm (cohesive, never-igniting filler). All three must share this deck's
+# domain, geometry AND timing or the comparison is void.
 #
 # OBLIQUITY CAVEAT: this deck is at 0° (normal incidence). Real reactive armor is
 # far more effective at obliquity, where the moving plates sweep laterally ACROSS
 # the rod and cut it. At 0° the mechanism is front-plate-slammed-back-into-rod
-# erosion + tamping only — a genuine but weaker degradation. Oblique decks need
-# the rod *rectangle* rotated too (angle_deg currently tilts only the projectile
-# velocity), deferred to a later milestone.
+# erosion + tamping only — a genuine but weaker degradation. See
+# apfsds_vs_era_oblique.yaml (milestone 6) for the 55° arm.
 #
 # Scenarios are DATA, not code (CLAUDE.md §9). Numbers are representative /
 # illustrative order-of-magnitude values, not any real system (CLAUDE.md §10).
 name: apfsds_vs_era
 
-domain: { xmin: 0, xmax: 200, ymin: 0, ymax: 100 }   # mm
+# The armor face sits mid-domain (x=150), so xmax buys room BEHIND the stack (which
+# backs onto x=229): the rod perforates and the residual has somewhere to fly.
+# Slabs span the full height against slip (= mirror) walls, so the target reads as
+# armor on a vehicle continuing past the frame, not a block floating in vacuum.
+domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 120 }   # mm
 
 projectile:
   kind: kinetic
@@ -39,10 +44,11 @@ armor:
   - { material: rha,        thickness: 30.0, standoff: 25.0 } # main plate, 25 mm gap
 
 solver:
-  grid_resolution: 512
+  grid_resolution: 768   # tracks the x-extent to hold dx ~= 0.39 mm
   particles_per_cell: 4
   dt: 1.0e-7          # substep dt (CFL-bound); NOT frame_dt
-  total_time: 6.0e-5  # ~60 us — long enough for the rod to REACH the main plate
-  #                     (at 40 us the tip stopped ~6 mm short of it, so residual
-  #                     penetration into the protected plate was unmeasurable).
-  frame_count: 120
+  # ~110 us. The old 60 us left the tip buried INSIDE the main plate (x=164.8 of
+  # a 149..179 plate) with only 35 mm of domain left ahead of it, so "residual
+  # penetration into the protected plate" could never resolve to perforate-or-stop.
+  total_time: 1.1e-4
+  frame_count: 550    # frame_dt = 2.0e-7 s, uniform across every deck

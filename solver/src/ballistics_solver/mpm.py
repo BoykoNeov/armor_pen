@@ -528,8 +528,22 @@ def _grid_op(
     m = grid_m[i, j]
     if m > 0.0:
         vel = grid_v[i, j] / m
-        # Sticky reflecting domain walls (a few cells thick). No gravity: over a
-        # ~0.04 ms window it is utterly negligible next to impact stresses.
+        # Free-SLIP domain walls, a few cells thick: only the component heading
+        # INTO the wall is killed, tangential motion is untouched. (This was
+        # mislabelled "sticky reflecting" — sticky would zero the whole velocity
+        # and reflecting would negate the normal component. It does neither.)
+        #
+        # Slip is the useful reading: a slip wall is a MIRROR PLANE. Combined
+        # with armor slabs seeded across the full domain height (see `_seed`),
+        # the target behaves as a plate that CONTINUES beyond the frame — armor
+        # on a vehicle — rather than a finite block floating in vacuum whose free
+        # top/bottom edges flare outward. The mirror does imply an image of the
+        # projectile one domain-height away, so a deck must be tall enough that
+        # the event finishes before the rod or its spray nears a wall; that is a
+        # per-deck sizing duty, not something this kernel can enforce.
+        #
+        # No gravity: over a ~0.1 ms window it is utterly negligible next to
+        # impact stresses.
         bound = 3
         vx = vel[0]
         vy = vel[1]
@@ -554,6 +568,8 @@ def _g2p(
     origin: wp.vec2,
     inv_dx: float,
     dt: float,
+    lo: wp.vec2,
+    hi: wp.vec2,
 ):
     p = wp.tid()
     Xp = (x[p] - origin) * inv_dx
@@ -574,7 +590,19 @@ def _g2p(
 
     v[p] = new_v
     C[p] = new_C
-    x[p] = x[p] + dt * new_v
+    # Keep every particle at least one cell inside the domain. This is a memory-
+    # safety guard, not a physics choice: both transfer kernels index the grid at
+    # `floor(Xp - 0.5) + {0,1,2}` with no bounds check, so a particle within half
+    # a cell of the low edge gives base = -1 and the P2G stencil scatters OUT OF
+    # BOUNDS. The old 10%-of-height seeding margin hid this; now that armor spans
+    # the full domain height (see `_seed`) particles sit at the wall for the whole
+    # bake, so the guard has to be explicit. The slip wall in `_grid_op` already
+    # removes wall-normal velocity, so in practice this clamp almost never binds —
+    # it exists so that "almost never" cannot corrupt memory.
+    x[p] = wp.vec2(
+        wp.clamp(x[p][0] + dt * new_v[0], lo[0], hi[0]),
+        wp.clamp(x[p][1] + dt * new_v[1], lo[1], hi[1]),
+    )
     F[p] = (wp.mat22(1.0, 0.0, 0.0, 1.0) + dt * new_C) * F[p]
 
 
@@ -629,20 +657,40 @@ def _seed(scenario, dx: float, spacing: float):
     """Seed the projectile and armor stack into particle arrays (numpy).
 
     Geometry is illustrative (root §10): the projectile is a rectangle aimed
-    +x at the front face of the armor stack; each armor layer is a full-height
-    (with margin) slab, laid front-to-back with any standoff gap.
+    +x at the front face of the armor stack; each armor layer is a slab spanning
+    the full domain height, laid front-to-back with any standoff gap.
 
     Returns a dict of numpy arrays: pos, vel, mu, lam, yield, dthr, brittle,
     reactive, det_pressure, burn_time, ign_comp, mass, vol0, mat_id.
     """
     dom = scenario.domain
     proj = scenario.projectile
-    height = dom.ymax - dom.ymin
-    y_center = 0.5 * (dom.ymin + dom.ymax)
+    # Impact height. Defaults to mid-domain — what every normal-incidence deck
+    # wants, and bit-for-bit what the pre-existing seeding did. Oblique decks
+    # override it: the rod plunges in -y as it advances, so it needs most of the
+    # domain BELOW the impact point and only rod-clearance above it. Centring
+    # those decks would force a domain ~2x taller (and ~2x the particles) to buy
+    # headroom the rod never uses.
+    y_center = (
+        proj.impact_y if proj.impact_y is not None
+        else 0.5 * (dom.ymin + dom.ymax)
+    )
 
     # Armor front face sits mid-domain; layers march +x from there.
     armor_front = dom.xmin + 0.5 * (dom.xmax - dom.xmin)
-    margin = 0.1 * height  # keep the plate off the domain walls
+    # Armor slabs span the FULL domain height, inset by two cells. Together with
+    # the slip (mirror) walls in `_grid_op` this makes each slab read as a plate
+    # that CONTINUES beyond the frame — armor on a vehicle — instead of a finite
+    # block floating in vacuum. Previously slabs stopped 10% of the height short
+    # of each wall, so the plate had free top and bottom edges that flared
+    # outward into the void and let debris escape around them.
+    #
+    # The inset is two cells, not zero: `_p2g`/`_g2p` index at
+    # `floor(Xp-0.5)+{0,1,2}`, so a particle within half a cell of the low edge
+    # scatters out of bounds. Two cells keeps the outermost row safely clear
+    # while leaving a sub-mm gap (dx<1mm) in place of the old ~10mm void — small
+    # enough that the slab is effectively wall-to-wall.
+    inset = 2.0 * dx
 
     (pos_list, vel_list, mu_list, lam_list, yield_list, dthr_list, brittle_list,
      reactive_list, detp_list, burnt_list, igncomp_list,
@@ -709,7 +757,7 @@ def _seed(scenario, dx: float, spacing: float):
         x_cursor += layer.standoff
         slab = _fill_rect(
             x_cursor, x_cursor + layer.thickness,
-            dom.ymin + margin, dom.ymax - margin,
+            dom.ymin + inset, dom.ymax - inset,
             spacing,
         )
         add_region(slab, materials.get(layer.material), 0.0, 0.0)
@@ -851,6 +899,9 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
     grid_v = wp.zeros((nx, ny), dtype=wp.vec2, device=device)
     grid_m = wp.zeros((nx, ny), dtype=float, device=device)
     origin = wp.vec2(float(dom.xmin), float(dom.ymin))
+    # One-cell keep-out band for the _g2p position clamp (see the kernel).
+    clamp_lo = wp.vec2(float(dom.xmin + dx), float(dom.ymin + dx))
+    clamp_hi = wp.vec2(float(dom.xmax - dx), float(dom.ymax - dx))
 
     mat_id = seed["mat_id"]
 
@@ -863,7 +914,7 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
         wp.launch(_grid_op, dim=(nx, ny), device=device, inputs=[
             grid_v, grid_m, nx, ny])
         wp.launch(_g2p, dim=n, device=device, inputs=[
-            x, v, C, F, grid_v, origin, inv_dx, dt])
+            x, v, C, F, grid_v, origin, inv_dx, dt, clamp_lo, clamp_hi])
         # Bound the reactive filler's post-transfer speed so the F-independent
         # detonation source can't accelerate unconfined debris to a CFL-breaking
         # ~14 km/s (reactive particles only; see REACTIVE_VMAX / _clamp_reactive_v).

@@ -5,33 +5,36 @@
 # WHY OBLIQUE: the 0° A/B (apfsds_vs_era vs _inert) was an honest NULL — at
 # normal incidence the detonation flings the sandwich plates *laterally,
 # symmetric about the rod axis*: the debris sweeps sideways and never crosses
-# the rod to cut it (residual penetration reactive == inert, within noise). Real
-# reactive armor earns its keep at obliquity: the rod is tilted relative to the
-# plate normal, so the detonation-flung plates gain a velocity component
-# PERPENDICULAR to the long rod and sweep across it, bending and eroding it.
+# the rod to cut it. Real reactive armor earns its keep at obliquity: the rod is
+# tilted relative to the plate normal, so the detonation-flung plates gain a
+# velocity component PERPENDICULAR to the long rod and sweep across it.
 #
 # HOW: angle_deg rotates the projectile RECTANGLE (not just its velocity) so it
 # strikes nose-first at 55°; the armor slabs stay vertical/axis-aligned. Only the
 # relative rod-axis/plate-normal angle is physical, so this is frame-equivalent
-# to tilting the slabs — and it leaves the validated M1-M5 armor seeding
-# untouched (see mpm.py _seed / PHYSICS §3.1).
+# to tilting the slabs. It also keeps the slabs axis-aligned, which is what lets
+# them span the domain height and mirror cleanly in the slip walls — a TILTED
+# slab would mirror into a V and stop reading as a continuous plate.
 #
 # A/B NOTE: apfsds_vs_era_oblique_inert.yaml is this deck with the filler swapped
 # for the inert twin (era_filler_inert — identical mass/stiffness, reactivity
-# OFF). The two decks are byte-identical in geometry, obliquity and areal mass,
-# so comparing the rod's degradation isolates the *reactive* contribution from
-# "the oblique line-of-sight path simply holds more material" (the LOS path
-# lengthens at obliquity, which makes the inert twin essential here).
+# OFF). The two decks must stay byte-identical in domain, geometry, obliquity,
+# areal mass and timing, so comparing the rod's degradation isolates the
+# *reactive* contribution from "the oblique line-of-sight path simply holds more
+# material" (the LOS path lengthens at obliquity, which makes the twin essential).
 #
 # Scenarios are DATA, not code (CLAUDE.md §9). Numbers are representative /
 # illustrative order-of-magnitude values, not any real system (CLAUDE.md §10).
 name: apfsds_vs_era_oblique
 
-# Tall domain (180 mm) so the 60 mm rod, tilted at 55°, fits its body ABOVE the
-# tip at t=0 (~51 mm) AND has room to descend as it penetrates (the rod drops
-# ~tan55 ≈ 1.4 mm in y per mm of x it advances). Domain size is data (CLAUDE.md
-# §9): steeper obliquity just needs a taller domain, not a shallower angle.
-domain: { xmin: 0, xmax: 200, ymin: 0, ymax: 180 }   # mm
+# Tall domain, and the impact is deliberately OFF-CENTRE (see impact_y below).
+# The rod drops ~tan55 ≈ 1.43 mm in y per mm of x it advances, so it needs ~107 mm
+# of descent to transit the 60 mm stack (x=150..210) and clear it — but only its
+# own tilted body-length (~49 mm) of headroom above the impact. Centring the
+# impact would force a domain ~2x taller, and ~2x the particles, to buy headroom
+# the rod never uses. Domain size is data (CLAUDE.md §9): steeper obliquity just
+# needs a taller domain, not a shallower angle.
+domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 220 }   # mm
 
 projectile:
   kind: kinetic
@@ -42,6 +45,9 @@ projectile:
   angle_deg: 55.0     # obliquity from the plate normal (horizontal); high enough
   #                     that plate_v·sin55 ≈ 0.82·plate_v of the fling velocity is
   #                     perpendicular to the rod (vs 0 at normal incidence).
+  impact_y: 145.0     # rod tip meets the armor face here, not at mid-domain:
+  #                     ~75 mm of headroom above for the tilted body, ~145 mm of
+  #                     descent below for the penetration path.
 
 armor:
   - { material: rha,        thickness: 6.0 }                  # steel flyer plate
@@ -50,10 +56,11 @@ armor:
   - { material: rha,        thickness: 24.0, standoff: 12.0 } # main plate, 12 mm gap
 
 solver:
-  grid_resolution: 512
+  grid_resolution: 768   # tracks the x-extent to hold dx ~= 0.39 mm
   particles_per_cell: 4
   dt: 1.0e-7          # substep dt (CFL-bound); NOT frame_dt
-  total_time: 1.0e-4  # ~100 us — the oblique path advances in x only ~cos55 as
-  #                     fast as a normal hit, so the rod needs a longer window to
-  #                     transit the sandwich and reach the main plate.
-  frame_count: 120
+  # ~140 us. The oblique path advances in x only ~cos55 as fast as a normal hit
+  # (measured ~0.61 mm/us against ~1.5 for the 0° decks), so the rod needs a much
+  # longer window to transit the stack and resolve to perforate-or-stop.
+  total_time: 1.4e-4
+  frame_count: 700    # frame_dt = 2.0e-7 s, uniform across every deck

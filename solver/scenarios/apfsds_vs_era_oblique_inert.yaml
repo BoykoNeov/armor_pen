@@ -1,18 +1,21 @@
 # INERT A/B TWIN of apfsds_vs_era_oblique.yaml (milestone 6). Byte-identical in
-# geometry, obliquity (55°) and areal mass — the ONLY difference is the filler:
-# era_filler_inert (same density/stiffness, reactivity OFF) instead of the
-# reactive era_filler. Comparing the rod's degradation between the two decks
-# isolates the *reactive* detonation contribution from "the oblique line-of-sight
-# path simply holds more material". The LOS path lengthens at obliquity, so this
-# twin is what makes the oblique reactive result trustworthy (exactly as the 0°
-# apfsds_vs_era / _inert pair made the null trustworthy at milestone 5).
+# domain, geometry, obliquity (55°), areal mass and timing — the ONLY difference
+# is the filler: era_filler_inert (same density/stiffness, reactivity OFF)
+# instead of the reactive era_filler. Comparing the rod's degradation between the
+# two decks isolates the *reactive* detonation contribution from "the oblique
+# line-of-sight path simply holds more material". The LOS path lengthens at
+# obliquity, so this twin is what makes the oblique reactive result trustworthy
+# (exactly as the 0° apfsds_vs_era / _inert pair made the null trustworthy at
+# milestone 5).
 #
-# See apfsds_vs_era_oblique.yaml for the full mechanism/geometry rationale.
+# See apfsds_vs_era_oblique.yaml for the full mechanism/geometry rationale, and
+# for why impact_y is off-centre. Every number here is copied from that deck, not
+# tuned: if the two ever drift apart the A/B is void.
 # Scenarios are DATA, not code (CLAUDE.md §9); numbers are representative
 # order-of-magnitude values, not any real system (CLAUDE.md §10).
 name: apfsds_vs_era_oblique_inert
 
-domain: { xmin: 0, xmax: 200, ymin: 0, ymax: 180 }   # mm
+domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 220 }   # mm
 
 projectile:
   kind: kinetic
@@ -21,6 +24,7 @@ projectile:
   diameter: 8.0
   velocity: 1600
   angle_deg: 55.0
+  impact_y: 145.0
 
 armor:
   - { material: rha,              thickness: 6.0 }                  # steel flyer plate
@@ -29,8 +33,8 @@ armor:
   - { material: rha,              thickness: 24.0, standoff: 12.0 } # main plate, 12 mm gap
 
 solver:
-  grid_resolution: 512
+  grid_resolution: 768
   particles_per_cell: 4
   dt: 1.0e-7
-  total_time: 1.0e-4
-  frame_count: 120
+  total_time: 1.4e-4
+  frame_count: 700    # frame_dt = 2.0e-7 s, uniform across every deck
