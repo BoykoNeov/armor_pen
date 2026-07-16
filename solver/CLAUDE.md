@@ -93,19 +93,24 @@ Grow the reference MLS-MPM incrementally, validating visually with
    `detonation_pressure=0` (that still ignites on the impact shock and collapses
    to debris: bulge-then-collapse). ✅ **Baked and verified** (`nera_filler`,
    deck `apfsds_vs_nera`, geometry-identical to the two ERA decks — all three seed
-   at 180449 particles): filler damage is **0.000 across all 550 frames** (never
-   ignites, never spalls) and the sandwich opens without collapsing back —
-   separation grows 18.0→21.1 mm and levels off there. The decisive signal is
-   cohesion: filler thickness reaches only 44.2 mm and flattens, where the inert
-   twin's filler shreds to damage 0.523 (still climbing at 81.2 mm) and the
-   reactive twin's latches 1.000 and blows the plates 81.4 mm apart. The NERA
-   sandwich separates *less* than the inert one — a cohesive interlayer holds the
-   plates together as well as holding the bulge open. Visually confirmed
+   at 179189 particles): filler damage is **0.000 across all 550 frames** (never
+   ignites, never spalls). That is the decisive claim and it has now reproduced
+   across two rebakes (geometry change, then the nose). Supporting signal is
+   cohesion: filler thickness reaches only 39.5 mm, where the inert twin's shreds
+   to damage 0.462 and spreads to 83.5 mm and the reactive twin's latches 1.000 and
+   is flung to 125.6 mm. The sandwich opens 18.0→21.1 mm and holds — but **measure
+   the bulge BESIDE the channel, not in it** (inside, the plates are perforated and
+   dragged downrange, which reads as a huge fake "gap"), and the bulge **decays with
+   distance** (24.3 mm at a 10–20 mm band, 21.1 at 12–25, 18.4 at 15–30) so no single
+   separation number is meaningful. **Correction:** the old claim that NERA separates
+   *less* than the inert twin (21.1 vs 24.2) is **reversed** — the inert twin reads
+   18.0→18.5 flat at every band and does not bulge at all; the 24.2 reproduces only
+   as *NERA at a different band*, so those two arms were not sampled alike. NERA
+   bulging *more* is what the construction predicts (it is perfectly elastic — it
+   springs; the inert filler yields/shreds and dissipates). Visually confirmed
    (`--shots`): the interlayer is still large coherent bent slabs, spall spray
    coming from the steel plates, not the filler. Stable, no NaN, passes
-   `validate_cache`. These figures were **re-measured after the domain/geometry
-   change** — the branch verification reproduced exactly (damage 0.000); only the
-   magnitudes moved. **Caveat (PHYSICS §3.3):** the rod also ends up
+   `validate_cache`. **Caveat (PHYSICS §3.3):** the rod also ends up
    shallower/slower/more-damaged vs NERA than vs either ERA twin, but that is
    confounded *by construction* and is NOT an armor-performance claim —
    `reactive=True` skips **both** `_return_mapping` (plasticity) and
@@ -132,29 +137,52 @@ Grow the reference MLS-MPM incrementally, validating visually with
      `apfsds_vs_era_inert`) are byte-identical in geometry, areal mass, and timing,
      so the near-zero delta cleanly isolates the reactive contribution. See
      PHYSICS §3.1.
-6. **Oblique reactive armor** — ✅ done. `_seed` now rotates the projectile
-   *rectangle* by `angle_deg` about its tip so the rod strikes nose-first along
-   its velocity (armor slabs stay vertical — only the relative rod/plate-normal
-   angle is physical, so this is frame-equivalent to tilting the slabs and leaves
-   the M1–M5 armor seeding untouched; `angle_deg=0` is exact identity, verified:
-   `apfsds_vs_rha` re-bakes at 96637 particles / 15.6 % RHA spall, no regression).
-   New decks `apfsds_vs_era_oblique` (+ `_inert` twin) at 55° in a taller (180 mm)
-   domain. **Result (verified, PHYSICS §3.2): at 55° the reactive layer
-   measurably protects the backing plate — main-plate spall ≈40 % lower (0.071 vs
-   0.117), the gap growing monotonically over the event — where the 0° A/B was a
-   null of the opposite sign.** But the tungsten **rod is NOT cut or deflected**
-   (equal tip depth frame-for-frame, equal rod damage 0.49 vs 0.50): thin
-   few-hundred-m/s flyers can't erode a tough long rod. The protection comes
-   *through the backing plate*: the detonation shoves it forward earlier/faster
-   (~8.4 mm/180 m/s vs ~4.2 mm/143 m/s) and disperses the coherent flyer/filler
-   follow-through, cutting rod-relative penetration ~18 % (~17 vs ~21 mm). NOT
-   chased steeper (marginal) and det_pressure NOT cranked (confirmation-bias
-   tuning, §10). Shared bottom-wall contact (`y≈1`) means only the A/B **delta**
-   is meaningful. Verified visually (M:\claud_projects\temp\m6_oblique\era_oblique_AB.png).
-   The earlier "flyer sweep erodes/deflects the rod" expectation did not hold —
-   reported honestly as backing-plate protection instead.
+6. **Oblique reactive armor** — ✅ done. `_seed` rotates the projectile by
+   `angle_deg` about its tip so the rod strikes nose-first along its velocity
+   (armor slabs stay vertical — only the relative rod/plate-normal angle is
+   physical, so this is frame-equivalent to tilting the slabs and leaves the M1–M5
+   armor seeding untouched; the *rotation* at `angle_deg=0` is exact identity,
+   though the rod it rotates is now nose-carved at every angle (see the nose note
+   below), so 0° decks no longer seed bit-for-bit as at M1–M5). New decks
+   `apfsds_vs_era_oblique` (+ `_inert` twin) at 55°. **Result (verified,
+   PHYSICS §3.2): at 55° the reactive layer measurably protects the backing plate
+   — main-plate spall ≈16 % lower (0.137 vs 0.163)** — and the *same* mechanism
+   buys ≈8 % at 0°, so the plate-side benefit is real at both angles and roughly
+   doubles with obliquity. But the tungsten **rod is NOT cut or deflected** at
+   either angle (penetration delta +0.8 % at 55°, +0.3 % at 0°; rod damage −0.5 %
+   / +2.3 %): thin few-hundred-m/s flyers can't erode a tough long rod. **That —
+   not the plate — is the honest null.** Residual velocity is the one real rod-side
+   effect (−8.5 % at 55°). Mechanism: the detonation shoves the main plate forward
+   (plate body +7.7 mm vs the inert twin at 55°, +1.6 mm at 0° — the shove and the
+   protection scale together). NOT chased steeper and det_pressure NOT cranked
+   (confirmation-bias tuning, §10). **Error bars are two different sizes and must
+   not be conflated:** run-to-run scatter is ≤0.11 % (measured by repeat bakes), so
+   the protection is ~150× the numerical floor; but model sensitivity is large —
+   the same A/B has read 40 % / 21 % / 16 % across geometry and nose changes.
+   Sign robust, magnitude not portable. The earlier "flyer sweep erodes/deflects
+   the rod" expectation did not hold — reported honestly as backing-plate
+   protection instead.
+Don't rewrite from scratch. **Milestone 7 = HEAT/shaped-charge jet** — the open
+capability gap; `heat_vs_composite` is still a tungsten-rod stand-in.
 
-Don't rewrite from scratch.
+### Rod nose — geometry fix, not a milestone (done)
+
+The projectile was seeded as a flat-faced rectangle; a real APFSDS is **pointed**.
+`_seed` now carves a nose (`nose_shape`: conical (default) / ogive / blunt,
+`nose_length` default 1.5 calibers) out of the rod rectangle before the rotation.
+Defaulted in `config.py`, so all 9 decks went sharp with **zero YAML edits**.
+
+Verified against a `blunt` control twin (same deck, same probe, nose the only
+difference): **final penetration is unchanged** (232.3 vs 232.7 mm, −0.2 %) — the
+textbook result, since the nose is consumed in ~1 µs and depth is then nearly
+nose-shape-independent (eroding/hydrodynamic regime). It is **geometric realism,
+not a penetration-accuracy fix.** Where it shows is the **early crater**: 63 % less
+RHA spall at 6.4 µs (0.004 vs 0.010) — the pointed rod cleaves in where the flat
+face slaps — converging by ~24 µs once both have mushroomed. Rod ends ~10 % less
+damaged. **Confound:** the nose is carved OUT, so a pointed rod is ~10 % lighter at
+equal length (not compensated — that would change the scenarios, which were to be
+kept). All 9 decks rebaked, validated, finite; A/B twins still match
+particle-for-particle. See PHYSICS §1.2.
 
 ## Commands
 

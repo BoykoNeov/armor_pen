@@ -58,23 +58,32 @@ motion. Every KE deck bakes on the RTX 5090 (NVIDIA Warp, sm_120) and passes
    apart (emergent, not a scripted rod kick).
 6. **Oblique reactive armor** — the rod strikes nose-first at angle.
 
+The rod is also **pointed** (conical nose, `nose_shape` in the deck), not the
+flat-faced cylinder it used to be — a real APFSDS is sharp (`docs/PHYSICS.md` §1.2).
+
 Every deck runs long enough to resolve **perforate-or-stop**, in a domain sized so
 the armor spans the full field height: the target is a plate that continues past
 the frame (armor on a vehicle), not a block floating in vacuum.
 
 **Headline result (verified, `docs/PHYSICS.md` §3.1–3.2).** Measured against an
-equal-areal-mass *inert* twin, at 55° obliquity the reactive layer measurably
-protects the backing plate — main-plate spall ≈21% lower, the gap growing
-monotonically over the event — where the same A/B at 0° is an honest null. But the
-tungsten rod itself is **not** cut or deflected; it is degraded only modestly (~9%
-residual velocity), and the protection arrives mainly through the backing plate
-being shoved forward. The "flyer sweep erodes the rod" expectation did not hold,
-and is reported as it came out rather than tuned toward.
+equal-areal-mass *inert* twin, the reactive layer **protects the backing plate but
+never touches the rod**. Main-plate spall is ≈16% lower at 55° obliquity and ≈8%
+lower at 0°, tracking a single mechanism: the detonation shoves the main plate
+forward (+7.7 mm vs the twin at 55°, +1.6 mm at 0°), and a plate moving *with* the
+rod defeats less penetrator. The tungsten rod itself is **not** cut or deflected at
+either angle (penetration differs by <1%); only its residual velocity moves (−8.5%
+at 55°). **That is the honest null — it was always about the penetrator, not the
+plate.** The "flyer sweep erodes the rod" expectation did not hold, and is reported
+as it came out rather than tuned toward.
 
-*Read that 21% with its error bar attached.* On the earlier, smaller-domain
-geometry the same A/B read ≈40%. The **sign and the monotonic growth are robust;
-the magnitude is not** — and the 0° arm's margin actually flipped sign between
-geometries, which is the clearest evidence available of what counts as noise here.
+*Read those numbers with two different error bars attached.* Run-to-run scatter is
+**≤0.11%** (measured by re-baking identical decks), so the protection is ~150× the
+numerical noise floor — it is signal. But **model sensitivity is large**: the same
+A/B has read ≈40% (old floating-block geometry), ≈21% (plate geometry, blunt rod)
+and ≈16% (plate geometry, pointed rod). The **sign is robust across every condition
+tried; the magnitude is not portable** — quote it as "roughly 10–20%, sign-stable."
+At 0° the margin's sign has actually flipped across a geometry change, which is why
+55° earns confidence and 0° does not, though both clear the numerical floor.
 Plausibility, not prediction (see the scope note above).
 
 **Next:** the shaped-charge (HEAT) jet is still a tungsten-rod stand-in — a real
