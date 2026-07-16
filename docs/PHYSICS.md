@@ -261,9 +261,13 @@ never crosses the rod path to cut it. Real reactive armor gets its effectiveness
 from **obliquity** (§3.2).
 
 **The backing plate is a separate question from the rod, and the answer differs.**
-At 0° the main plate does spall ~8 % less in the reactive deck (0.222 vs 0.243),
+At 0° the main plate does spall **~13 % less** in the reactive deck (**0.246 vs
+0.282**, re-measured post-EOS; it was 0.220 vs 0.242, ~9 %, under the pre-EOS law —
+the *conclusion* survived milestone 8, the *magnitude* moved and both arms'
+absolute damage rose),
 driven by the same forward-shove mechanism §3.2 documents at 55°: the detonation
-pushes the plate body 1.6 mm further downrange than the inert twin's. That margin
+pushes the plate body **1.58 mm** further downrange than the inert twin's
+(re-measured post-EOS; +1.44 mm under the pre-EOS law, same probe). That margin
 is **~80× the run-to-run scatter** (§3.2), so it is not numerical noise — but its
 *sign flipped* when the geometry changed from a floating block to a plate (it
 used to read reactive marginally **worse**), so it sits inside **model**
@@ -479,12 +483,33 @@ The shipped A/B is `heat_vs_composite` against `heat_vs_composite_uniform` — t
 same copper, geometry, mass, nose, timing and particle count (9210 both), with
 `tail_velocity` omitted in the control, so **the gradient is the only variable**:
 
+Re-measured after the milestone-8 EOS, on the 30 µs window both decks now carry
+(§3.4's timing note). Same probe both rows: markers 60 and 110 mm behind the tip,
+tracked while both are in free flight (i.e. until either latches `damage`).
+
 | deck | material | predicted | measured | separation | body length |
 |---|---|---|---|---|---|
-| `heat_vs_composite_uniform` | copper | 0 mm/µs | **−0.064 mm/µs** | 50.0 → 45.3 mm | 117.5 → **77.5** mm |
-| `heat_vs_composite` (the jet) | copper | 2.083 mm/µs | **2.085 mm/µs** (+0.1 %) | 50.0 → 101.7 mm | 117.5 → **157.9** mm |
-| *(development, tungsten)* | tungsten | 0 mm/µs | **−0.003 mm/µs** | 50.0 → 50.0 mm | 115.5 → **68.3** mm |
-| *(development, tungsten)* | tungsten | 2.083 mm/µs | **2.084 mm/µs** (+0.0 %) | 50.0 → 101.7 mm | 115.5 → **165.1** mm |
+| `heat_vs_composite_uniform` | copper | 0 mm/µs | **−0.025 mm/µs** | 50.0 → 47.6 mm | 118.6 → **43.7** mm |
+| `heat_vs_composite` (the jet) | copper | 2.083 mm/µs | **2.093 mm/µs** (+0.5 %) | 50.0 → 112.4 mm | 118.6 → **151.1** mm |
+
+**The claim survives the EOS, which is the point of re-measuring rather than
+assuming.** Stretching is kinematic — each element flies at its own seeded speed,
+so the rate is material-independent *by construction* and an equation of state
+should not touch it. Measurement agrees it barely did: the identical deck on the
+**pre-EOS solver** gives **2.0851 mm/µs (+0.10 %)** against **2.0933 (+0.50 %)**
+now. A rate is a slope, so those two are directly comparable even though the
+windows differ; the separation and body columns are not, and are quoted for the
+current 30 µs window only. The prediction is still met to well under a percent —
+the agreement is simply no longer suspiciously perfect. "Immune by construction"
+was a reason to check it, not a reason to skip checking.
+
+*(The pre-EOS table quoted `−0.064 mm/µs`, `50.0 → 45.3`, `117.5 → 77.5` for the
+control plus two development tungsten rows. The graded row reproduces exactly under
+this probe — 2.085 and 50.0 → 101.7 at the old 25 µs window — so the method matches
+where the claim lives. The control row does not: the earlier figure ran past the
+markers' free flight into their erosion, where this probe stops. The tungsten rows
+were development-only, their decks no longer exist, and they are dropped rather
+than left silently un-re-measured.)*
 
 The control is the decisive half: the jet's body **stretches** +40.4 mm while the
 control's **shortens** −40.0 mm by tip erosion — near-perfectly symmetric, and

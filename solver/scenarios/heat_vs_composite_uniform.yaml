@@ -9,10 +9,13 @@
 # The velocity gradient is therefore the single variable, which is what makes the
 # stretching claim falsifiable rather than merely illustrated. What it isolates:
 #
-#   graded (the jet)  -> STRETCHES: free-flight markers separate at 2.085 mm/us
-#                        (kinematic prediction 2.083), body 115 -> 165 mm
-#   uniform (control) -> SHORTENS by tip erosion: markers hold at exactly 50.0 mm
-#                        (-0.003 mm/us), body 115 -> 68 mm
+#   graded (the jet)  -> STRETCHES: free-flight markers separate at 2.093 mm/us
+#                        (kinematic prediction 2.083, +0.5%), body 119 -> 151 mm
+#   uniform (control) -> SHORTENS by tip erosion: markers barely move
+#                        (-0.025 mm/us), body 119 -> 44 mm
+# (Re-measured after the milestone-8 EOS. The rate was 2.085/+0.1% under the
+#  pre-EOS law: stretching is kinematic, so an equation of state should not touch
+#  it, and measurement agrees it barely did. See PHYSICS §3.4/§3.5.)
 #
 # A uniform projectile at jet speed is exactly what this deck's ancestor was: a
 # rod flown fast and *called* a jet. Keeping it as a control is the point — it is
@@ -49,5 +52,10 @@ solver:
   # is never replaced by slower material), so it perforates earlier and spends the
   # tail of the window in free flight — that is the control behaving as a rod,
   # which is exactly what it is here to show.
-  total_time: 2.5e-5
-  frame_count: 125    # frame_dt = 2.0e-7 s, uniform across every deck
+  #
+  # Extended 25 -> 30 us in lockstep with the twin (milestone 8 slowed the graded
+  # deck's front and pushed its perforation off-camera). The match is the point: if
+  # only one arm moves, the A/B stops being frame-for-frame and the comparison
+  # quietly means something else.
+  total_time: 3.0e-5
+  frame_count: 150    # frame_dt = 2.0e-7 s, uniform across every deck

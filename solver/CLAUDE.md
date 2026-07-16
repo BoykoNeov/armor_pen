@@ -185,10 +185,12 @@ Grow the reference MLS-MPM incrementally, validating visually with
      `heat_vs_composite` vs the committed twin **`heat_vs_composite_uniform`** —
      same copper, geometry, mass, nose, timing, particle count (9210 both), with
      `tail_velocity` omitted, so the gradient is the ONLY variable. Free-flight
-     markers 60/110 mm behind the tip separate at **2.085 measured vs 2.083
-     predicted mm/µs**; the jet's body **stretches +40.4 mm** (117.5 → 157.9) where
-     the control's **shortens −40.0 mm** (117.5 → 77.5) by erosion — symmetric and
-     opposite in sign. The rate also reproduces on **tungsten** (+0.0 %), a 7.5×
+     markers 60/110 mm behind the tip separate at **2.093 measured vs 2.083
+     predicted mm/µs** (+0.5 %; re-measured after the milestone-8 EOS — the pre-EOS
+     value was 2.085, i.e. +0.1 %, so the EOS moved it 0.4 % and the claim stands).
+     The jet's body **stretches +32.5 mm** (118.6 → 151.1) where the control's
+     **shortens −74.9 mm** (118.6 → 43.7) by erosion — opposite in sign, which is
+     the whole claim. The rate also reproduces on **tungsten** (+0.0 %), a 7.5×
      different yield: a kinematic prediction computed from seeded velocities alone
      MUST be material-independent, and it is.
    - **Strength shows up off the rate, and it is signal:** the tungsten control

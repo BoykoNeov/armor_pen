@@ -47,20 +47,27 @@ solver:
   grid_resolution: 768   # tracks the x-extent to hold dx ~= 0.39 mm
   particles_per_cell: 4
   dt: 5.0e-8          # substep dt (CFL-bound); NOT frame_dt
-  # ~25 us, sized to the jet's TIP passage (measured on this deck, not inherited
+  # ~30 us, sized to the jet's TIP passage (measured on this deck, not inherited
   # from the rod stand-in this replaced):
   #   t= 0.4 us  tip crosses the front face (x=150)
-  #   t= 9.2 us  tip reaches the spaced ceramic (x=190)
-  #   t=23.0 us  tip clears the back of the stack (x=235) — perforation
-  #   t=24.8 us  end of window, tip at 241 mm, still 59 mm clear of the far wall
+  #   t= 9.8 us  tip reaches the spaced ceramic (x=190)
+  #   t=26.0 us  tip clears the back of the stack (x=235) — perforation
+  #   t=30.0 us  end of window, tip at 245 mm, still 55 mm clear of the far wall
   # so nothing is pinned against the _g2p clamp (the "debris piled against an
   # invisible wall" artifact) and the whole perforation is in frame.
   #
-  # Note the penetration front advances at only ~3-5 mm/us, well under the 7 mm/us
+  # EXTENDED from 25 us by milestone 8. The EOS made the penetration front slower
+  # (it no longer under-resists at the stagnation point), and at 25 us the tip
+  # reached only x=232 of the stack's 235 — the perforation this deck exists to
+  # show fell OFF-CAMERA by 3 mm. Same failure `apfsds_vs_rha` had at 40 us, same
+  # fix: move the window, not the physics. The figures above are re-measured
+  # post-EOS; the pre-EOS timeline was 9.2 / 23.0 / 241.
+  #
+  # Note the penetration front advances at only ~3 mm/us, well under the 7 mm/us
   # seeded tip speed, and that is not a bug: the tip ERODES, so the leading
   # material is continuously consumed and replaced by material from further back —
   # which the velocity gradient makes slower. A graded jet decelerates its own
-  # penetration front. This is why 25 us covers a passage that a 7 mm/us rod would
+  # penetration front. This is why 30 us covers a passage that a 7 mm/us rod would
   # have finished far sooner.
   #
   # KNOWN LIMIT, and grading makes it structural rather than incidental: the jet
@@ -70,5 +77,5 @@ solver:
   # field. A bounded domain can hold a graded jet's tip passage or its tail
   # transit, never both. This deck claims the TIP's passage, which is where the
   # penetration happens; the trailing body is honestly out of frame.
-  total_time: 2.5e-5
-  frame_count: 125    # frame_dt = 2.0e-7 s, uniform across every deck
+  total_time: 3.0e-5
+  frame_count: 150    # frame_dt = 2.0e-7 s, uniform across every deck

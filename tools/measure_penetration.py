@@ -55,6 +55,16 @@ TIP_PERCENTILE = 99.5
 # nose-consumption transient at the head and the rod-exhausted stall at the tail.
 EROSION_WINDOW = (0.80, 0.20)
 
+# Below this, the leading edge is not travelling in a straight line, so there is no
+# single steady u to report and the fitted slope is a time-average of something
+# that varied. That is often PHYSICS rather than a probe failure -- Tate's rod
+# decelerates under target resistance at a rate set by its strength, so a
+# high-yield penetrator at low impact velocity genuinely never reaches a steady
+# phase. The number is still returned (a time-average is a real quantity), but it
+# is flagged, because a caller tabulating a trend must not silently mix a steady u
+# with an averaged one.
+R2_STEADY = 0.99
+
 
 def load_cache(cache_dir: Path):
     """Memory-map frames.bin per CACHE_FORMAT §3 and return (manifest, frames)."""
@@ -163,11 +173,23 @@ def measure(cache_dir: Path, verbose: bool = True):
 
     u = slope * 1000.0  # mm/us -> mm/ms == m/s
 
+    steady = bool(r2 >= R2_STEADY)
     out = {
         "cache": cache_dir.name, "material": proj_name, "v": v, "u": u,
         "u_over_v": u / v, "r2": r2, "n_fit": len(idx),
         "frac_end": float(frac[-1]),
-        "window_us": (float(tw[0]), float(tw[-1])), "note": "",
+        "window_us": (float(tw[0]), float(tw[-1])),
+        # Machine-readable, so a caller tabulating a trend cannot miss what the
+        # human-readable line says. Absent this, a non-steady point silently joins
+        # a table of steady ones and the trend quietly means something else.
+        "steady": steady,
+        "note": "" if steady else (
+            f"R^2={r2:.5f} < {R2_STEADY}: the leading edge is NOT travelling in a "
+            f"straight line, so there is no single steady u here — the reported "
+            f"value is a time-average over a varying rate. Often physical (a "
+            f"strong penetrator at low v decelerates rather than reaching steady "
+            f"state), but it is not comparable to a steady-phase u."
+        ),
     }
     if verbose:
         print(f"cache      : {out['cache']}")
@@ -176,7 +198,8 @@ def measure(cache_dir: Path, verbose: bool = True):
         print(f"u          : {u:.1f} m/s   (fit over {len(idx)} frames, "
               f"t={tw[0]:.1f}-{tw[-1]:.1f} us, erosion {hi:.0%}->{lo:.0%})")
         print(f"u/v        : {u/v:.4f}")
-        print(f"R^2        : {r2:.5f}   ({'straight — steady phase' if r2 > 0.99 else 'NOT STRAIGHT — the steady-phase premise failed, do not use'})")
+        print(f"R^2        : {r2:.5f}   ("
+              f"{'straight — steady phase' if steady else 'NOT STRAIGHT — no steady u; see note'})")
     return out
 
 
@@ -192,8 +215,10 @@ def main(argv=None) -> int:
         print(json.dumps(out))
     if out["note"]:
         print(f"\nWARNING: {out['note']}", file=sys.stderr)
-        return 1
-    return 0
+    # Fail only when there is no number to report (perforated / never eroded).
+    # A flagged-but-finite u is a real measurement the caller may legitimately
+    # want; `steady` and `note` carry the caveat without pretending it is an error.
+    return 1 if not np.isfinite(out["u"]) else 0
 
 
 if __name__ == "__main__":
