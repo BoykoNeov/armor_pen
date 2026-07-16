@@ -38,8 +38,30 @@ class Projectile:
     # Geometry is illustrative/representative only (CLAUDE.md §10).
     length: float  # mm
     diameter: float  # mm
-    velocity: float  # m/s (== mm/ms in the mm-ms-g system)
+    velocity: float  # m/s (== mm/ms in the mm-ms-g system) — the TIP velocity
     angle_deg: float = 0.0  # obliquity from horizontal
+    # Tail velocity (m/s). None = uniform, i.e. the whole projectile flies at
+    # `velocity` — what every KE deck wants, and bit-for-bit the pre-existing
+    # seeding.
+    #
+    # Set it (< velocity) to make a VELOCITY-GRADED projectile: speed falls
+    # linearly from `velocity` at the tip to `tail_velocity` at the tail. That
+    # gradient is the defining feature of a shaped-charge jet, and it is why a
+    # jet needs no new kernel — the interesting behaviour is emergent from an
+    # initial condition:
+    #   * the jet STRETCHES, because each element flies at its own constant
+    #     speed, elongating at (velocity - tail_velocity) — a purely kinematic
+    #     result, so it holds regardless of material;
+    #   * it may PARTICULATE, once that stretching drives plastic strain past
+    #     the material's damage_threshold, breaking it into a fragment train.
+    # A uniform rod does the opposite: it is consumed from the tip and gets
+    # SHORTER. See docs/PHYSICS.md §3.4.
+    #
+    # We seed an ALREADY-FORMED jet. Liner collapse and the explosive that
+    # drives it are deliberately not modelled — out of scope by construction
+    # (root §10), and unnecessary: the gradient is the part that matters
+    # downstream. This is textbook Birkhoff/PER jet theory (PHYSICS §5).
+    tail_velocity: float | None = None
     # Nose profile. A real APFSDS long rod is POINTED, not flat-faced. Note what
     # this does and does not buy: the nose exists mainly for flight aerodynamics
     # and initial bite, and at ordnance velocity it is consumed within the first
@@ -123,6 +145,15 @@ class Scenario:
             raise ValueError(
                 f"nose_length={proj.nose_len} must be >= 0 and shorter than the "
                 f"rod length={proj.length}"
+            )
+        # A graded projectile's tail must trail its tip. A tail FASTER than the
+        # tip would compress the jet into itself rather than stretch it, which
+        # is not a shaped-charge jet and is not what the seeding models.
+        tv = proj.tail_velocity
+        if tv is not None and not 0.0 <= tv <= proj.velocity:
+            raise ValueError(
+                f"tail_velocity={tv} must be >= 0 and no faster than the tip "
+                f"velocity={proj.velocity} (a jet stretches; it does not compress)"
             )
 
 

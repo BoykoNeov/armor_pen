@@ -1,12 +1,21 @@
 # Shaped-charge (HEAT) jet vs a spaced composite stack (steel / ceramic / steel).
 # Representative / illustrative only (CLAUDE.md §10).
 #
-# STAND-IN: `material: tungsten_rod` is NOT a jet model — it is a long thin rod
-# flown at jet-like speed. A real shaped-charge jet stretches, is velocity-graded
-# tip-to-tail, and erodes fluid-dynamically; none of that is modelled here. This
-# deck exists to keep the `heat_jet` path baked and playable, not to say anything
-# about shaped-charge performance. The jet model is the open capability gap
-# (milestone 7; SPH may return for fluid-like erosion — docs/PHYSICS.md §1).
+# A real jet, not a rod stand-in (milestone 7). What makes this a jet rather than
+# a fast rod is `tail_velocity`: the projectile is seeded VELOCITY-GRADED, 7000
+# m/s at the tip falling linearly to 2000 m/s at the tail. Everything
+# jet-characteristic then falls out of that one initial condition, with no new
+# solver machinery:
+#   * it STRETCHES, because each element flies at its own constant speed
+#     (verified: the free-flight body elongates at the kinematic rate to within
+#     0.0%, where the uniform control instead SHORTENS by erosion — PHYSICS §3.4);
+#   * it erodes FLUID-LIKE, because at a 7 km/s stagnation point copper's yield is
+#     ~1000x below the pressure, so von Mises caps deviatoric stress near zero
+#     without any special "fluid" path.
+#
+# We seed an ALREADY-FORMED jet. The liner collapse and the explosive that drives
+# it are deliberately NOT modelled — out of scope by construction (§10), and
+# unnecessary, since the gradient is the part that matters downstream.
 name: heat_vs_composite
 
 # The armor face sits mid-domain (x=150), leaving room for the 120 mm jet body
@@ -17,11 +26,17 @@ domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 120 }   # mm
 
 projectile:
   kind: heat_jet
-  material: tungsten_rod   # jet stand-in until a proper jet model exists
-  length: 120.0            # mm (a jet is long and thin)
+  material: copper_jet     # the classic liner metal; see materials.py
+  length: 120.0            # mm (a jet is long and thin: L/D = 40)
   diameter: 3.0            # mm
-  velocity: 7000           # m/s tip velocity (== mm/ms)
+  velocity: 7000           # m/s TIP velocity (== mm/ms)
+  tail_velocity: 2000      # m/s at the tail -> a 5 mm/us stretch rate
   angle_deg: 0.0
+  # A jet is a stretching column, not a pointed penetrator: it has no machined
+  # nose to inherit. The tip shape is also irrelevant at this speed — PHYSICS
+  # §1.2 measured final penetration as nose-shape-independent even at 1.6 km/s,
+  # and this deck is 4x faster and deeper into the hydrodynamic regime.
+  nose_shape: blunt
 
 armor:
   - { material: rha,     thickness: 10.0 }                 # front plate
@@ -38,12 +53,14 @@ solver:
   # eats the remaining 65 mm of domain in ~9 us. A 40 us window ran the tip into
   # the far wall at ~30 us, where the _g2p clamp pinned it for the last quarter of
   # the bake — the "debris piled against an invisible wall" artifact this pass
-  # exists to remove. 25 us stops with the tip at ~272, ~28 mm clear of the clamp.
+  # exists to remove. 25 us stops with the tip clear of the clamp.
   #
-  # KNOWN LIMIT: the 120 mm body does NOT fully transit the stack in this window,
-  # and no sane domain lets it — a body that long at that speed outruns any
-  # bounded field. This deck is a rod stand-in (see the header), so the tip's
-  # passage is all it is claiming; a real jet model (milestone 7) re-sizes this
-  # deck rather than papering over it here.
+  # KNOWN LIMIT, and grading makes it structural rather than incidental: the jet
+  # does NOT fully transit the stack in this window, and no sane domain lets it.
+  # The tail flies at 2 km/s, so it needs ~100 us to cross to the armor — by which
+  # time a 7 km/s tip would be ~850 mm downrange, far outside any affordable
+  # field. A bounded domain can hold a graded jet's tip passage or its tail
+  # transit, never both. This deck claims the TIP's passage, which is where the
+  # penetration happens; the trailing body is honestly out of frame.
   total_time: 2.5e-5
   frame_count: 125    # frame_dt = 2.0e-7 s, uniform across every deck

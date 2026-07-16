@@ -21,7 +21,15 @@ We **grow the canonical 88-line MLS-MPM** reference (Hu et al.) rather than
 rewriting from scratch: add plasticity, then damage, then the multi-material
 armor stack, validating visually at each step via `tools/inspect_cache.py`.
 
-SPH may return later, specifically for HEAT-jet fluid-like erosion.
+SPH was long hedged as a possible return "for HEAT-jet fluid-like erosion".
+**That is now settled, and the answer is no** (milestone 7, §3.4): MPM reproduces
+jet stretching to within 0.1 % of the kinematic prediction with no new kernel, and
+fluid-like erosion needs no special path at all — at a 7 km/s stagnation point the
+jet's yield is ~1000× below the pressure, so the existing von Mises return mapping
+caps deviatoric stress near zero by itself. The hedge is retired on evidence, not
+abandoned on preference. (The real gap that a jet exposes is the missing
+**equation of state** for the volumetric response — see §3.4 — and SPH would not
+have fixed that either.)
 
 ### Transfer cycle (per substep)
 
@@ -105,9 +113,12 @@ change every scenario — but it means "pointed vs blunt" above is really
 "pointed vs blunt-and-10 %-heavier". It does not affect any A/B in §3, where both
 arms share one nose.
 
-`heat_vs_composite` inherits the conical nose too. A shaped-charge jet is not a
-pointed rod, but that deck is a **rod stand-in** awaiting the jet model
-(milestone 7), so the nose is no more wrong there than the rod already was.
+`heat_vs_composite` used to inherit the conical nose while it was still a rod
+stand-in. It no longer does: milestone 7 (§3.4) made it a real jet, and a jet is a
+stretching column with no machined nose to speak of, so that deck sets
+`nose_shape: blunt`. The choice is close to free either way — the measurement
+above found final penetration nose-shape-independent already at 1.6 km/s, and the
+jet is 4× faster and further into the eroding regime.
 
 ---
 
@@ -194,6 +205,7 @@ Elasticity + rate-independent plasticity + a damage threshold:
 | Ceramic / composite | Higher stiffness, **brittle** (`brittle: true`) — fails on the stress trigger above, shattering with ~zero plastic flow. |
 | ERA filler | An impulse layer that degrades the penetrator on contact. *(reactive impulse — implemented, milestone 5; see §3.1.)* |
 | NERA filler | A soft interlayer that never detonates but stays cohesive, so the sandwich plates bulge apart on the shock alone and the bulge is *held open*. *(the unignited branch of the same reactive path — verified, §3.3.)* |
+| Copper jet | The shaped-charge jet: soft, dense, and **velocity-graded**, so it stretches in flight and erodes fluid-like. Its yield is ~1000× below its own stagnation pressure, so it flows without any special "fluid" path. *(verified — §3.4.)* |
 
 ### 3.1 Reactive layer — ERA/NERA (milestone 5)
 
@@ -438,6 +450,91 @@ comparable to the differently-measured 0° absolutes in §3.1 (the *ordering* th
 never-yields property also means the filler stores elastic energy without
 dissipating it, i.e. stiffer-than-real; that is a modelling limitation, not a
 bug, and it is another reason the rod deltas above are model-specific.
+
+### 3.4 Shaped-charge jet (milestone 7)
+
+A shaped-charge jet is not a fast rod. What makes it a jet is that it is
+**velocity-graded**: the tip flies at ~7 km/s and the tail at ~2 km/s. Nearly
+everything jet-characteristic is a *consequence* of that one initial condition,
+which is why this milestone needed **no new kernel and no SPH** — only a per-
+particle seeded velocity (`Projectile.tail_velocity`, mpm.py `_seed`).
+
+**Scope, and it is load-bearing (root §10).** We seed an **already-formed** jet.
+Liner collapse and the explosive that drives it are *not modelled* — deliberately.
+That keeps the project on the public-physics side of §10 by construction, and
+costs nothing: the gradient is the only part that matters downstream. This is
+textbook Birkhoff/PER jet theory (§5).
+
+**Verified: the jet stretches, at the right rate.** Stretching is *kinematic* —
+each element flies at its own constant speed, so the jet elongates — which makes
+it predictable a priori and therefore falsifiable. Tip-to-tail length is a
+**confounded** metric (the tip erodes against armor while the tail falls back), so
+the measurement instead tracks **Lagrangian markers**: the cache contract fixes the
+particle count and keeps particles persistent (CACHE_FORMAT §5), so a particle
+index is a material label. Two 4 mm bands in the free-flight body, at 60 mm and
+110 mm behind the tip:
+
+| deck | predicted growth | measured | separation |
+|---|---|---|---|
+| uniform 7000 (control) | 0 mm/µs | **−0.003 mm/µs** | 50.0 → 50.0 mm |
+| graded 7000→2000, tungsten | 2.083 mm/µs | **2.084 mm/µs** (+0.0 %) | 50.0 → 101.7 mm |
+| graded 7000→2000, copper | 2.083 mm/µs | **2.085 mm/µs** (+0.1 %) | 50.0 → 101.7 mm |
+
+The control is the decisive half: with the gradient as the *only* change (same
+deck, same material, same geometry, same timing), a uniform projectile's markers
+stay **exactly** 50 mm apart and its body **shortens** 115 → 68 mm by tip erosion,
+while the graded one **stretches** to 165 mm. Residual from a straight line is
+0.020 mm (tungsten) and 0.001 mm (copper) — ballistic free flight.
+
+That copper/tungsten difference is itself a physical result, not noise. Tungsten's
+1500 MPa yield transmits tensile drag along the stretching jet — enough to
+*accelerate its own tail* by ~5 % (2248 → 2371 m/s) as the faster material ahead
+pulls it. Copper, at 200 MPa, transmits ~20× less and flies almost perfectly
+ballistically. A real jet is soft copper for exactly this reason.
+
+**Fluid-like erosion is free.** At a 7 km/s tip the stagnation pressure is
+~0.5·ρv² ≈ 2×10⁵ MPa, about **1000× copper's yield**, so von Mises return-mapping
+caps deviatoric stress near zero on its own. No "fluid" branch exists or is needed
+— the hydrodynamic regime is what this material model *already* does when the
+pressure dwarfs the strength.
+
+**Particulation does NOT fire in this window — reported, not claimed.** A real jet
+eventually tears into a fragment train, and the emergent path for it exists (the
+ductile-damage gate). It does not trigger here, and the arithmetic says it
+*shouldn't*: the markers stretch F_xx to 2.0, so log strain is ln 2 ≈ 0.69 and
+equivalent plastic strain ≈ 0.8 against copper's 1.5 reserve — roughly half way.
+Real jets particulate at ~100 µs; this deck runs 25 µs. **A jet that stays
+continuous for 25 µs is the correct answer, not a shortfall**, and `damage_threshold`
+was **not** lowered to force breakup on cue (that would be confirmation-bias tuning
+toward a prettier result — §10). Damage is confined to the leading ~40 mm, which is
+**erosion** at the armor, not particulation: the damage front marches *backward*
+through the jet as it is consumed (the 20–40 mm band goes 0.062 → 0.995 over the
+window) while everything beyond 40 mm reads exactly 0.000.
+
+**Honest limits.**
+
+- **No equation of state, and this is where it bites hardest.** `yield_strength`
+  caps only the **deviatoric** response. The volumetric response is still
+  fixed-corotated, which *under*-resists at extreme compression
+  (`λ(J−1)J → 0` as `J → 0`, §3). A hypervelocity stagnation point is precisely
+  where an EOS would matter most, so **the pressure at the jet tip is the least
+  trustworthy quantity in this model**, and lowering the yield does not touch it.
+  Plausible, not predictive (root §1).
+- **Do not compare this deck's penetration to the uniform stand-in it replaced.**
+  That comparison is **energy-confounded twice over**: a graded jet carries far
+  less kinetic energy than a uniform-7000 rod of the same mass, *and* copper is
+  half tungsten's density (hydrodynamically, depth ≈ L·√(ρ_jet/ρ_target), so
+  copper-vs-RHA is √1.14 ≈ 1.07 where tungsten-vs-RHA is √2.24 ≈ 1.50). The
+  stretching claim above is deliberately scoped to *kinematics*, which is immune to
+  both. The clean, energy-neutral depth experiment is a **standoff** study — same
+  jet, same energy, different flight distance before impact — and `standoff` is
+  already deck data (`ArmorLayer.standoff`), so it needs no code. Not done.
+- **A bounded domain cannot hold the whole event, and grading makes that
+  structural rather than incidental.** The tail flies at 2 km/s and needs ~100 µs
+  to reach the armor, by which time a 7 km/s tip is ~850 mm downrange. A finite
+  field can contain a graded jet's *tip passage* or its *tail transit*, never both.
+  This deck claims the tip's passage — where the penetration happens; the trailing
+  body is honestly out of frame.
 
 ---
 

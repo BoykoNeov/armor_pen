@@ -1,8 +1,9 @@
 """MLS-MPM transfer kernels (NVIDIA Warp) — the physics core.
 
-STATUS: milestone 5 — **elastic + von Mises plasticity + ductile & brittle damage
-+ multi-material armor stack + reactive (ERA/NERA) impulse layer** MLS-MPM. A KE
-rod and an arbitrary front-to-back armor stack (any number of layers, each its
+STATUS: milestone 7 — **elastic + von Mises plasticity + ductile & brittle damage
++ multi-material armor stack + reactive (ERA/NERA) impulse layer + oblique seeding
++ velocity-graded shaped-charge jet** MLS-MPM. A KE rod (or a jet) and an
+arbitrary front-to-back armor stack (any number of layers, each its
 own material, with optional standoff gaps) are seeded from the scenario and run
 through a P2G / grid-update / G2P substep cycle with fixed-corotated
 hyperelasticity, followed by a perfectly-plastic von Mises radial return
@@ -48,6 +49,22 @@ frame-equivalent to tilting the slabs and leaves M1–M5 seeding untouched;
 the backing plate (main-plate spall ~40% lower vs an equal-areal-mass inert twin,
 absent at 0°) by shoving it forward + dispersing the flyer/filler follow-through —
 though the tough tungsten rod itself is not cut. Verified — see PHYSICS §3.1/§3.2.
+
+**Milestone 7 (shaped-charge jet):** a jet is not a fast rod — it is
+**velocity-graded**, and that single initial condition is the whole model. ``_seed``
+reads ``Projectile.tail_velocity`` and assigns each projectile particle a speed
+falling linearly tip → tail (computed pre-rotation in rod-local coords, like the
+nose carve; the direction is uniform, only the magnitude grades). Everything
+jet-characteristic then emerges with **no new kernel and no SPH**: the jet
+STRETCHES because each element flies at its own constant speed (verified to +0.1%
+of the kinematic rate against a uniform control that instead SHORTENS by erosion),
+and it erodes FLUID-LIKE because at a 7 km/s stagnation point ``copper_jet``'s
+yield is ~1000x below the pressure, so ``_return_mapping`` caps deviatoric stress
+near zero unaided. ``tail_velocity=None`` (the default) is the uniform path and
+seeds bit-for-bit as before, so every KE deck is untouched. Honest limit: yield
+caps only the DEVIATORIC response — the volumetric response has no EOS and
+*under*-resists at extreme compression, which is exactly the stagnation point.
+See PHYSICS §3.4.
 
 Two hard rules for whoever grows this (root §2, §11):
 
@@ -675,9 +692,11 @@ def _nose_halfwidth(s, nose_len: float, radius: float, shape: str):
 def _seed(scenario, dx: float, spacing: float):
     """Seed the projectile and armor stack into particle arrays (numpy).
 
-    Geometry is illustrative (root §10): the projectile is a rectangle aimed
-    +x at the front face of the armor stack; each armor layer is a slab spanning
-    the full domain height, laid front-to-back with any standoff gap.
+    Geometry is illustrative (root §10): the projectile is a nose-carved
+    rectangle aimed +x at the front face of the armor stack; each armor layer is
+    a slab spanning the full domain height, laid front-to-back with any standoff
+    gap. The projectile flies at a uniform speed unless the deck grades it
+    tip-to-tail (`Projectile.tail_velocity` — a shaped-charge jet).
 
     Returns a dict of numpy arrays: pos, vel, mu, lam, yield, dthr, brittle,
     reactive, det_pressure, burn_time, ign_comp, mass, vol0, mat_id.
@@ -718,11 +737,14 @@ def _seed(scenario, dx: float, spacing: float):
     )
     p_vol = spacing * spacing  # 2D "volume" (area) per particle
 
-    def add_region(pts, mat, vx, vy):
+    def add_region(pts, mat, vel):
+        """Add a seeded region. `vel` is either one (vx, vy) for the whole
+        region or a per-particle (n, 2) array — a velocity-graded jet needs the
+        latter (see `Projectile.tail_velocity`)."""
         n = pts.shape[0]
         mu, lam = _lame(mat.youngs_modulus, mat.poisson_ratio)
         pos_list.append(pts)
-        vel_list.append(np.tile([vx, vy], (n, 1)))
+        vel_list.append(np.broadcast_to(np.asarray(vel, dtype=float), (n, 2)).copy())
         mu_list.append(np.full(n, mu))
         lam_list.append(np.full(n, lam))
         yield_list.append(np.full(n, mat.yield_strength))
@@ -766,6 +788,20 @@ def _seed(scenario, dx: float, spacing: float):
             tip_x - rod[:, 0], proj.nose_len, 0.5 * proj.diameter, proj.nose_shape,
         )
     ]
+    # Per-particle SPEED along the rod axis, graded tip -> tail. Read in the same
+    # rod-local frame as the nose carve above and for the same reason: `s` is a
+    # plain 1D distance behind the tip only while the rod is still axis-aligned,
+    # so both must happen BEFORE the rotation. A uniform projectile (the default,
+    # and every KE deck) takes the `proj.velocity` branch and seeds exactly as it
+    # did before. The DIRECTION is uniform either way — only the magnitude grades,
+    # since every element of a formed jet flies along the jet axis.
+    s = tip_x - rod[:, 0]  # axial distance behind the tip, 0 at the tip
+    if proj.tail_velocity is None:
+        speed = np.full(rod.shape[0], proj.velocity)
+    else:
+        speed = proj.velocity + (proj.tail_velocity - proj.velocity) * (
+            np.clip(s / proj.length, 0.0, 1.0)
+        )
     ang = math.radians(proj.angle_deg)
     ca, sa = math.cos(ang), math.sin(ang)
     # Rotate the rod by -ang about its tip (tip_x, y_center) so local +x maps to
@@ -780,7 +816,7 @@ def _seed(scenario, dx: float, spacing: float):
         y_center - sa * rx + ca * ry,
     ], axis=1)
     add_region(rod, materials.get(proj.material),
-               proj.velocity * ca, -proj.velocity * sa)
+               np.stack([speed * ca, -speed * sa], axis=1))
 
     # Armor stack, front to back.
     x_cursor = armor_front
@@ -791,7 +827,7 @@ def _seed(scenario, dx: float, spacing: float):
             dom.ymin + inset, dom.ymax - inset,
             spacing,
         )
-        add_region(slab, materials.get(layer.material), 0.0, 0.0)
+        add_region(slab, materials.get(layer.material), (0.0, 0.0))
         x_cursor += layer.thickness
 
     return {

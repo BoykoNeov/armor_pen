@@ -42,8 +42,8 @@ caches/       gitignored bake outputs (large)
 
 ## Status
 
-All six solver milestones are done, and the Godot viewer plays real bakes back in
-motion. Every KE deck bakes on the RTX 5090 (NVIDIA Warp, sm_120) and passes
+All seven solver milestones are done, and the Godot viewer plays real bakes back in
+motion. Every deck bakes on the RTX 5090 (NVIDIA Warp, sm_120) and passes
 `validate_cache`.
 
 1. **Elasticity** — fixed-corotated MLS-MPM; elastic impact, no perforation.
@@ -57,6 +57,9 @@ motion. Every KE deck bakes on the RTX 5090 (NVIDIA Warp, sm_120) and passes
    detonation overpressure through the ordinary grid, flinging the sandwich plates
    apart (emergent, not a scripted rod kick).
 6. **Oblique reactive armor** — the rod strikes nose-first at angle.
+7. **Shaped-charge (HEAT) jet** — a real jet, not a rod stand-in: the projectile is
+   seeded **velocity-graded** (7000 m/s tip → 2000 m/s tail), so it stretches in
+   flight and erodes fluid-like.
 
 The rod is also **pointed** (conical nose, `nose_shape` in the deck), not the
 flat-faced cylinder it used to be — a real APFSDS is sharp (`docs/PHYSICS.md` §1.2).
@@ -90,9 +93,34 @@ At 0° the margin's sign has actually flipped across a geometry change, which is
 55° earns confidence and 0° does not, though both clear the numerical floor.
 Plausibility, not prediction (see the scope note above).
 
-**Next:** the shaped-charge (HEAT) jet is still a tungsten-rod stand-in — a real
-jet model is the open capability gap. See the per-directory `CLAUDE.md` files for
-the build order.
+**Second result (verified, `docs/PHYSICS.md` §3.4).** The shaped-charge jet needed
+**no new kernel and no SPH** — what makes a jet a jet is one initial condition, a
+tip-to-tail **velocity gradient**, and the rest emerges. Because each element flies
+at its own constant speed, the jet **stretches**, and that is kinematic, so it is
+predictable in advance and therefore falsifiable: free-flight markers separate at
+**2.085 mm/µs measured against 2.083 predicted (+0.1%)**. The control is the
+convincing half — with the gradient as the *only* change, a uniform projectile's
+markers stay **exactly** 50 mm apart and its body *shortens* 115 → 68 mm by erosion,
+where the jet stretches to 165 mm. Fluid-like erosion came free: at a 7 km/s
+stagnation point copper's yield is ~1000× below the pressure, so the ordinary von
+Mises return mapping caps deviatoric stress near zero by itself.
+
+Two things it does **not** claim. **Particulation never fires** — a real jet
+eventually tears into a fragment train, and this one stays continuous. The
+arithmetic says it should (stretch reaches only ~half copper's ductile reserve) and
+real jets particulate at ~100 µs against this deck's 25 µs, so staying continuous is
+the *correct* answer — but the breakup threshold was not lowered to force a prettier
+result. And the jet's **penetration is not compared** to the rod stand-in it
+replaced: that comparison is energy-confounded twice over (a graded jet carries less
+KE than a uniform one, and copper is half tungsten's density), so the claim is
+scoped to kinematics, which is immune to both.
+
+**Next:** the full solver arc is done. The open items are a **standoff study** (the
+clean energy-neutral depth experiment for the jet — same jet, different flight
+distance; needs no code, `standoff` is already deck data), an **equation of state**
+for the volumetric response (the honest gap a hypervelocity jet exposes — see
+§3.4), and **domain/BC** work so oblique-deck debris never reaches a wall. See the
+per-directory `CLAUDE.md` files for the build order.
 
 ## Quick start
 

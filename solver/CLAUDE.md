@@ -21,7 +21,7 @@ first** — this file only adds solver-local notes.
 | `config.py` | Scenario schema (dataclasses), YAML loader | working |
 | `materials.py` | Material library, all constants in mm-ms-g | data (all fields now consumed: elasticity, yield, ductile `damage_threshold`, `brittle`, reactive block) |
 | `cache_writer.py` | Writes manifest.json + frames.bin (the contract) | working |
-| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + von Mises plasticity + ductile & brittle damage + multi-material stack + reactive ERA/NERA layer + oblique rod seeding (milestone 6)** — see below |
+| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + von Mises plasticity + ductile & brittle damage + multi-material stack + reactive ERA/NERA layer + oblique rod seeding + velocity-graded shaped-charge jet (milestone 7)** — see below |
 | `run.py` | CLI: scenario.yaml → cache dir | working (Warp init + GPU assert + bake) |
 
 ## Build order (root §9) — where we are
@@ -166,8 +166,58 @@ Grow the reference MLS-MPM incrementally, validating visually with
    Sign robust, magnitude not portable. The earlier "flyer sweep erodes/deflects
    the rod" expectation did not hold — reported honestly as backing-plate
    protection instead.
-Don't rewrite from scratch. **Milestone 7 = HEAT/shaped-charge jet** — the open
-capability gap; `heat_vs_composite` is still a tungsten-rod stand-in.
+7. **Shaped-charge (HEAT) jet** — ✅ done. `heat_vs_composite` is a real jet, not
+   a tungsten-rod stand-in. What makes it a jet is one initial condition:
+   `Projectile.tail_velocity` seeds the projectile **velocity-graded** (7000 m/s
+   tip → 2000 m/s tail), computed per particle in `_seed` from the axial distance
+   behind the tip — in rod-local coords *before* the §3.2 rotation, same as the
+   nose carve, since the direction is uniform and only the magnitude grades. New
+   material `copper_jet` (id 6). **No new kernel, no SPH, and no schema bump** (the
+   gradient is an initial condition; `material_id` is an existing column).
+   `tail_velocity=None` is the default, so all 8 KE decks seed **bit-for-bit** as
+   before — verified by A/B re-bake, every metric within 0.022 % (`apfsds_vs_rha`:
+   spall 0.1818 vs 0.1818, rod tip 232.3341 vs 232.3345) against a ≤0.11 % scatter
+   floor.
+   - **Verified (PHYSICS §3.4): the jet stretches at the kinematic rate, +0.1 %.**
+     Measured Lagrangianly (persistent particle indices = material labels), because
+     tip-to-tail length is confounded by tip erosion. Free-flight markers 60 mm and
+     110 mm behind the tip separate at **2.085 mm/µs measured vs 2.083 predicted**;
+     the **uniform control**, with the gradient as the only difference, holds them
+     at **exactly 50 mm** (−0.003 mm/µs) and its body **shortens** 115 → 68 mm by
+     erosion where the jet **stretches** to 165 mm.
+   - **Fluid-like erosion needed no work:** at a 7 km/s stagnation point (~2e5 MPa)
+     copper's 200 MPa yield is ~1000× smaller, so the existing von Mises return
+     mapping caps deviatoric stress near zero on its own. The advisor's predicted
+     "reachability window" (too stiff → elastic recoil; too weak → premature
+     breakup) **did not bind** — public textbook copper landed in the good regime
+     with **zero tuning**.
+   - **Particulation does NOT fire in-window — reported, not claimed.** Damage is
+     confined to the leading ~40 mm (that is *erosion* at the armor; the damage
+     front marches backward through the jet as it is consumed) and the free-flight
+     body reads exactly **0.000**. The arithmetic agrees it shouldn't fire: stretch
+     F_xx = 2.0 → equivalent plastic strain ≈0.8 vs copper's 1.5 reserve. Real jets
+     particulate at ~100 µs; this deck runs 25 µs, so **staying continuous is the
+     correct result**. `damage_threshold` was NOT lowered to force breakup (§10).
+   - **Do NOT compare this deck's depth to the old stand-in** — energy-confounded
+     twice (graded carries less KE than uniform-7000; copper is half tungsten's
+     density). The clean energy-neutral depth test is a **standoff** study, and
+     `ArmorLayer.standoff` already exists, so it needs no code. Not done.
+   - **Known limit, the honest one:** yield caps only the **deviatoric** response;
+     the volumetric response is still fixed-corotated with **no EOS** and
+     *under*-resists at extreme compression (`λ(J−1)J → 0` as `J → 0`). A
+     hypervelocity stagnation point is exactly where an EOS matters most, so the
+     jet-tip pressure is the least trustworthy quantity in the model. SPH would not
+     have fixed that either — the §1 SPH hedge is retired on evidence (PHYSICS §1).
+
+Don't rewrite from scratch. The full solver arc (milestones 1–7) is done.
+
+**Stale-number correction (measured 2026-07-16):** the "~16 % RHA spall" quoted in
+the milestone 3/4 notes above and the 15.6 % in milestone 6 were measured at
+**96 637 particles**, before the plate-not-block geometry change. `apfsds_vs_rha`
+now seeds **135 557** particles and spalls **18.2 %**. The ordering and every
+conclusion those milestones drew are unaffected; only the absolute moved. Do not
+compare a figure across geometries — see the memory note on rebakes invalidating
+documented results.
 
 ### Rod nose — geometry fix, not a milestone (done)
 

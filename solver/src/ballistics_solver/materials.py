@@ -12,6 +12,12 @@ return mapping — and the fracture strength for brittle materials), ductile
 shatter), and the reactive block (``reactive`` + ``detonation_pressure`` /
 ``burn_time`` / ``ignition_compression``) that drives the ERA/NERA impulse layer
 (milestone 5). See mpm.py and docs/PHYSICS.md §3.
+
+Note there is no "fluid" material and none is needed: the shaped-charge jet
+(``copper_jet``, milestone 7) flows hydrodynamically purely because its yield is
+~1000x below its own stagnation pressure, so the ordinary von Mises return mapping
+caps its deviatoric stress near zero. What makes a jet a jet lives in the *deck*
+(``Projectile.tail_velocity`` — a velocity gradient), not here.
 """
 
 from __future__ import annotations
@@ -61,6 +67,35 @@ LIBRARY: dict[str, Material] = {
         name="rha", material_id=1,
         density=7.85e-3, youngs_modulus=2.0e5, poisson_ratio=0.29,
         yield_strength=1.0e3, damage_threshold=0.8,
+    ),
+    # Shaped-charge jet material (milestone 7). Representative COPPER — the
+    # classic liner metal — as an ALREADY-FORMED jet: we seed the jet, never the
+    # liner collapse or the explosive that drives it (out of scope by
+    # construction, root §10, and unnecessary — the velocity gradient is the part
+    # that matters downstream; see `Projectile.tail_velocity`).
+    #
+    # Density/modulus/Poisson are public textbook copper. `yield_strength` is the
+    # interesting one: at a 7 km/s tip the stagnation pressure is ~0.5*rho*v^2 ~
+    # 2e5 MPa, a THOUSAND times this yield, so strength is negligible and the jet
+    # flows hydrodynamically without any special "fluid" path — von Mises return
+    # mapping caps deviatoric stress near zero all by itself. That is why a jet
+    # needs no new constitutive model here.
+    #
+    # HONEST LIMIT (PHYSICS §3.4): yield caps only the DEVIATORIC response. The
+    # volumetric response is still fixed-corotated with no equation of state, and
+    # fixed-corotated *under*-resists at extreme compression (lam*(J-1)*J -> 0 as
+    # J -> 0). A hypervelocity stagnation point is exactly where an EOS would
+    # matter most, so the pressure there is the least trustworthy part of this
+    # model. Lowering the yield does not fix it. Plausible, not predictive.
+    #
+    # `damage_threshold` is ductile copper's plastic-strain reserve, and it is the
+    # particulation knob: a stretching jet accumulates plastic strain, and when it
+    # crosses this the jet breaks into a fragment train. Set from copper's large
+    # ductility rather than tuned to force particulation on cue (root §10).
+    "copper_jet": Material(
+        name="copper_jet", material_id=6,
+        density=8.96e-3, youngs_modulus=1.17e5, poisson_ratio=0.34,
+        yield_strength=2.0e2, damage_threshold=1.5,
     ),
     "ceramic": Material(
         name="ceramic", material_id=2,

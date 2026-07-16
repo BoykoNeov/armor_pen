@@ -63,6 +63,10 @@ const MATERIAL_COLORS := {
 	#                              so it keeps this base tone for the whole bake —
 	#                              deliberately far from rha's gray-blue so the
 	#                              cohesive interlayer reads against the plates)
+	6: Color(0.91, 0.45, 0.29),  # copper_jet — copper (the shaped-charge jet). Warm
+	#                              like era_filler's orange but browner and duller,
+	#                              and the two never share a deck. Distinct from
+	#                              tungsten's gold so a jet never reads as a rod.
 }
 const FALLBACK_COLOR := Color(0.6, 0.6, 0.6)
 # Damaged/spalled particles trend toward this hot-spark tone; "heat" (glow)
