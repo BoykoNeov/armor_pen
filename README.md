@@ -42,7 +42,7 @@ caches/       gitignored bake outputs (large)
 
 ## Status
 
-All seven solver milestones are done, and the Godot viewer plays real bakes back in
+All ten solver milestones are done, and the Godot viewer plays real bakes back in
 motion. Every deck bakes on the RTX 5090 (NVIDIA Warp, sm_120) and passes
 `validate_cache`.
 
@@ -60,6 +60,12 @@ motion. Every deck bakes on the RTX 5090 (NVIDIA Warp, sm_120) and passes
 7. **Shaped-charge (HEAT) jet** — a real jet, not a rod stand-in: the projectile is
    seeded **velocity-graded** (7000 m/s tip → 2000 m/s tail), so it stretches in
    flight and erodes fluid-like.
+8. **Equation of state** — a Murnaghan volumetric law, tangent-matched at `J=1`, so
+   the hypervelocity stagnation point stops under-resisting.
+9. **Velocity sweep** — the first claim that is a *trend*: two arms converging on
+   two different a-priori hydrodynamic asymptotes.
+10. **Standoff** — the jet's energy-neutral depth experiment, and the first study
+    whose headline is a **grid-convergence limit** rather than a result.
 
 The rod is also **pointed** (conical nose, `nose_shape` in the deck), not the
 flat-faced cylinder it used to be — a real APFSDS is sharp (`docs/PHYSICS.md` §1.2).
@@ -156,12 +162,39 @@ sweep genuinely needed the EOS — on the pre-EOS law at matched `dt`, copper@70
 gives `u/v` = **1.032× its asymptote**, i.e. *past* a ceiling that strength cannot
 push through. See PHYSICS §3.7.
 
+**Milestone 10 — standoff, and the first result whose headline is its own limit.**
+Milestone 7 refused to compare the jet's *depth* to anything, because every
+comparison was energy-confounded. Standoff is the clean version: the same jet, the
+same energy, only the flight distance before impact differs — and it needed **no new
+code**, since `standoff` was already deck data. A velocity-graded jet extrapolates
+back to a **virtual origin** `Z₀ = L·v_tip/(v_tip−v_tail) = 168 mm` behind its own
+tip, so the seeded jet already carries 168 mm of built-in standoff and the deck adds
+to it: `Z = 168 + S`. Depth at a *matched consumed element* is then proportional to
+`Z` — with **slope and intercept both fixed a priori** by the seeded gradient, and
+provably so for **any** `u(v)`, strength included.
+
+> **The shipped decks under-read it, and that is the finding.** Measured S90/S0 depth
+> ratio **1.229** against **1.536** predicted. The jet is 3 mm across = **8 cells**,
+> and it *thins as it stretches* to ~3. Refining the grid walks the ratio up
+> **1.229 → 1.383 → 1.429**, and a **6 mm jet at the shipped resolution** — 16 cells
+> across by fattening instead of refining, an independent route the derivation allows
+> because it is diameter-independent — reads **1.501**, within scatter of the
+> prediction. **Cells across the jet is the controlling parameter**; the shortfall is
+> numerical.
+
+Reported as a trend, not a value: the convergence order is ill-conditioned, so no
+extrapolated number is quoted, and "converges toward" is not "converged". Two traps
+worth knowing: depth at a fixed *lab time* moves the **wrong way** (105 → 80 mm — a
+longer standoff impacts later and penetrates for less of the window), and the
+under-resolved curve *saturates*, which looks exactly like the textbook standoff
+optimum this jet cannot produce. Six `standoff_conv_*` decks are committed so the
+convergence is reproducible rather than asserted. See PHYSICS §3.8.
+
 **Next:** **Mie-Grüneisen** (the thermal term Murnaghan lacks — it is what still
 makes the pressure error velocity-dependent), **artificial viscosity** (nothing
-damps the shock ring, now the dominant tip defect), a **standoff study** (needs no
-code, `standoff` is already deck data), a **dissipation path for `nera_filler`**
-(PHYSICS §3.6), and **domain/BC** work so oblique-deck debris never reaches a wall.
-See the per-directory `CLAUDE.md` files for the build order.
+damps the shock ring, now the dominant tip defect), a **dissipation path for
+`nera_filler`** (PHYSICS §3.6), and **domain/BC** work so oblique-deck debris never
+reaches a wall. See the per-directory `CLAUDE.md` files for the build order.
 
 ## Quick start
 

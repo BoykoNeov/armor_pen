@@ -21,7 +21,7 @@ first** — this file only adds solver-local notes.
 | `config.py` | Scenario schema (dataclasses), YAML loader | working |
 | `materials.py` | Material library, all constants in mm-ms-g | data (all fields now consumed: elasticity, yield, ductile `damage_threshold`, `brittle`, reactive block) |
 | `cache_writer.py` | Writes manifest.json + frames.bin (the contract) | working |
-| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + von Mises plasticity + ductile & brittle damage + multi-material stack + reactive ERA/NERA layer + oblique rod seeding + velocity-graded shaped-charge jet (milestone 7)** — see below |
+| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + Murnaghan EOS + von Mises plasticity + ductile & brittle damage + multi-material stack + reactive ERA/NERA layer + oblique rod seeding + velocity-graded shaped-charge jet (last touched by milestone 8)** — see below. Milestones 9 and 10 are decks + `tools/` only: they added **zero** kernel code, which is the point — the scenario schema already carried `velocity` and `standoff`. |
 | `run.py` | CLI: scenario.yaml → cache dir | working (Warp init + GPU assert + bake) |
 
 ## Build order (root §9) — where we are
@@ -276,7 +276,37 @@ Grow the reference MLS-MPM incrementally, validating visually with
      yield is 7.5× copper's. That is physics, not a probe bug — and not a deck to
      re-tune until it "works".
 
-Don't rewrite from scratch. The full solver arc (milestones 1–9) is done.
+8. **Milestone 10 — standoff (PHYSICS §3.8).** The energy-neutral depth experiment
+   milestone 7 deferred. Four shipped decks `standoff_s00/s30/s60/s90` (S = 0/30/60/90
+   mm of free flight before an identical 150 mm RHA half-space) plus six
+   `standoff_conv_*` decks that exist to measure how wrong the shipped four are.
+   Zero new solver code — `ArmorLayer.standoff` did the whole job. Measure with
+   `tools/measure_standoff.py --family` / `--convergence`.
+   - **The shipped decks under-read the effect ~2.3× on the excess and are NOT
+     grid-converged. Do not quote their ratio as the model's answer.** Measured
+     S90/S0 = 1.229 vs 1.536 predicted a priori. The physics lives in the
+     `standoff_conv_*` decks; the shipped ones are for playback and the trend's shape.
+   - **The jet is only 8 cells across, and stretching thins it to ~3.** This is the
+     transferable lesson: `cells across the jet` is the controlling parameter for any
+     jet DEPTH claim, and it is reached identically by refining `dx` (1.229 → 1.383 →
+     1.429 at 8/12/16 cells) or by fattening the jet (6 mm at the shipped `dx` = 16
+     cells → 1.501, within scatter of the prediction). The derivation is
+     diameter-independent, which is what licenses the second route.
+   - **This is why §3.4 was right to refuse a depth comparison** — for a second,
+     independent reason it did not know about. Kinematic claims are safe (free-flight
+     markers don't lean on grid coupling); depth claims are not.
+   - **Match on consumed fraction, never on lab time.** Depth at the end of the window
+     FALLS with standoff (105 → 80 mm) because a longer standoff impacts later. The
+     obvious metric reports the opposite sign of the real effect.
+   - **No Richardson number is quoted, deliberately.** The observed order swings ~0.7
+     to ~5 depending on the matching point. A fifth grid would not fix it (the
+     conditioning is the small high-res increments, not the count). Report the trend.
+   - **Don't read the saturation as a rollover.** The under-resolved increments taper
+     (4.7 → 3.4 → 3.1 mm), which mimics the textbook standoff optimum. This jet does
+     not particulate (§3.4, and free-flight damage at S=90 is exactly 0.0000), so no
+     optimum is reachable and none was manufactured.
+
+Don't rewrite from scratch. The full solver arc (milestones 1–10) is done.
 
 **Stale-number correction (measured 2026-07-16):** the "~16 % RHA spall" quoted in
 the milestone 3/4 notes above and the 15.6 % in milestone 6 were measured at

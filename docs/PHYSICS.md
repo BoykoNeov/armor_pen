@@ -865,6 +865,152 @@ decimal**.)
 
 ---
 
+### 3.8 Standoff — the jet's energy-neutral depth experiment (milestone 10)
+
+**Read this first: the shipped decks under-read the effect they measure, by ~2.3×
+on the excess, and they are not grid-converged.** `standoff_s00/s30/s60/s90` measure
+a depth ratio of **1.23** between S=90 and S=0 where the a-priori prediction is
+**1.536**. The cause is resolution, not physics: the jet is 3 mm across = **8 cells**
+at the shipped `dx=0.375`, and it *thins as it stretches* to ~1.1 mm ≈ **3 cells** by
+the end of the window. The quantitative claim below rests on the six
+`standoff_conv_*` decks, **not** on the four shipped ones. Same posture as §3.5's
+tip-`J`: quote the trend, never the value.
+
+**Why this experiment exists.** §3.4 built the jet but deliberately **refused to
+compare its penetration depth** to anything, because every comparison available was
+energy-confounded twice (a graded jet carries less KE than a uniform one; copper is
+half tungsten's density). Standoff is the energy-neutral version — the same jet, the
+same energy, the same everything; only the flight distance before impact differs. It
+needed **no new solver code**: `ArmorLayer.standoff` has existed since milestone 1,
+and `mpm._seed` places the armor face at mid-domain with the tip 3 cells in front of
+it, then adds each layer's standoff *before* placing it. So standoff on layer 0
+pushes the target back while the tip stays put — exactly free flight, nothing else.
+
+**What is predicted, and why it is falsifiable.** Each jet element flies at its own
+constant speed, so the jet extrapolates back to a **virtual origin** where all
+elements coincide:
+
+```
+Z0 = L · v_tip / (v_tip − v_tail) = 120 · 7000/5000 = 168 mm   behind the tip
+```
+
+The seeded jet therefore already carries 168 mm of *built-in* virtual standoff, and
+the deck's `S` adds to it: `Z = 168 + S`. Let `v` be the velocity of the element
+currently at the crater bottom. It has flown `Z + P`, and the crater deepens at
+`u(v)`:
+
+```
+v·t = Z + P(t),   dP/dt = u(v)
+ ⇒  v'·t = u(v) − v  ⇒  dt/t = dv/(u(v) − v)  ⇒  t = t₀ · G(v)
+ ⇒  P = v·t − Z = Z · [ v·G(v)/V₀ − 1 ]
+```
+
+**`P` is proportional to `Z` at matched `v`.** Three properties make this a sharp
+test rather than a rising trend:
+
+- It never assumed ideal hydrodynamics. `G` is a function of `v` alone for **any**
+  `u(v)`, Tate-with-strength included, because the strength correction is identical
+  across the family when compared at the same arriving element. **The linearity is
+  structural, not an artifact of a strengthless limit** — so a measured
+  non-proportionality cannot be excused as "strength".
+- **Both the slope and the intercept are predicted a priori** from the seeded
+  velocity gradient, with nothing fitted. Fit measured depth against `S` and
+  intercept/slope must come out at 168 mm.
+- It is **diameter-independent** — which is what makes the resolution study below
+  possible.
+
+Matched `v` == matched material element == **matched consumed fraction**, which is
+what `tools/measure_standoff.py` matches on.
+
+**The metric is the whole experiment — the obvious ones lie.** Depth at a fixed
+**lab time** is an artifact of the *opposite sign*, and it fires hard here: depth at
+the end of the window **falls** 105.0 → 80.1 mm as standoff rises, purely because a
+longer standoff impacts later and penetrates for less of the window. Anyone
+measuring the obvious quantity would publish "standoff reduces penetration". Depth
+at a fixed **post-impact time** is honest but collapses the predicted spread to ~8 %.
+Only matching on consumed fraction measures the standoff effect itself — and it needs
+just a leading slice of the jet consumed, not the whole thing, which is what makes it
+affordable (the tail flies at 2 km/s and never arrives — §3.4).
+
+**Measured** (`python tools/measure_standoff.py --family`), depth in mm at matched
+consumed fraction, into a 150 mm RHA half-space — *not* the composite stack, which
+perforates and would put a **ceiling** on the one quantity being measured:
+
+| S (mm) | Z = 168+S | f=0.15 | f=0.20 | f=0.25 | f=0.30 | ratio vs S=0 | predicted Z/Z₀ |
+|---|---|---|---|---|---|---|---|
+| 0  | 168 | 20.7 | 28.2 | 36.3 | 44.9 | 1.000 | 1.000 |
+| 30 | 198 | 22.7 | 31.1 | 39.9 | 49.3 | 1.099 | 1.179 |
+| 60 | 228 | 24.1 | 33.2 | 42.7 | 52.6 | 1.172 | 1.357 |
+| 90 | 258 | 25.1 | 34.9 | 44.8 | 55.4 | **1.229** | **1.536** |
+
+Monotone, right sign, ~200× the 0.11 % run-to-run floor — and **short by more than
+half the predicted excess**. The premise test says why: at matched arriving-element
+velocity the sim's `u` is **not** a function of `v` alone — it falls from 2272 m/s
+(S=0) to 1960 (S=90) at v=5000, −14 %. Since `P ∝ Z` holds for any `u(v)`, that is
+where the proportionality is lost, and it is a real defect to be explained rather
+than a discrepancy to be shrugged at.
+
+**Three candidate causes, discriminated rather than guessed:**
+
+- **Particulation — ruled out.** Free-flight damage at S=90, the *most*-stretched
+  deck, is exactly **0.0000**. The 0.20 reading at S=0 runs the **wrong way** for
+  particulation (it should grow with stretch, not shrink); it is back-splashed crater
+  ejecta drifting upstream past the sampling band. Consistent with §3.4's arithmetic:
+  particulation should not fire in-window, and it does not.
+- **Under-resolution — the dominant cause.** The jet thins to ~2.9 cells at shipped
+  `dx`. (The thinning itself is a good sign: it tracks constant-volume `3/(1+t/24)`
+  to a few %, so MPM is handling the free lateral surface correctly rather than
+  dilating the jet.)
+- **A real finite-diameter effect — mostly excluded**, by the decisive test. The
+  derivation is **diameter-independent**, so a 6 mm jet at the shipped `dx=0.375` has
+  **16 cells across — exactly like a 3 mm jet at `dx=0.1875`**. Two routes to the same
+  control variable, sharing neither grid nor jet:
+
+| configuration | cells across jet | mean S90/S0 ratio | vs predicted 1.536 |
+|---|---|---|---|
+| 3 mm jet, `dx=0.375` — **shipped** | 8 | **1.229** | −20 % |
+| 3 mm jet, `dx=0.250` | 12 | 1.383 | −10 % |
+| 3 mm jet, `dx=0.1875` | 16 | 1.429 | −7 % |
+| **6 mm jet, `dx=0.375`** | **16** | **1.501** | **−2.3 %** |
+
+`python tools/measure_standoff.py --convergence`. **Cells across the jet is the
+controlling parameter**, reached by refining the grid or by fattening the jet, and
+the shortfall is numerical. At 16 cells the fat jet sits within the per-fraction
+scatter (±3.5 %) of the a-priori 1.536 — **consistent with the prediction, which is
+not the same as confirming it**, and the two 16-cell routes still differ by 5 %, so
+cells-across is dominant but not the only term.
+
+**Honest limits.**
+
+- **Do not quote a Richardson extrapolation from these four points.** The observed
+  order is ill-conditioned — it swings from ~0.7 to ~5 depending on the matching
+  point, and the extrapolated value with it. Adding a fifth grid would not fix that
+  (the conditioning is the small high-resolution increments, not the count). The
+  monotone trend plus the independent fat-jet route is the honest statement, and
+  **"converges toward" is not "converged"**.
+- **A trap worth naming: the under-resolved curve looks like the textbook result.**
+  At the shipped `dx` the increments saturate (4.7 → 3.4 → 3.1 mm), which reads as a
+  curve bending toward a standoff *optimum*. It is a grid artifact. A real optimum
+  requires particulation and dispersal at long standoff, which this jet does not do
+  (§3.4) — so this family measures **the rising limb only**, and no optimum has been
+  manufactured by lowering `damage_threshold` to force breakup (root §10).
+- **Wall reflections are not common-mode here.** The slabs span the full height
+  against slip walls (§1.1), and at matched consumed fraction the elapsed-from-impact
+  time scales with `Z`, so each deck sees a different number of reflections — a
+  per-deck systematic the refinement study does not remove. It is second-order
+  against a 25 % effect, but it is not zero.
+- **This retroactively vindicates §3.4's refusal to compare the jet's depth**, for a
+  second and independent reason. At production `dx` the 3 mm jet is 8 cells across and
+  thins to ~3, so *any* depth claim about `heat_vs_composite` is grid-limited. §3.4's
+  *kinematic* claims (stretch rate, +0.1 %) are untouched: they are measured
+  Lagrangianly on free-flight markers, which do not lean on grid coupling. Scoping the
+  milestone-7 claim to kinematics is what made it survive.
+- **The shipped family stays at `dx=0.375`** because the same four decks at
+  `dx=0.1875` would cost ~44 GB of cache against ~11 GB. The convergence decks carry
+  the physics; the shipped decks are for playback and for the *shape* of the trend.
+
+---
+
 ## 4. Timestep & why we bake offline
 
 The cost driver is the **CFL timestep, not particle count**. Steel's sound

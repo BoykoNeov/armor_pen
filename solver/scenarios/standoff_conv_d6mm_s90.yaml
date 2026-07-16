@@ -1,0 +1,62 @@
+# Standoff CONVERGENCE study — milestone 10. Part of a six-deck family that exists
+# to measure how wrong the four shipped `standoff_s*` decks are, and why.
+# Scenarios are DATA, not code (CLAUDE.md §9). Representative / illustrative
+# order-of-magnitude values, not any real system (CLAUDE.md §10).
+#
+# WHY THESE EXIST — READ THIS BEFORE TRUSTING ANY STANDOFF NUMBER. The shipped
+# `standoff_s*` family measures a depth ratio of 1.23 between S=90 and S=0, against
+# an a-priori prediction of 1.536 (PHYSICS §3.8). **The shipped family is not
+# grid-converged**: its jet is 3 mm across = 8 cells at dx=0.375, and it THINS as it
+# stretches to ~1.1 mm ~ 3 cells by the end of the window. These six decks are the
+# evidence for that statement, and they are committed precisely so the milestone's
+# central claim does not rest on numbers typed into prose. The shipped decks
+# demonstrate the UNDER-READ; these demonstrate the physics.
+#
+# THE FAMILY — two independent routes to the same control variable, cells across
+# the jet, because the derivation in PHYSICS §3.8 is DIAMETER-INDEPENDENT:
+#
+#   route 1, refine the grid      3 mm jet, dx = 0.375 (shipped) ->  8 cells
+#                                 3 mm jet, dx = 0.250 (this)    -> 12 cells
+#                                 3 mm jet, dx = 0.1875          -> 16 cells
+#   route 2, fatten the jet       6 mm jet, dx = 0.375           -> 16 cells
+#
+# Measured mean S90/S0 depth ratio at matched consumed fraction
+# (`python tools/measure_standoff.py`):
+#
+#      8 cells -> 1.229      12 cells -> 1.383      16 cells -> 1.429  (via dx)
+#                                                   16 cells -> 1.501  (via diameter)
+#
+# monotone toward the predicted 1.536, and the two 16-cell configurations land close
+# to each other despite sharing no grid and no jet — so **cells across the jet is the
+# controlling parameter**, and the shortfall is numerical rather than physical. Do
+# NOT report a Richardson extrapolation from these: the observed order is
+# ill-conditioned (it swings from ~0.7 to ~5 depending on the matching point) and a
+# tidy extrapolated value would be false precision. The trend is the claim.
+#
+# These are DIAGNOSTIC decks: `frame_count` is cut to 75 (cache size only — the
+# measurement interpolates on consumed fraction, not on frame index) and they are
+# not meant for playback. Everything physical is identical to `standoff_s00` /
+# `standoff_s90` except the one variable named in the deck name.
+name: standoff_conv_d6mm_s90
+
+domain: { xmin: 0, xmax: 540, ymin: 0, ymax: 120 }   # mm — identical to the shipped family
+
+projectile:
+  kind: heat_jet
+  material: copper_jet
+  length: 120.0
+  diameter: 6.0            # THE VARIABLE: 6 mm at dx=0.375 -> 16 cells across
+  velocity: 7000
+  tail_velocity: 2000
+  angle_deg: 0.0
+  nose_shape: blunt
+
+armor:
+  - { material: rha, thickness: 150.0, standoff: 90.0 }
+
+solver:
+  grid_resolution: 1440   # the SHIPPED dx = 0.375 mm — unchanged; the jet is what changes
+  particles_per_cell: 4
+  dt: 5.0e-8
+  total_time: 4.5e-5
+  frame_count: 75     # diagnostic: cache size only, NOT the 2.0e-7 playback convention

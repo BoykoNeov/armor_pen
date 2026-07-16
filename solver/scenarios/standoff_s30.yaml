@@ -1,0 +1,97 @@
+# Shaped-charge STANDOFF study — milestone 10. This deck is the S=30 mm arm; it
+# means nothing alone and is only readable as part of its family.
+# Scenarios are DATA, not code (CLAUDE.md §9). Representative / illustrative
+# order-of-magnitude values, not any real system (CLAUDE.md §10).
+#
+# THE FAMILY: one jet, four standoffs — S = 0 / 30 / 60 / 90 mm of free flight
+# before an identical semi-infinite RHA half-space. Four decks, one variable.
+#
+# WHY IT EXISTS. Milestone 7 built the jet but deliberately REFUSED to compare its
+# penetration DEPTH to anything, because every comparison available was
+# energy-confounded twice (a graded jet carries less KE than a uniform one; copper
+# is half tungsten's density). Standoff is the energy-neutral depth experiment: the
+# same jet, the same energy, the same everything — only the flight distance before
+# impact differs. It needs no new solver code: `ArmorLayer.standoff` has existed
+# since milestone 1. `mpm._seed` puts the armor face at mid-domain and the tip 3
+# cells in front of it, then adds each layer's `standoff` BEFORE placing it — so
+# standoff on layer 0 pushes the TARGET back while the tip stays put, which is
+# exactly free flight and nothing else.
+#
+# WHAT IT TESTS (full derivation in docs/PHYSICS.md §3.8). Each jet element flies at
+# its own constant speed, so the jet extrapolates back to a VIRTUAL ORIGIN where all
+# elements coincide, Z0 = L*v_tip/(v_tip - v_tail) = 120*7/5 = 168 mm behind the tip.
+# The seeded jet therefore already carries 168 mm of built-in virtual standoff, and
+# the deck's S adds to it: Z = 168 + S. Penetration depth at a matched arriving
+# element velocity is then exactly proportional to Z — a result that holds for ANY
+# u(v), strength included, because the strength correction is identical across the
+# family when compared at the same element. At the marker element seeded 40 mm behind
+# the tip (v = 5333 m/s), ideal hydro gives P = 0.337*Z:
+#
+#     S=0 -> 57 mm     S=30 -> 67 mm     S=60 -> 77 mm     S=90 -> 87 mm    (+54%)
+#
+# against a 0.11% run-to-run noise floor. **Both the slope and the intercept are
+# predicted a priori from the seeded velocity gradient — nothing is fitted**: fit the
+# measured depths against S and intercept/slope must come out at 168 mm. That is what
+# makes this falsifiable rather than merely a rising trend (the M9 lesson — one arm
+# approaching one number could be coincidence).
+#
+# The comparison must be made at MATCHED CONSUMED FRACTION. The two cheaper metrics
+# both lie: depth at fixed LAB time is an artifact of the opposite sign (a longer
+# standoff impacts later, so it penetrates for less time and reads shallower), and
+# depth at fixed POST-IMPACT time collapses the predicted spread to ~8%.
+#
+# NOT CLAIMED. The textbook standoff curve has an optimum and then rolls over,
+# because a real jet particulates and disperses at long standoff. This jet does NOT
+# particulate in-window (PHYSICS §3.4 — measured, not assumed), so this family
+# measures **the rising limb only**. No optimum is expected, and none will be
+# manufactured by lowering `damage_threshold` to force breakup (root §10).
+name: standoff_s30
+
+# ONE domain shared by the whole family — dx must be identical across it, or the
+# comparison is between grids rather than standoffs. The face sits at mid-domain
+# x=270 (mpm._seed hardcodes mid-domain), so the jet body (120 mm behind the tip)
+# spans 150-270 clear of xmin, and the target spans 270+S .. 420+S, leaving >=30 mm
+# of air behind it even at the family's largest S=90 — so the back face is a free
+# surface in EVERY deck, rather than being pinned against the wall in some and not
+# others.
+domain: { xmin: 0, xmax: 540, ymin: 0, ymax: 120 }   # mm
+
+projectile:
+  # Identical to heat_vs_composite's jet in every respect. This family varies
+  # standoff and nothing else.
+  kind: heat_jet
+  material: copper_jet
+  length: 120.0            # mm (L/D = 40)
+  diameter: 3.0            # mm
+  velocity: 7000           # m/s TIP velocity (== mm/ms)
+  tail_velocity: 2000      # m/s at the tail -> a 5 mm/us stretch rate
+  angle_deg: 0.0
+  nose_shape: blunt        # a jet is a stretching column, not a machined nose
+
+armor:
+  # A semi-infinite RHA half-space, NOT the composite stack. heat_vs_composite
+  # PERFORATES (its tip clears the back at t=26 us), and a perforated target puts a
+  # CEILING on depth — the one quantity this study exists to measure. 150 mm is
+  # thick enough that the deepest crater in the family (S=0 impacts immediately and
+  # so penetrates longest: it reaches 105 mm by the end of the window, measured)
+  # still leaves ~45 mm of undisturbed cover. The probe re-checks this per deck
+  # rather than trusting the estimate — the M9 lesson is that a perforating deck
+  # fits a beautiful straight line to a physically impossible number.
+  - { material: rha, thickness: 150.0, standoff: 30.0 }  # standoff: THE VARIABLE
+
+solver:
+  # 540 mm / 1440 = 0.375 mm, holding heat_vs_composite's proven 0.39 mm. Do NOT
+  # coarsen this to save particles: the jet is only 3 mm across (16 particles), and
+  # it thins as it stretches, so the incoming front is ~4 cells across by the end of
+  # the window. Under-resolving the stretched front would make depth fall away at
+  # large standoff — which is exactly what a textbook rollover looks like, and would
+  # be a numerical fake of the one result this study promised not to manufacture.
+  grid_resolution: 1440
+  particles_per_cell: 4
+  dt: 5.0e-8          # upper bound only; the EOS-aware CFL bound in bake() wins
+  # 45 us, one shared window across the family, sized so the marker element (40 mm
+  # behind the tip) is consumed in EVERY deck — it arrives at t=18 us at S=0, rising
+  # to t=41 us at S=90 — while the deepest crater still stops well short of the back
+  # face. total_time is not a physics variable; it is only how long we watch.
+  total_time: 4.5e-5
+  frame_count: 225    # frame_dt = 2.0e-7 s, uniform across every deck
