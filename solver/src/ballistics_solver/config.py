@@ -40,11 +40,35 @@ class Projectile:
     diameter: float  # mm
     velocity: float  # m/s (== mm/ms in the mm-ms-g system)
     angle_deg: float = 0.0  # obliquity from horizontal
+    # Nose profile. A real APFSDS long rod is POINTED, not flat-faced. Note what
+    # this does and does not buy: the nose exists mainly for flight aerodynamics
+    # and initial bite, and at ordnance velocity it is consumed within the first
+    # microsecond, after which penetration is the eroding/hydrodynamic regime
+    # (Tate-Alekseevskii, PHYSICS §2) in which final depth is nearly
+    # nose-shape-independent. So this buys a plausible initial crater and honest
+    # bite-vs-skid behaviour at obliquity — NOT a change in penetration accuracy.
+    # Profiles are illustrative, not any real system's geometry (root §10).
+    nose_shape: str = "conical"  # "conical" | "ogive" | "blunt"
+    nose_length: float | None = None  # mm; None = 1.5 calibers (1.5 * diameter)
     # Height (mm) at which the rod tip meets the armor face. None = mid-domain,
     # which is what normal-incidence decks want. An oblique rod plunges in -y as
     # it advances, so those decks aim high and spend the domain below the impact
     # rather than wasting half of it as unused headroom.
     impact_y: float | None = None
+
+    @property
+    def nose_len(self) -> float:
+        """Nose length in mm, resolving the `None` default to 1.5 calibers.
+
+        1.5 rather than the 2-3 calibers a real long rod carries: at this deck's
+        illustrative L/D of 7.5 (real APFSDS is ~20-30) a 2-caliber nose would
+        eat a quarter of the rod, and the nose is carved OUT of the rod rather
+        than added in front of it, so a longer nose is paid for in lost mass.
+        """
+        return 1.5 * self.diameter if self.nose_length is None else self.nose_length
+
+
+NOSE_SHAPES = ("conical", "ogive", "blunt")
 
 
 @dataclass
@@ -88,6 +112,17 @@ class Scenario:
             raise ValueError(
                 f"impact_y={iy} is outside the domain "
                 f"(ymin={self.domain.ymin}, ymax={self.domain.ymax})"
+            )
+        proj = self.projectile
+        if proj.nose_shape not in NOSE_SHAPES:
+            raise ValueError(
+                f"nose_shape={proj.nose_shape!r} is not one of {NOSE_SHAPES}"
+            )
+        # The nose is carved out of the rod, so it cannot outrun the rod itself.
+        if not 0.0 <= proj.nose_len < proj.length:
+            raise ValueError(
+                f"nose_length={proj.nose_len} must be >= 0 and shorter than the "
+                f"rod length={proj.length}"
             )
 
 

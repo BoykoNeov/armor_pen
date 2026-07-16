@@ -653,6 +653,25 @@ def _fill_rect(x0: float, x1: float, y0: float, y1: float, spacing: float):
     return np.stack([gx.ravel(), gy.ravel()], axis=1)
 
 
+def _nose_halfwidth(s, nose_len: float, radius: float, shape: str):
+    """Half-width (mm) of the rod at axial distance ``s`` behind its tip.
+
+    ``s`` is a numpy array measured along the rod axis, 0 at the tip. Past the
+    nose the rod is at full ``radius``, so this is the whole silhouette, not
+    just the nose. Profiles are illustrative (root §10).
+    """
+    if shape == "blunt" or nose_len <= 0.0:
+        return np.full_like(s, radius)
+    t = np.clip(s / nose_len, 0.0, 1.0)
+    if shape == "conical":
+        return radius * t
+    # Tangent ogive: a circular arc of radius `rho` meeting the shank
+    # tangentially at the nose base, so there is no corner where nose meets
+    # body. rho is fixed by requiring halfwidth(0)=0 and halfwidth(nose_len)=r.
+    rho = (radius * radius + nose_len * nose_len) / (2.0 * radius)
+    return np.sqrt(rho * rho - (nose_len * (1.0 - t)) ** 2) - (rho - radius)
+
+
 def _seed(scenario, dx: float, spacing: float):
     """Seed the projectile and armor stack into particle arrays (numpy).
 
@@ -735,6 +754,18 @@ def _seed(scenario, dx: float, spacing: float):
         y_center - 0.5 * proj.diameter, y_center + 0.5 * proj.diameter,
         spacing,
     )
+    # Carve the nose: keep only points inside the tapering silhouette. Done here,
+    # in rod-local axis-aligned coords (+x is the rod axis, tip leads at tip_x)
+    # and BEFORE the rotation below, so the mask is a plain 1D compare rather
+    # than a rotated-frame one. The rotation is about the tip, which the carve
+    # leaves in place. A real APFSDS is pointed; a flat-faced rod was the
+    # geometric tell that this is a sim. See `Projectile.nose_shape` for what
+    # this does and does not buy physically.
+    rod = rod[
+        np.abs(rod[:, 1] - y_center) <= _nose_halfwidth(
+            tip_x - rod[:, 0], proj.nose_len, 0.5 * proj.diameter, proj.nose_shape,
+        )
+    ]
     ang = math.radians(proj.angle_deg)
     ca, sa = math.cos(ang), math.sin(ang)
     # Rotate the rod by -ang about its tip (tip_x, y_center) so local +x maps to
