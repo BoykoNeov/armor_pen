@@ -194,6 +194,34 @@ EOS_CFL_J_MARGIN: float = 0.35
 # mean the saturation had become load-bearing.
 J_FLOOR: float = 0.05
 
+# --- Mie-Grueneisen pole guard (milestone 13, PHYSICS §3.10) ----------------
+# Fraction of the way to the Hugoniot's pole at which the EOS hands over to its
+# Murnaghan fallback branch: handover at eta = MG_F_SWITCH/s, i.e. J_sw = 1 -
+# MG_F_SWITCH/s. See ``_mg_p_cold`` for the law and why the guard exists at all.
+#
+# THIS IS A DEGENERACY BACKSTOP, NOT A PHYSICAL LIMIT — the same posture as J_FLOOR
+# above, and the distinction matters the same way. The linear u_s = c0 + s*u_p fit is
+# an empirical fit over the range shock experiments actually cover; extrapolating it
+# INTO its own pole is not physics, it is arithmetic running out. So the guard is not
+# "approximating MG badly near the pole", it is declining to trust a fit past where it
+# means anything, and handing over to the monotone law this repo already shipped.
+#
+# 0.9 is chosen to sit as close to the pole as the fit plausibly reaches while leaving
+# the production decks on the MG branch. Measured margins at 0.9:
+#
+#   material       pole    J_sw    worst live J    guard active?
+#   copper_jet     0.328   0.396   0.4315          no  — but only 9% clear
+#   rha            0.329   0.396   0.50            no
+#   ceramic        0.000   0.100   0.9910          no  — s=1 means it HAS no pole
+#   nera_filler    0.500   0.550   0.2421          YES — load-bearing (PHYSICS §3.6.2)
+#
+# Copper's 9% is the number to watch: the jet tip is the deck this repo cares most
+# about, and a silent slide onto the fallback branch would quietly restore the pre-M13
+# law exactly where M13 is supposed to matter. Hence ``bake`` WARNS when LIVE material
+# crosses J_sw — do not remove that warning, and do not "fix" a warning by lowering
+# this constant, which would hide the slide rather than address it.
+MG_F_SWITCH: float = 0.9
+
 # --- Artificial (shock) viscosity: what it is and why it is allowed ---------
 #
 # DEFAULT OFF (`SolverParams.av_c_q/av_c_l` = 0). Read this before enabling it.
@@ -332,37 +360,161 @@ def _polar_r(F: wp.mat22):
 # only the JIT-visible mirror of it. Same for the J floor defined above.
 EOS_KP = wp.constant(materials.EOS_KP)
 _J_FLOOR = wp.constant(J_FLOOR)
+_MG_F_SWITCH = wp.constant(MG_F_SWITCH)
+
+
+@wp.struct
+class MGParams:
+    """Per-particle Mie-Grueneisen constants, PRECOMPUTED on the host (``_mg_params``).
+
+    Bundled as a struct rather than six parallel arrays for one reason beyond tidy
+    signatures: ``A``/``C``/``J_sw`` are a *derivation* (matching the guard's Murnaghan
+    branch to the MG branch in value and tangent), and the Warp path and the NumPy
+    mirror ``_von_mises`` MUST agree. Deriving them once on the host and handing both
+    paths the same numbers makes drift impossible; recomputing the formula inline in
+    each path invites exactly the divergence ``tests/test_stress_paths.py`` exists to
+    catch.
+    """
+
+    s: float  # Hugoniot slope; pole at J = 1 - 1/s
+    g0: float  # Grueneisen Gamma0
+    grho: float  # Gamma0*rho0 — the thermal-pressure coefficient (== Gamma/V, the closure)
+    A: float  # guard: Murnaghan branch scale, matched in TANGENT at J_sw
+    C: float  # guard: Murnaghan branch offset, matched in VALUE at J_sw
+    J_sw: float  # guard handover: J below which the Murnaghan branch takes over
 
 
 @wp.func
-def _eos_pressure(J: float, K0: float):
-    """Murnaghan EOS — Cauchy pressure in MPa, positive in compression.
+def _mg_p_cold(J: float, K0: float, mg: MGParams):
+    """Reference (cold) curve of the Mie-Grueneisen EOS, WITH the pole guard.
 
-        p(J) = (K0/K') (J^-K' - 1)
+        p_cold(J) = p_H(eta) * (1 - Gamma0*eta/2)          for J >= J_sw
+                  = (A/K')(J^-K' - 1) + C                   for J <  J_sw
+        p_H(eta)  = K0 * eta / (1 - s*eta)^2                eta = 1 - J
 
-    **Monotone** decreasing in J, and p → +∞ as J → 0, so compression always
-    finds an equilibrium: there is no ceiling to crush through. Tangent bulk
-    modulus K(J) = -J dp/dJ = K0 · J^-K', hence K(1) = K0 = λ+µ *exactly* — the
-    same rest stiffness as the fixed-corotated volumetric term this replaces, so
-    the law is first-order identical at small strain and the KE decks barely move
-    (~1 %, measured — not zero). It is the large-strain branch that changes, by
-    up to ~2x at a 7 km/s jet tip. See PHYSICS §3.5.
+    Note ``rho0*c0^2 == K0`` exactly, by construction (c0 is DERIVED as sqrt(K0/rho0),
+    materials.py), so the Hugoniot needs neither c0 nor rho0 — only K0 = lam+mu, the
+    number milestone 8 already used. That identity is also what keeps the law
+    tangent-matched at rest: K(1) = rho0*c0^2 = K0.
 
-    Honest limit (root §1, §10): Murnaghan is a *cold* curve — no shock heating, so
-    no thermal pressure. Against copper's public shock Hugoniot it reads 0.93x at
-    J=0.9 (a KE deck — negligible), 0.68x at a 7 km/s equilibrium, and 0.28x at the
-    measured ~0.43 tip excursion. So the pressure error is **smaller but still
-    velocity-dependent**: milestone 8 shrank it, it did not abolish it, and
-    anything that sweeps velocity or reads absolute pressure still inherits it.
-    The thermal term needs Mie-Grüneisen and per-material c0/s/Γ — real new
-    physical data. Plausible, not predictive.
+    WHY THE GUARD IS NOT OPTIONAL. p_H poles at eta = 1/s, and PAST the pole it
+    *softens* — the squared denominator keeps growing while eta rises — so pressure
+    FALLS as compression rises and material can crush straight through. That destroys
+    the one property §3.5 chose Murnaghan for ("monotone and stiffening ... compression
+    always finds an equilibrium"), and it is not hypothetical: nera_filler sits at
+    J~0.24 against a pole at ~0.50 (PHYSICS §3.6.2), so this branch is LOAD-BEARING on
+    a shipped deck, not a formality.
 
-    J is floored before the fractional power: an element that momentarily inverts
-    (J≤0) under a violent shock substep would otherwise raise a negative base to a
-    fractional power and NaN everything downstream.
+    The fallback is Murnaghan itself — monotone, stiffening, divergent as J->0, and the
+    law this repo shipped for five milestones — matched to the MG branch in value AND
+    tangent at ``J_sw`` (host-side, see ``_mg_params``). So the guarded region behaves
+    exactly like the pre-M13 solver, which is the most defensible thing it could do.
     """
     Jc = wp.max(J, _J_FLOOR)
-    return (K0 / EOS_KP) * (wp.pow(Jc, -EOS_KP) - 1.0)
+    if Jc >= mg.J_sw:
+        eta = 1.0 - Jc
+        d = 1.0 - mg.s * eta
+        return K0 * eta / (d * d) * (1.0 - mg.g0 * eta * 0.5)
+    return (mg.A / EOS_KP) * (wp.pow(Jc, -EOS_KP) - 1.0) + mg.C
+
+
+@wp.func
+def _mg_pressure(J: float, e: float, K0: float, mg: MGParams):
+    """Mie-Grueneisen Cauchy pressure (MPa, positive in compression).
+
+        p(J,e) = p_cold(J) + Gamma0*rho0*e
+
+    The thermal term is the whole milestone. Without it (``e`` never fed) this is a
+    COLD curve that reads ~0.71x of copper's Hugoniot at a 2 km/s shock — WORSE than
+    the Murnaghan it replaces (~0.82x). Measured, 1-D piston: with the energy equation
+    the post-shock state lands ON the Hugoniot (p/p_H = 1.000 from 300 to 3000 m/s);
+    without shock heating fed to ``e`` it lands on the ISENTROPE (0.92 at 1.5 km/s).
+    See PHYSICS §3.10 — a broken energy accounting here is worse than shipping nothing.
+    """
+    return _mg_p_cold(J, K0, mg) + mg.grho * e
+
+
+# ``_eos_pressure`` (the Murnaghan kernel func) was REMOVED by milestone 13. Its
+# form survives inside ``_mg_p_cold``'s guard branch, which is the only place a
+# Murnaghan pressure is still evaluated; keeping a second copy callable invited a
+# caller that silently bypassed the thermal term. PHYSICS §3.5 remains the record
+# of what it was and why it was right for milestone 8.
+
+
+@wp.func
+def _mg_sound(J: float, e: float, K0: float, mu: float, rho0: float, mg: MGParams):
+    """Mie-Grueneisen sound speed (mm/ms). Includes the GRUENEISEN term.
+
+        c^2 = (K_cold(J) + Gamma0*J*p(J,e) + mu) / rho0
+
+    The second term is not optional and is easy to omit. c^2 = dp/drho|_S, and
+    (dp/dV)_S = (dp/dV)_e + (dp/de)_V*(de/dV)_S with (dp/de)_V = Gamma0*rho0 and
+    (de/dV)_S = -p — so the isentropic stiffness picks up a p*Gamma contribution the
+    COLD tangent alone misses. Dropping it under-reports c exactly where p is largest,
+    i.e. AT THE SHOCK FRONT, and the CFL audit would then print "OK" on a bound sized
+    too coarse: precisely the failure milestone 8's audit exists to catch.
+
+    K_cold is taken analytically per branch rather than by finite difference (the host
+    mirror does the same, so the two cannot drift):
+      MG branch:  d/deta [ K0*eta/d^2 * (1 - g0*eta/2) ],  d = 1 - s*eta,  K = J*dp/deta
+      guard:      K = A * J^-K'   (Murnaghan, by construction of the match)
+    rho0 is the REST density, matching the convention ``_av_tau`` and the audit use.
+    """
+    Jc = wp.max(J, _J_FLOOR)
+    K_cold = float(0.0)
+    if Jc >= mg.J_sw:
+        eta = 1.0 - Jc
+        d = 1.0 - mg.s * eta
+        g = 1.0 - mg.g0 * eta * 0.5
+        # dp/deta = f'(eta)*g(eta) + f(eta)*g'(eta), f = K0*eta/d^2
+        df = K0 * (d + 2.0 * mg.s * eta) / (d * d * d)
+        f = K0 * eta / (d * d)
+        K_cold = Jc * (df * g + f * (-mg.g0 * 0.5))
+    else:
+        K_cold = mg.A * wp.pow(Jc, -EOS_KP)
+    p = _mg_pressure(Jc, e, K0, mg)
+    return wp.sqrt(wp.max((K_cold + mg.g0 * Jc * p + mu) / rho0, 0.0))
+
+
+@wp.func
+def _av_q(
+    F: wp.mat22,
+    C: wp.mat22,
+    mu: float,
+    lam: float,
+    e: float,
+    mg: MGParams,
+    rho0: float,
+    l: float,
+    c_q: float,
+    c_l: float,
+):
+    """Scalar von Neumann-Richtmyer artificial pressure q (MPa, >=0).
+
+    Split out of ``_av_tau`` by milestone 13 because q is now needed in TWO places and
+    they must be the same number: the momentum scatter (``_p2g``, via ``_av_tau``) and
+    the ENERGY equation (``_g2p``), where q's work is what carries shock heating into
+    ``e``. Feeding a different q to the energy equation than the momentum equation
+    would silently violate the jump conditions — the post-shock state would drift off
+    the Hugoniot, which is exactly the bug PHYSICS §3.10's piston test exists to catch.
+
+    Milestone 11 noted AV's work was "dissipated to NOTHING — there is no energy
+    equation and Murnaghan is a cold curve, so there is no thermal pressure for the
+    dissipated energy to feed." That is no longer true, and it is why AV stopped being
+    a ~1 % ring-damping nicety and became the mechanism that removes the
+    velocity-dependent pressure error (0.223 -> 0.003 spread; PHYSICS §3.10).
+    """
+    div_v = C[0, 0] + C[1, 1]
+    # Compression only. In expansion an artificial viscosity would resist material
+    # coming APART — it would glue open a spall crack, which is precisely the
+    # physics this repo exists to show.
+    if div_v >= 0.0:
+        return float(0.0)
+    Jc = wp.max(wp.determinant(F), _J_FLOOR)
+    c = _mg_sound(Jc, e, lam + mu, mu, rho0, mg)
+    # div_v < 0 here, so BOTH terms are positive: the quadratic by squaring, the
+    # linear by the explicit minus sign.
+    return rho0 * l * (c_q * l * div_v * div_v - c_l * c * div_v)
 
 
 @wp.func
@@ -371,6 +523,8 @@ def _av_tau(
     C: wp.mat22,
     mu: float,
     lam: float,
+    e: float,
+    mg: MGParams,
     rho0: float,
     l: float,
     c_q: float,
@@ -396,22 +550,15 @@ def _av_tau(
     difference from current density is absorbed by the coefficients, which the
     sensitivity sweep varies anyway.
     """
-    div_v = C[0, 0] + C[1, 1]
-    # Compression only. In expansion an artificial viscosity would resist material
-    # coming APART — it would glue open a spall crack, which is precisely the
-    # physics this repo exists to show.
-    if div_v >= 0.0:
+    q = _av_q(F, C, mu, lam, e, mg, rho0, l, c_q, c_l)
+    if q == 0.0:
         return wp.mat22(0.0, 0.0, 0.0, 0.0)
     Jc = wp.max(wp.determinant(F), _J_FLOOR)
-    c = wp.sqrt(((lam + mu) * wp.pow(Jc, -EOS_KP) + mu) / rho0)
-    # div_v < 0 here, so BOTH terms are positive: the quadratic by squaring, the
-    # linear by the explicit minus sign.
-    q = rho0 * l * (c_q * l * div_v * div_v - c_l * c * div_v)
     return wp.mat22(-q * Jc, 0.0, 0.0, -q * Jc)
 
 
 @wp.func
-def _fixed_corotated_pft(F: wp.mat22, mu: float, lam: float):
+def _fixed_corotated_pft(F: wp.mat22, mu: float, lam: float, e: float, mg: MGParams):
     """Kirchhoff stress τ = P(F) Fᵀ — corotated DEVIATOR + EOS pressure.
 
     The elastic stress that drives the P2G momentum scatter. Factored out so the
@@ -423,7 +570,16 @@ def _fixed_corotated_pft(F: wp.mat22, mu: float, lam: float):
     Milestone 8 split the two branches apart. The volumetric half used to be
     ``lam*(J-1)*J``, which has **no equation of state** and *under*-resists at
     extreme compression — a 7 km/s stagnation point equilibrated at J≈0.15 where
-    real copper gives ≈0.61. The EOS owns the pressure now (``_eos_pressure``).
+    real copper gives ≈0.61. Milestone 13 replaced the EOS itself: the pressure is
+    Mie-Grueneisen (``_mg_pressure``), so this now takes the particle's specific
+    internal energy ``e``. That is the ONLY signature change — the deviatoric branch
+    below is untouched, and at ``e=0`` and small strain the law is still
+    tangent-matched to both predecessors (K(1) = λ+µ exactly).
+
+    NOTE this stays RATE-FREE. ``e`` is a state variable, not a rate: artificial
+    viscosity remains outside this function, in ``_p2g``, for the reasons the AV block
+    gives (this is the constitutive law; it feeds the brittle triggers and is mirrored
+    on the host by ``_von_mises``, which cannot see ``div v``). A test pins that.
     """
     J = wp.determinant(F)
     R = _polar_r(F)
@@ -436,13 +592,13 @@ def _fixed_corotated_pft(F: wp.mat22, mu: float, lam: float):
     # ``_p2g`` scatters.
     dev = 2.0 * mu * (F - R) * wp.transpose(F)
     tr_half = 0.5 * (dev[0, 0] + dev[1, 1])
-    # Volumetric branch: Cauchy σ_vol = -p·I, and τ = J·σ, so τ_vol = -p(J)·J·I.
+    # Volumetric branch: Cauchy σ_vol = -p·I, and τ = J·σ, so τ_vol = -p(J,e)·J·I.
     # K0 = λ+µ reproduces the rest stiffness of the term being replaced exactly.
     # Both factors use the FLOORED J (see J_FLOOR): with a raw negative J from an
     # inverted element, -p·J flips sign and reports enormous tension instead of
     # the compression that would push it back out.
     Jc = wp.max(J, _J_FLOOR)
-    lp = -_eos_pressure(Jc, lam + mu) * Jc - tr_half
+    lp = -_mg_pressure(Jc, e, lam + mu, mg) * Jc - tr_half
     return dev + wp.mat22(lp, 0.0, 0.0, lp)
 
 
@@ -619,7 +775,7 @@ def _return_mapping(
 
 
 @wp.func
-def _stress_invariants(F: wp.mat22, mu: float, lam: float):
+def _stress_invariants(F: wp.mat22, mu: float, lam: float, e: float, mg: MGParams):
     """Von Mises and max tensile principal of the Cauchy stress.
 
     Cauchy sigma = (1/J) P(F) F^T, sharing ``_fixed_corotated_pft`` outright with
@@ -634,7 +790,7 @@ def _stress_invariants(F: wp.mat22, mu: float, lam: float):
     spurious tensile reading.
     """
     J = wp.determinant(F)
-    PFt = _fixed_corotated_pft(F, mu, lam)
+    PFt = _fixed_corotated_pft(F, mu, lam, e, mg)
     invJ = 1.0 / wp.max(J, _J_FLOOR)
     sxx = PFt[0, 0] * invJ
     syy = PFt[1, 1] * invJ
@@ -659,6 +815,8 @@ def _update_damage(
     alpha: wp.array(dtype=float),
     dthr: wp.array(dtype=float),
     damage: wp.array(dtype=float),
+    e: wp.array(dtype=float),
+    mgp: wp.array(dtype=MGParams),
 ):
     """Latch a particle as spalled once it fails — ductile or brittle path.
 
@@ -688,7 +846,7 @@ def _update_damage(
     if brittle[p] > 0.5:
         ys = yield_k[p]
         if ys > 0.0:
-            inv = _stress_invariants(F[p], mu[p], lam[p])
+            inv = _stress_invariants(F[p], mu[p], lam[p], e[p], mgp[p])
             if inv[0] >= ys or inv[1] >= BRITTLE_TENSILE_FRAC * ys:
                 damage[p] = 1.0
     else:
@@ -821,6 +979,8 @@ def _p2g(
     reactive: wp.array(dtype=float),
     det_pressure: wp.array(dtype=float),
     burn: wp.array(dtype=float),
+    e: wp.array(dtype=float),
+    mgp: wp.array(dtype=MGParams),
     grid_v: wp.array2d(dtype=wp.vec2),
     grid_m: wp.array2d(dtype=float),
     origin: wp.vec2,
@@ -846,7 +1006,8 @@ def _p2g(
     # particle that carries no stress (spalled fragment, burning or spent filler)
     # carries no q either. A free fragment has no shock to damp — it is debris —
     # and damping burning filler would fight the detonation source term.
-    av = _av_tau(F[p], C[p], mu[p], lam[p], mass[p] / vol0[p], dx, av_c_q, av_c_l)
+    av = _av_tau(F[p], C[p], mu[p], lam[p], e[p], mgp[p], mass[p] / vol0[p], dx,
+                 av_c_q, av_c_l)
     if reactive[p] > 0.5:
         # Reactive filler runs its OWN state machine, keyed off burn/damage and
         # never the ductile-spall gate (see the reactive note above):
@@ -861,7 +1022,8 @@ def _p2g(
             pd = det_pressure[p]
             affine = coeff * wp.mat22(-pd, 0.0, 0.0, -pd) + affine
         elif damage[p] < 0.5:
-            affine = coeff * (_fixed_corotated_pft(F[p], mu[p], lam[p]) + av) + affine
+            affine = coeff * (_fixed_corotated_pft(F[p], mu[p], lam[p], e[p], mgp[p])
+                              + av) + affine
         # else spent: no stress term
     elif damage[p] < 0.5:
         # A spalled particle (damage>=0.5) is a free fragment: it drops its
@@ -869,7 +1031,8 @@ def _p2g(
         # perforation channel / back-face spall spray opens up. It KEEPS its mass
         # and APIC momentum so grid momentum is conserved and it still collides
         # (grid-shared contact) instead of ghosting through the rod.
-        affine = coeff * (_fixed_corotated_pft(F[p], mu[p], lam[p]) + av) + affine
+        affine = coeff * (_fixed_corotated_pft(F[p], mu[p], lam[p], e[p], mgp[p])
+                          + av) + affine
 
     for i in range(3):
         for j in range(3):
@@ -928,14 +1091,26 @@ def _g2p(
     v: wp.array(dtype=wp.vec2),
     C: wp.array(dtype=wp.mat22),
     F: wp.array(dtype=wp.mat22),
+    e: wp.array(dtype=float),
+    mu: wp.array(dtype=float),
+    lam: wp.array(dtype=float),
+    mgp: wp.array(dtype=MGParams),
+    rho0: wp.array(dtype=float),
     grid_v: wp.array2d(dtype=wp.vec2),
     origin: wp.vec2,
     inv_dx: float,
+    dx: float,
     dt: float,
     lo: wp.vec2,
     hi: wp.vec2,
+    av_c_q: float,
+    av_c_l: float,
 ):
     p = wp.tid()
+    # Old state, read BEFORE anything below overwrites it: the energy update at the
+    # end needs the same (F, C) pair `_p2g` scattered with this substep.
+    F_old = F[p]
+    C_old = C[p]
     Xp = (x[p] - origin) * inv_dx
     base = wp.vec2i(int(wp.floor(Xp[0] - 0.5)), int(wp.floor(Xp[1] - 0.5)))
     fx = Xp - wp.vec2(float(base[0]), float(base[1]))
@@ -967,7 +1142,44 @@ def _g2p(
         wp.clamp(x[p][0] + dt * new_v[0], lo[0], hi[0]),
         wp.clamp(x[p][1] + dt * new_v[1], lo[1], hi[1]),
     )
-    F[p] = (wp.mat22(1.0, 0.0, 0.0, 1.0) + dt * new_C) * F[p]
+    F_new = (wp.mat22(1.0, 0.0, 0.0, 1.0) + dt * new_C) * F_old
+    F[p] = F_new
+
+    # --- energy equation (milestone 13, PHYSICS §3.10) -----------------------
+    # Specific internal energy, per unit REFERENCE volume:
+    #
+    #     rho0 * de = -(p + q) * dJ
+    #
+    # i.e. compression work plus the artificial viscosity's dissipation. `q` is the
+    # SAME scalar `_p2g` scattered as momentum this substep (same F_old/C_old), which
+    # is what makes the scheme conserve: feeding the energy equation a different q
+    # than the momentum equation drifts the post-shock state off the Hugoniot.
+    #
+    # IMPLICIT, AND SOLVED IN CLOSED FORM. p^{n+1} depends on e^{n+1} which depends on
+    # p^{n+1}. Mie-Grueneisen is LINEAR in e, so no iteration is needed — substitute
+    # p^{n+1} = p_cold(J^{n+1}) + Gamma0*rho0*e^{n+1} into the trapezoidal update and
+    # solve:
+    #
+    #     rho0*e1*(1 + Gamma0*dJ/2) = rho0*e0 - [ (p_cold(J1) + p0)/2 + q ] * dJ
+    #
+    # HONEST LIMIT (root §10): this is the VOLUMETRIC work plus AV only. Plastic
+    # dissipation is NOT fed to e, so strongly-shearing regions are missing a real
+    # heat source. Deliberate and stated: it is negligible at the near-hydrostatic jet
+    # stagnation point this milestone is about, and `_return_mapping` runs in a
+    # separate kernel on log-strain, where the dissipated work is not on hand.
+    J_old = wp.determinant(F_old)
+    J_new = wp.determinant(F_new)
+    dJ = J_new - J_old
+    K0 = lam[p] + mu[p]
+    mg = mgp[p]
+    q = _av_q(F_old, C_old, mu[p], lam[p], e[p], mg, rho0[p], dx, av_c_q, av_c_l)
+    p0 = _mg_pressure(J_old, e[p], K0, mg)
+    pc1 = _mg_p_cold(J_new, K0, mg)
+    denom = rho0[p] * (1.0 + mg.g0 * dJ * 0.5)
+    # denom vanishes only for a physically impossible one-substep volume change
+    # (dJ = -2/Gamma0, i.e. a >100% jump); guard it rather than emit inf.
+    if wp.abs(denom) > 1.0e-12:
+        e[p] = (rho0[p] * e[p] - ((pc1 + p0) * 0.5 + q) * dJ) / denom
 
 
 @wp.kernel
@@ -1007,14 +1219,81 @@ def _lame(E: float, nu: float) -> tuple[float, float]:
     return mu, lam
 
 
-def _eos_equilibrium_j(p: float, K0: float) -> float:
-    """Volume ratio at which the Murnaghan EOS balances pressure ``p`` (MPa).
+def _mg_params(mat: "materials.Material") -> dict:
+    """Derive a material's Mie-Grueneisen constants, INCLUDING the guard's match.
 
-    Closed-form inverse of ``_eos_pressure``: J = (1 + K' p/K0)^(-1/K'). Host-side
-    only — used to size the substep a priori (see ``EOS_CFL_J_MARGIN``), never in
-    the kernels.
+    The single source of both the Warp path (``MGParams``) and the NumPy mirror
+    (``_von_mises``), so the two cannot drift — see ``MGParams``.
+
+    The guard hands over to a Murnaghan branch at ``J_sw``, matched there in VALUE and
+    TANGENT (C1), so the solver feels no kink:
+
+        K_m(J) = A·J^-K'          =>  A = K(J_sw)·J_sw^K'          (tangent)
+        p_m(J) = (A/K')(J^-K' - 1) + C
+                                  =>  C = p(J_sw) - (A/K')(J_sw^-K' - 1)   (value)
+
+    Returns plain floats in mm-ms-g. ``rho0*c0^2 == K0`` by construction (c0 is
+    DERIVED, materials.py), so nothing here needs c0 explicitly.
     """
-    return (1.0 + materials.EOS_KP * p / K0) ** (-1.0 / materials.EOS_KP)
+    mu, lam = _lame(mat.youngs_modulus, mat.poisson_ratio)
+    K0 = lam + mu
+    s, g0 = mat.shock.s, mat.shock.gamma0
+    J_sw = 1.0 - MG_F_SWITCH / s
+
+    def p_cold_mg(J):
+        eta = 1.0 - J
+        d = 1.0 - s * eta
+        return K0 * eta / (d * d) * (1.0 - g0 * eta * 0.5)
+
+    def K_cold_mg(J):
+        eta = 1.0 - J
+        d = 1.0 - s * eta
+        f = K0 * eta / (d * d)
+        df = K0 * (d + 2.0 * s * eta) / (d * d * d)
+        return J * (df * (1.0 - g0 * eta * 0.5) + f * (-g0 * 0.5))
+
+    A = K_cold_mg(J_sw) * J_sw**materials.EOS_KP
+    C = p_cold_mg(J_sw) - (A / materials.EOS_KP) * (J_sw ** (-materials.EOS_KP) - 1.0)
+    return {"s": s, "g0": g0, "grho": g0 * mat.density, "A": A, "C": C, "J_sw": J_sw,
+            "K0": K0, "mu": mu}
+
+
+def _mg_p_cold_host(J, K0, mg: dict):
+    """Host mirror of ``_mg_p_cold``. Vectorised; same branch, same constants."""
+    J = np.maximum(np.asarray(J, dtype=float), J_FLOOR)
+    eta = 1.0 - J
+    d = 1.0 - mg["s"] * eta
+    # Evaluate BOTH branches and select: np.where is not lazy, and past the pole the
+    # MG expression divides by ~0, so clamp d away from zero purely to keep the unused
+    # branch finite. The select is what decides; this only stops a warning/NaN in the
+    # arm that is thrown away.
+    d_safe = np.where(np.abs(d) < 1e-9, 1e-9, d)
+    p_mg = K0 * eta / (d_safe * d_safe) * (1.0 - mg["g0"] * eta * 0.5)
+    p_guard = (mg["A"] / materials.EOS_KP) * (J ** (-materials.EOS_KP) - 1.0) + mg["C"]
+    return np.where(J >= mg["J_sw"], p_mg, p_guard)
+
+
+def _eos_equilibrium_j(p: float, K0: float, mg: dict) -> float:
+    """Volume ratio at which the EOS balances pressure ``p`` (MPa).
+
+    Host-side only — used to size the substep a priori (see ``EOS_CFL_J_MARGIN``),
+    never in the kernels.
+
+    Milestone 8's version was a closed-form inverse of Murnaghan. Mie-Grueneisen has
+    no convenient inverse, and more importantly the right target is the COLD curve:
+    this predicts where a stagnation pressure equilibrates so the substep can be sized
+    for it, and it must not assume the shock heating that a real trajectory may or may
+    not deposit. Solved by bisection on the monotone (guaranteed by the guard) cold
+    curve — host-side, once per material per bake, so cost is irrelevant.
+    """
+    lo, hi = J_FLOOR, 1.0
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if float(_mg_p_cold_host(mid, K0, mg)) < p:
+            hi = mid  # not compressed enough
+        else:
+            lo = mid
+    return 0.5 * (lo + hi)
 
 
 def _av_signal_speed(c: float, div_v: float, l: float, c_q: float, c_l: float) -> float:
@@ -1039,15 +1318,30 @@ def _av_signal_speed(c: float, div_v: float, l: float, c_q: float, c_l: float) -
     return c * (1.0 + c_l) + c_q * l * abs(min(div_v, 0.0))
 
 
-def _eos_sound_speed(J: float, K0: float, mu: float, rho: float) -> float:
-    """P-wave speed (mm/ms) under the EOS at volume ratio ``J``.
+def _eos_sound_speed(J, K0, mu, rho, mg: dict, e=0.0):
+    """P-wave speed (mm/ms) under the EOS at volume ratio ``J``. Host mirror of
+    ``_mg_sound``, plus the shear term.
 
-    M(J) = K(J) + mu with the EOS tangent K(J) = K0·J^-K'. At J=1 this is exactly
-    ``lam + 2*mu`` — i.e. identical to the pre-EOS rest-state bound — because
-    K0 = lam+mu. Below J=1 it climbs like J^(-K'/2): the reason the substep had to
-    be re-derived in milestone 8 rather than inherited.
+    M(J) = K_cold(J) + Gamma0·J·p(J,e) + mu. At J=1, e=0 this is exactly ``lam + 2*mu``
+    — identical to both the pre-EOS and the Murnaghan rest-state bound — because
+    K0 = lam+mu and the thermal term vanishes. That is what keeps milestone 13 a
+    large-strain-only change.
+
+    THE GRUENEISEN TERM IS NOT OPTIONAL (see ``_mg_sound``): c^2 = dp/drho|_S picks up
+    a p·Gamma contribution that the cold tangent alone misses, and it is largest
+    exactly at the shock front. Omitting it prints "OK" on a bound sized too coarse.
     """
-    return math.sqrt((K0 * J ** (-materials.EOS_KP) + mu) / rho)
+    J = np.maximum(np.asarray(J, dtype=float), J_FLOOR)
+    eta = 1.0 - J
+    d = 1.0 - mg["s"] * eta
+    d_safe = np.where(np.abs(d) < 1e-9, 1e-9, d)
+    f = K0 * eta / (d_safe * d_safe)
+    df = K0 * (d_safe + 2.0 * mg["s"] * eta) / (d_safe**3)
+    K_mg = J * (df * (1.0 - mg["g0"] * eta * 0.5) + f * (-mg["g0"] * 0.5))
+    K_guard = mg["A"] * J ** (-materials.EOS_KP)
+    K_cold = np.where(J >= mg["J_sw"], K_mg, K_guard)
+    p = _mg_p_cold_host(J, K0, mg) + mg["grho"] * e
+    return np.sqrt(np.maximum((K_cold + mg["g0"] * J * p + mu) / rho, 0.0))
 
 
 def _fill_rect(x0: float, x1: float, y0: float, y1: float, spacing: float):
@@ -1125,6 +1419,11 @@ def _seed(scenario, dx: float, spacing: float):
      mass_list, vol_list, mid_list) = (
         [], [], [], [], [], [], [], [], [], [], [], [], [], [],
     )
+    # Mie-Grueneisen per-particle constants (milestone 13). Derived once per material
+    # by `_mg_params` — including the guard's value+tangent match — and broadcast, so
+    # the Warp path (MGParams) and the NumPy mirror (_von_mises) consume the SAME
+    # numbers and cannot drift.
+    mg_lists = {k: [] for k in ("s", "g0", "grho", "A", "C", "J_sw")}
     p_vol = spacing * spacing  # 2D "volume" (area) per particle
 
     def add_region(pts, mat, vel):
@@ -1147,6 +1446,9 @@ def _seed(scenario, dx: float, spacing: float):
         mass_list.append(np.full(n, mat.density * p_vol))
         vol_list.append(np.full(n, p_vol))
         mid_list.append(np.full(n, float(mat.material_id)))
+        mgp = _mg_params(mat)
+        for k in mg_lists:
+            mg_lists[k].append(np.full(n, mgp[k]))
 
     # Projectile: leading (+x) tip a small gap before the armor front. At
     # obliquity the rod RECTANGLE is rotated so its long axis stays parallel to
@@ -1221,6 +1523,7 @@ def _seed(scenario, dx: float, spacing: float):
         x_cursor += layer.thickness
 
     return {
+        **{f"mg_{k}": np.concatenate(v).astype(np.float64) for k, v in mg_lists.items()},
         "pos": np.concatenate(pos_list).astype(np.float32),
         "vel": np.concatenate(vel_list).astype(np.float32),
         "mu": np.concatenate(mu_list).astype(np.float32),
@@ -1238,7 +1541,8 @@ def _seed(scenario, dx: float, spacing: float):
     }
 
 
-def _von_mises(F: np.ndarray, mu: np.ndarray, lam: np.ndarray) -> np.ndarray:
+def _von_mises(F: np.ndarray, mu: np.ndarray, lam: np.ndarray,
+               e: np.ndarray, mg_arr: dict) -> np.ndarray:
     """Von Mises equivalent of the Cauchy stress (MPa), for the `stress` column.
 
     Cauchy sigma = (1/J) P(F) F^T. **A hand-kept NumPy mirror of the Warp
@@ -1266,19 +1570,36 @@ def _von_mises(F: np.ndarray, mu: np.ndarray, lam: np.ndarray) -> np.ndarray:
     xx = a + d
     yy = c - b
     den = np.sqrt(xx * xx + yy * yy)
-    den = np.where(den < 1e-9, 1.0, den)
-    cs, sn = xx / den, yy / den
+    # Degenerate polar decomposition (xx=yy=0 — e.g. F = diag(k, -k), which a violent
+    # shock front genuinely produces): fall back to R = IDENTITY, exactly as the Warp
+    # path's `_polar_r` does.
+    #
+    # THIS WAS A REAL DRIFT, and it predates milestone 13. The old guard was
+    # `den = where(den < 1e-9, 1.0, den)`, which leaves cs = xx/1 = 0 and sn = 0 — i.e.
+    # R = the ZERO matrix, where the kernel returns the IDENTITY. So (F-R)F^T differed
+    # between the two paths on exactly the degenerate states this file exists to pin.
+    # It went unnoticed because it was MASKED: under Murnaghan a floored ceramic
+    # particle carried ~1.08e10 MPa of pressure, 129x the deviator, so a wrong deviator
+    # vanished inside a 2e-3 relative tolerance. Milestone 13's guard branch is ~129x
+    # softer there, which unmasked it. A test that passes because one term is enormous
+    # is not passing for the reason it claims.
+    degen = den < 1e-9
+    cs = np.where(degen, 1.0, xx / np.where(degen, 1.0, den))
+    sn = np.where(degen, 0.0, yy / np.where(degen, 1.0, den))
     # (F - R) F^T
     fr00, fr01, fr10, fr11 = a - cs, b + sn, c - sn, d - cs
     m00 = fr00 * a + fr01 * b
     m01 = fr00 * c + fr01 * d
     m10 = fr10 * a + fr11 * b
     m11 = fr10 * c + fr11 * d
-    # Mirror of _fixed_corotated_pft: corotated deviator + Murnaghan EOS pressure.
+    # Mirror of _fixed_corotated_pft: corotated deviator + Mie-Grueneisen pressure.
+    # `mg_arr` carries the SAME host-derived constants handed to the Warp path as
+    # MGParams (see _mg_params), so the two cannot drift — which is the property
+    # tests/test_stress_paths.py pins.
     dev00 = 2.0 * mu * m00
     dev11 = 2.0 * mu * m11
     Jc = np.maximum(J, J_FLOOR)  # floors identically to the Warp path (see J_FLOOR)
-    p = ((lam + mu) / materials.EOS_KP) * (Jc ** (-materials.EOS_KP) - 1.0)
+    p = _mg_p_cold_host(Jc, lam + mu, mg_arr) + mg_arr["grho"] * e
     lp = -p * Jc - 0.5 * (dev00 + dev11)
     pft00 = dev00 + lp
     pft01 = 2.0 * mu * m01
@@ -1360,14 +1681,19 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
         # steady-state estimate said the RHA plate would sit at J=0.75 and the
         # measured value was 0.17 — so this is not a place to shave. An offline
         # bake can afford the substeps (root §1); a NaN at frame 300 cannot.
-        Jd = EOS_CFL_J_MARGIN * _eos_equilibrium_j(p_stag, K0)
+        mgp_d = _mg_params(mat)
+        Jd = EOS_CFL_J_MARGIN * _eos_equilibrium_j(p_stag, K0, mgp_d)
         j_design = min(j_design, Jd)
         # Artificial viscosity raises the signal speed, so the bound has to carry
         # it too. A priori the worst compression rate is a shock resolved across
         # ~one cell, |div v| ~ v_tip/dx — which makes the quadratic contribution
         # c_q*dx*(v_tip/dx) = c_q*v_tip, independent of dx. Like the J estimate
         # above this is a PREDICTION; the frame loop measures whether it held.
-        c_eos = _eos_sound_speed(Jd, K0, mu, mat.density)
+        # `e` is left at 0 here ON PURPOSE: the design J comes from the COLD curve
+        # (`_eos_equilibrium_j`), so pairing it with a heated sound speed would mix
+        # two different states. Shock heating RAISES c, so the audit below measures
+        # the real thing every frame and warns — predict cold, verify hot.
+        c_eos = float(_eos_sound_speed(Jd, K0, mu, mat.density, mgp_d, 0.0))
         div_v_design = -scenario.projectile.velocity / dx
         c_max = max(
             c_max, _av_signal_speed(c_eos, div_v_design, dx, av_c_q, av_c_l)
@@ -1409,6 +1735,17 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
     det_pressure = wp.array(seed["det_pressure"], dtype=float, device=device)  # MPa pulse
     burn_time = wp.array(seed["burn_time"], dtype=float, device=device)  # ms pulse duration
     ign_comp = wp.array(seed["ign_comp"], dtype=float, device=device)  # det(F) ignition thresh
+    # Mie-Grueneisen state + constants (milestone 13). `e` is specific internal
+    # energy, evolved in `_g2p`; it starts at 0 = the reference state, so a deck at
+    # rest is exactly the pre-M13 solver. NOT a cache column (see PHYSICS §3.10).
+    e = wp.zeros(n, dtype=float, device=device)
+    rho0_a = wp.array(seed["mass"] / np.maximum(seed["vol0"], 1e-30),
+                      dtype=float, device=device)
+    _mgp_h = MGParams()
+    mgp_np = np.zeros(n, dtype=_mgp_h.numpy_dtype())
+    for k in ("s", "g0", "grho", "A", "C", "J_sw"):
+        mgp_np[k] = seed[f"mg_{k}"]
+    mgp = wp.array(mgp_np, dtype=MGParams, device=device)
     alpha = wp.zeros(n, dtype=float, device=device)  # equiv. plastic strain
     damage = wp.zeros(n, dtype=float, device=device)  # 0 intact, 1 spalled/reacting (latched)
     burn = wp.zeros(n, dtype=float, device=device)  # ms of detonation pulse remaining
@@ -1429,11 +1766,12 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
         grid_m.zero_()
         wp.launch(_p2g, dim=n, device=device, inputs=[
             x, v, C, F, mass, vol0, mu, lam, damage, reactive, det_pressure, burn,
-            grid_v, grid_m, origin, inv_dx, dx, dt, av_c_q, av_c_l])
+            e, mgp, grid_v, grid_m, origin, inv_dx, dx, dt, av_c_q, av_c_l])
         wp.launch(_grid_op, dim=(nx, ny), device=device, inputs=[
             grid_v, grid_m, nx, ny])
         wp.launch(_g2p, dim=n, device=device, inputs=[
-            x, v, C, F, grid_v, origin, inv_dx, dt, clamp_lo, clamp_hi])
+            x, v, C, F, e, mu, lam, mgp, rho0_a, grid_v, origin, inv_dx, dx, dt,
+            clamp_lo, clamp_hi, av_c_q, av_c_l])
         # Bound the reactive filler's post-transfer speed so the F-independent
         # detonation source can't accelerate unconfined debris to a CFL-breaking
         # ~14 km/s (reactive particles only; see REACTIVE_VMAX / _clamp_reactive_v).
@@ -1451,7 +1789,7 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
         # (von Mises or tensile principal). _p2g then treats failed particles as
         # free fragments (spall / shatter). Reactive filler is skipped here.
         wp.launch(_update_damage, dim=n, device=device, inputs=[
-            F, mu, lam, yield_k, brittle, reactive, alpha, dthr, damage])
+            F, mu, lam, yield_k, brittle, reactive, alpha, dthr, damage, e, mgp])
         # Reactive impulse (ERA/NERA): ignite filler on shock arrival, age the
         # detonation pulse. Writes `burn` (read by next substep's _p2g) and the
         # reactive `damage` latch. No-op for non-reactive particles.
@@ -1466,7 +1804,7 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
     # frame boundaries, so a shorter-than-a-frame excursion stays invisible.
     K0_h = seed["lam"] + seed["mu"]
     rho_h = seed["mass"] / np.maximum(seed["vol0"], 1e-30)
-    audit = {"c": 0.0, "J": 1.0, "div_v": 0.0}
+    audit = {"c": 0.0, "J": 1.0, "div_v": 0.0, "guard_n": 0, "guard_mats": []}
 
     # --- per-substep J trace (debug hook; see `_trace_j` and the AV block) ----
     tr = None
@@ -1502,8 +1840,12 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
         # it is not a cache column.
         Cn = C.numpy().reshape(n, 2, 2)
         dmg = damage.numpy()
+        e_h = e.numpy()
         vel_mag = np.linalg.norm(vel, axis=1)
-        stress = _von_mises(Fn, seed["mu"], seed["lam"])
+        stress = _von_mises(
+            Fn, seed["mu"], seed["lam"], e_h,
+            {k: seed[f"mg_{k}"] for k in ("s", "g0", "grho", "A", "C", "J_sw")},
+        )
 
         # CFL audit over LIVE particles only: _p2g drops a damaged particle's
         # stress term, so its (still-evolving) F drives nothing and its J is
@@ -1513,9 +1855,25 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
             J_raw = np.linalg.det(Fn[live])
             audit["J"] = min(audit["J"], float(J_raw.min()))  # raw: J_FLOOR must be visible
             Jl = np.maximum(J_raw, J_FLOOR)
-            c_live = np.sqrt(
-                (K0_h[live] * Jl ** (-materials.EOS_KP) + seed["mu"][live]) / rho_h[live]
+            # Measure the sound speed the MG law ACTUALLY reached, heating included
+            # (`e_h`, not 0). The design bound was sized on the cold curve; shock
+            # heating stiffens, so this is the arm that can breach — measuring it cold
+            # would under-report exactly where the bound is tightest.
+            c_live = _eos_sound_speed(
+                Jl, K0_h[live], seed["mu"][live], rho_h[live],
+                {k: seed[f"mg_{k}"][live] for k in ("s", "g0", "grho", "A", "C", "J_sw")},
+                e_h[live],
             )
+            # Did any LIVE material slide onto the guard's Murnaghan branch? That is
+            # not a crash, it is a QUIET LOSS OF THE MILESTONE: below J_sw the law is
+            # the pre-M13 one. Copper's jet tip runs only ~9 % clear of its switch, so
+            # this is a real risk on the deck that matters most (see MG_F_SWITCH).
+            n_guard = int((Jl < seed["mg_J_sw"][live]).sum())
+            if n_guard > audit["guard_n"]:
+                audit["guard_n"] = n_guard
+                audit["guard_mats"] = sorted(
+                    set(mat_id[live][Jl < seed["mg_J_sw"][live]].astype(int).tolist())
+                )
             # The bound `dt` was sized against is the AV-augmented signal speed, so
             # the audit has to measure THAT, not the bare EOS one — otherwise it
             # under-reports exactly where AV is strongest (the shock front) and
@@ -1576,6 +1934,19 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
         print(f"[mpm] J-trace written: {tr['path']}")
 
     # --- did the a-priori substep sizing actually hold? ---------------------
+    if audit["guard_n"] > 0:
+        names = materials.id_to_name()
+        who = ", ".join(names.get(str(m), f"id{m}") for m in audit["guard_mats"])
+        print(
+            f"[mpm] NOTE: the Mie-Grueneisen POLE GUARD engaged on LIVE material — up to "
+            f"{audit['guard_n']} particle(s) at once, in: {who}. Below J_sw the law is "
+            f"the MURNAGHAN fallback, i.e. the pre-milestone-13 cold curve with no "
+            f"thermal pressure. That is by design (the u_s-c0-s fit has no meaning past "
+            f"its own pole — see MG_F_SWITCH), and it is EXPECTED for nera_filler "
+            f"(PHYSICS §3.6.2). It is NOT expected for the jet or the plates: if this "
+            f"names copper_jet or rha, milestone 13 is quietly not in effect where it "
+            f"is supposed to matter. Do not silence this by lowering MG_F_SWITCH."
+        )
     if audit["J"] <= J_FLOOR:
         print(
             f"[mpm] WARNING: LIVE material reached J={audit['J']:.4f}, at or below "

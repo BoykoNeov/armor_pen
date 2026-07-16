@@ -24,15 +24,31 @@ from ballistics_solver import materials, mpm
 wp = pytest.importorskip("warp")
 
 
+def _mg_array(mat):
+    """A 1-element `mpm.MGParams` array, from the solver's own derivation."""
+    import numpy as _np
+    d = mpm._mg_params(mat)
+    a = _np.zeros(1, dtype=mpm.MGParams().numpy_dtype())
+    for k in ("s", "g0", "grho", "A", "C", "J_sw"):
+        a[k] = d[k]
+    return wp.array(a, dtype=mpm.MGParams, device="cpu")
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _warp_cpu():
     wp.init()
 
 
 @wp.func
-def _av_xx(F: wp.mat22, C: wp.mat22, mu: float, lam: float, rho0: float,
-           l: float, c_q: float, c_l: float):
-    return mpm._av_tau(F, C, mu, lam, rho0, l, c_q, c_l)[0, 0]
+def _av_xx(F: wp.mat22, C: wp.mat22, mu: float, lam: float, mg: mpm.MGParams,
+           rho0: float, l: float, c_q: float, c_l: float):
+    # Milestone 13: the AV sound speed is now the Mie-Grueneisen one, so `_av_tau`
+    # takes the particle's internal energy and its MG constants. e=0 throughout this
+    # file — these tests pin q's SHAPE (zero coefficients => identically zero;
+    # expansion => zero; compression => positive; rate scaling), none of which depends
+    # on the thermal state. `mg` comes from `mpm._mg_params`, the solver's own single
+    # derivation, so this cannot drift from what ships.
+    return mpm._av_tau(F, C, mu, lam, 0.0, mg, rho0, l, c_q, c_l)[0, 0]
 
 
 @wp.kernel
@@ -41,6 +57,7 @@ def _av_kernel(
     C: wp.array(dtype=wp.mat22),
     mu: float,
     lam: float,
+    mgp: wp.array(dtype=mpm.MGParams),
     rho0: float,
     l: float,
     c_q: float,
@@ -48,7 +65,7 @@ def _av_kernel(
     out: wp.array(dtype=float),
 ):
     i = wp.tid()
-    out[i] = _av_xx(F[i], C[i], mu, lam, rho0, l, c_q, c_l)
+    out[i] = _av_xx(F[i], C[i], mu, lam, mgp[0], rho0, l, c_q, c_l)
 
 
 def _run(Fs, Cs, mat_name="copper_jet", c_q=1.5, c_l=0.5, l=0.39):
@@ -61,7 +78,7 @@ def _run(Fs, Cs, mat_name="copper_jet", c_q=1.5, c_l=0.5, l=0.39):
         inputs=[
             wp.array(np.asarray(Fs, dtype=np.float32), dtype=wp.mat22, device="cpu"),
             wp.array(np.asarray(Cs, dtype=np.float32), dtype=wp.mat22, device="cpu"),
-            mu_s, lam_s, mat.density, l, c_q, c_l, out,
+            mu_s, lam_s, _mg_array(mat), mat.density, l, c_q, c_l, out,
         ],
     )
     return out.numpy()
