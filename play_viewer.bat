@@ -63,7 +63,7 @@ if "%c2%"=="4" set "COLOR=stress"
 
 echo.
 echo Launching %CACHE%  (color: %COLOR%) ...
-echo Controls:  Space=pause  Left/Right=step  Up/Down=speed  C=cycle color
+echo Controls:  Space=pause  Left/Right=step  HUD slider or Up/Down=speed  C=cycle color
 echo            Wheel or +/-=zoom  Drag(middle/right)=pan  F=fit  R=restart  Esc=quit
 "%GODOT%" --path "%~dp0visualizer" -- --cache "%~dp0caches\%CACHE%" --color %COLOR%
 if errorlevel 1 pause

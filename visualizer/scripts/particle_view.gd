@@ -34,13 +34,19 @@ extends MultiMeshInstance2D
 @export var point_size: float = 1.0
 
 ## Simulated playback rate: how many baked frames to advance per wall second.
+## 0 freezes playback. Retune live with the HUD speed slider or ↑/↓.
 ##
 ## Default 10, not 24, because THIS is what decides smoothness — not the number of
 ## frames in the cache. _show_frame costs ~100 ms at 137k particles and ~220 ms at
 ## 287k, so above ~10 fps (and ~4.5 on the heaviest decks) the viewer cannot draw
 ## every baked frame and starts skipping them — which discards exactly the extra
 ## resolution the finer frame_dt was baked for. A lower rate plays every frame:
-## slower in wall-clock, but actually smooth. ↑/↓ retune it per deck.
+## slower in wall-clock, but actually smooth.
+##
+## The slider deliberately reaches far past that ceiling (up to MAX_FPS): once a
+## deck's crater has formed, skipping frames to scrub through the tail quickly is
+## a legitimate thing to want, and trading smoothness for wall-clock is the
+## viewer's call to offer — not something to cap on the sim's behalf.
 @export var frames_per_second: float = 10.0
 
 ## Fraction of the viewport the domain fills (1.0 = edge to edge).
@@ -100,12 +106,22 @@ const ZOOM_STEP := 1.15
 const MIN_ZOOM_REL := 0.25
 const MAX_ZOOM_REL := 40.0
 
+# Playback speed slider. Position 0 is a hard stop; positions 1..SPEED_NOTCHES map
+# logarithmically onto MIN_FPS..MAX_FPS so every notch is the same *ratio* — a
+# linear slider would spend 95% of its travel above the ~10 fps the renderer can
+# actually sustain, making the useful range unpickable.
+const MIN_FPS := 1.0
+const MAX_FPS := 240.0
+const SPEED_NOTCHES := 100.0
+
 var _camera: Camera2D
 var _fit_zoom: float = 1.0     # zoom that frames the whole domain (the F-key reset)
 var _fit_center := Vector2.ZERO
 var _hud_info: Label
 var _legend_box: HBoxContainer
 var _timeline_fill: ColorRect
+var _speed_slider: HSlider
+var _hud_panel: PanelContainer
 
 # Color modes reachable with the C key: material_id plus every scalar
 # attribute in the manifest that isn't a position.
@@ -161,7 +177,10 @@ func _ready() -> void:
 
 
 func _process(delta: float) -> void:
-	if not _playing:
+	# Two independent ways to be stopped, and they stay independent: SPACE owns
+	# _playing, the slider owns frames_per_second. Because pausing never zeroes the
+	# speed, resuming needs no saved value — it just picks the slider back up.
+	if not _playing or frames_per_second <= 0.0:
 		return
 	_accum += delta * frames_per_second
 	if _accum < 1.0:
@@ -189,6 +208,14 @@ func _process(delta: float) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseButton and event.pressed:
+		# The HUD owns the pointer over its own panel. Godot's Slider.gui_input
+		# handles a wheel notch WITHOUT calling accept_event(), so the notch also
+		# arrives here — without this guard one scroll over the speed slider
+		# retunes the speed AND zooms the camera 1.15x (measured). Guarding the
+		# whole panel, not just the slider, also stops scroll-over-legend from
+		# yanking the view.
+		if _hud_panel != null and _hud_panel.get_global_rect().has_point(event.position):
+			return
 		match event.button_index:
 			MOUSE_BUTTON_WHEEL_UP:
 				_zoom_at_cursor(ZOOM_STEP)
@@ -233,11 +260,11 @@ func _unhandled_input(event: InputEvent) -> void:
 			_frame = (_frame - 1 + _loader.frame_count) % _loader.frame_count
 			_show_frame(_frame)
 		KEY_UP:
-			frames_per_second = minf(frames_per_second * 1.5, 240.0)
-			_update_hud()
+			# maxf guards the slider-at-0 case: 0 * 1.5 is still 0, so a bare
+			# multiply would leave ↑ unable to restart a stopped viewer.
+			_set_fps(maxf(frames_per_second, MIN_FPS) * 1.5)
 		KEY_DOWN:
-			frames_per_second = maxf(frames_per_second / 1.5, 1.0)
-			_update_hud()
+			_set_fps(frames_per_second / 1.5)
 		KEY_C:
 			var i := (_color_modes.find(color_by) + 1) % _color_modes.size()
 			_set_color_mode(_color_modes[i])
@@ -514,6 +541,7 @@ func _setup_hud() -> void:
 	add_child(layer)
 
 	var panel := PanelContainer.new()
+	_hud_panel = panel
 	panel.position = Vector2(12, 10)
 	var style := StyleBoxFlat.new()
 	style.bg_color = Color(0.04, 0.05, 0.08, 0.88)
@@ -537,13 +565,15 @@ func _setup_hud() -> void:
 	_hud_info.add_theme_color_override("font_color", Color(0.75, 0.78, 0.84))
 	box.add_child(_hud_info)
 
+	box.add_child(_make_speed_row())
+
 	_legend_box = HBoxContainer.new()
 	_legend_box.add_theme_constant_override("separation", 10)
 	box.add_child(_legend_box)
 
 	var keys := Label.new()
-	keys.text = "space play/pause   ←/→ step   ↑/↓ speed   C color   R restart   " \
-		+ "wheel/±  zoom   drag pan   F fit   Esc quit"
+	keys.text = "space play/pause   ←/→ step   slider or ↑/↓ speed   C color   " \
+		+ "R restart   wheel/±  zoom   drag pan   F fit   Esc quit"
 	keys.add_theme_font_size_override("font_size", 11)
 	keys.add_theme_color_override("font_color", Color(0.55, 0.58, 0.64))
 	box.add_child(keys)
@@ -562,6 +592,64 @@ func _setup_hud() -> void:
 	layer.add_child(_timeline_fill)
 
 	_update_hud()
+
+
+# --- playback speed ----------------------------------------------------------
+
+## The HUD's "stop ← → fast" row. The slider writes only frames_per_second; SPACE
+## still owns _playing, so the two stops compose instead of fighting.
+func _make_speed_row() -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 7)
+
+	var caption := Label.new()
+	caption.text = "speed"
+	caption.add_theme_font_size_override("font_size", 12)
+	caption.add_theme_color_override("font_color", Color(0.78, 0.80, 0.85))
+	row.add_child(caption)
+
+	_speed_slider = HSlider.new()
+	_speed_slider.min_value = 0.0
+	_speed_slider.max_value = SPEED_NOTCHES
+	_speed_slider.step = 1.0
+	_speed_slider.custom_minimum_size = Vector2(168, 0)
+	_speed_slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	# ←/→ are frame-stepping. A focused slider treats them as its own decrement /
+	# increment and would swallow them the moment the slider is clicked.
+	_speed_slider.focus_mode = Control.FOCUS_NONE
+	_speed_slider.set_value_no_signal(_fps_to_slider(frames_per_second))
+	_speed_slider.value_changed.connect(_on_speed_changed)
+	row.add_child(_speed_slider)
+
+	return row
+
+
+func _on_speed_changed(v: float) -> void:
+	frames_per_second = _slider_to_fps(v)
+	_update_hud()
+
+
+## Write the speed from code (↑/↓) and mirror it onto the slider.
+## set_value_no_signal, or the slider's value_changed would call straight back
+## into _slider_to_fps and quantize the value a second time.
+func _set_fps(fps: float) -> void:
+	frames_per_second = clampf(fps, MIN_FPS, MAX_FPS)
+	if _speed_slider != null:
+		_speed_slider.set_value_no_signal(_fps_to_slider(frames_per_second))
+	_update_hud()
+
+
+func _slider_to_fps(v: float) -> float:
+	if v < 0.5:
+		return 0.0     # hard stop, the one position that is not on the fps curve
+	return MIN_FPS * pow(MAX_FPS / MIN_FPS, (v - 1.0) / (SPEED_NOTCHES - 1.0))
+
+
+func _fps_to_slider(fps: float) -> float:
+	if fps <= 0.0:
+		return 0.0
+	var t := log(fps / MIN_FPS) / log(MAX_FPS / MIN_FPS)
+	return clampf(1.0 + t * (SPEED_NOTCHES - 1.0), 1.0, SPEED_NOTCHES)
 
 
 func _rebuild_legend() -> void:
@@ -624,9 +712,12 @@ func _update_hud() -> void:
 	# Zoom reads as a percentage of the fit-the-domain baseline, so 100% is
 	# always "the whole field" no matter how big the scenario's domain is.
 	var zoom_pct := 100.0 if _camera == null else _camera.zoom.x / _fit_zoom * 100.0
-	_hud_info.text = "frame %d / %d    t = %.3f ms    %.0f fps    zoom %.0f%%%s" % [
-		_frame, _loader.frame_count - 1, t_ms, frames_per_second, zoom_pct,
-		"" if _playing else "    ⏸ paused",
+	# Below 10 fps a whole-number readout would show the bottom of the slider's
+	# travel as a run of identical "1 fps" steps, so keep a decimal down there.
+	var fps_txt := String.num(frames_per_second, 0 if frames_per_second >= 10.0 else 1)
+	var stopped := "" if _playing and frames_per_second > 0.0 else "    ⏸ paused"
+	_hud_info.text = "frame %d / %d    t = %.3f ms    %s fps    zoom %.0f%%%s" % [
+		_frame, _loader.frame_count - 1, t_ms, fps_txt, zoom_pct, stopped,
 	]
 	if _timeline_fill != null and _loader.frame_count > 1:
 		_timeline_fill.anchor_right = float(_frame) / float(_loader.frame_count - 1)

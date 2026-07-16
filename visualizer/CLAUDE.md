@@ -44,7 +44,20 @@ runs a per-particle GDScript loop making three `set_instance_*` calls each, plus
 Above that rate `_process` skips baked frames — which **throws away exactly the
 resolution the uniform `frame_dt = 2.0e-7` was baked for**. Hence
 `frames_per_second` defaults to 10, not 24: it is better to play every frame
-slowly than to skip. `↑`/`↓` retunes per deck.
+slowly than to skip. The HUD speed slider (or `↑`/`↓`) retunes per deck.
+
+The slider spans 0 (hard stop) and 1..240 fps, mapped **logarithmically** — a
+linear travel would spend most of its length above the sustainable rate. It runs
+well past that ceiling on purpose: skipping frames to scrub through a deck's tail
+is a legitimate want, and "too slow" is a real complaint on a 700-frame deck at
+10 fps (70 s of wall clock for a ~0.14 ms event). Smooth is the *default*, not a
+cage.
+
+**Pause and speed are deliberately independent.** `SPACE` owns `_playing`; the
+slider owns `frames_per_second`, and 0 fps freezes `_process` on its own. Because
+pausing never zeroes the speed, resuming needs no saved-speed variable — it just
+picks the slider back up. Don't "simplify" these into one state; that's what
+forces a `_last_speed` and three coupled handlers.
 
 *(Those figures come from the `--shots` path, which reads two frames per call
 because its frames are non-sequential — sequential playback reads one, so the true
