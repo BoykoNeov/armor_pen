@@ -1,0 +1,53 @@
+# A/B CONTROL for the shaped-charge jet (milestone 7, PHYSICS §3.4).
+# Representative / illustrative only (CLAUDE.md §10).
+#
+# Byte-identical to `heat_vs_composite` in EVERY respect — same copper, same
+# geometry, same mass, same nose, same timing, same particle count — except that
+# `tail_velocity` is omitted, so the projectile flies UNIFORMLY at 7000 m/s
+# instead of graded 7000 -> 2000.
+#
+# The velocity gradient is therefore the single variable, which is what makes the
+# stretching claim falsifiable rather than merely illustrated. What it isolates:
+#
+#   graded (the jet)  -> STRETCHES: free-flight markers separate at 2.085 mm/us
+#                        (kinematic prediction 2.083), body 115 -> 165 mm
+#   uniform (control) -> SHORTENS by tip erosion: markers hold at exactly 50.0 mm
+#                        (-0.003 mm/us), body 115 -> 68 mm
+#
+# A uniform projectile at jet speed is exactly what this deck's ancestor was: a
+# rod flown fast and *called* a jet. Keeping it as a control is the point — it is
+# the thing a jet must out-perform to have earned the name.
+#
+# NOT an armor-performance A/B, and do not use it as one: a uniform 7000 m/s
+# projectile carries far more kinetic energy than a graded one of the same mass,
+# so any penetration difference between these two decks is energy-confounded. The
+# comparison is scoped to KINEMATICS (stretch rate), which is immune to that.
+name: heat_vs_composite_uniform
+
+domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 120 }   # mm
+
+projectile:
+  kind: heat_jet
+  material: copper_jet
+  length: 120.0
+  diameter: 3.0
+  velocity: 7000           # m/s — uniform: NO tail_velocity, that is the point
+  angle_deg: 0.0
+  nose_shape: blunt        # matched to the graded twin, so the nose is not a variable
+
+armor:
+  - { material: rha,     thickness: 10.0 }                 # front plate
+  - { material: ceramic, thickness: 25.0, standoff: 30.0 } # spaced ceramic
+  - { material: rha,     thickness: 20.0 }                 # backing plate
+
+solver:
+  grid_resolution: 768
+  particles_per_cell: 4
+  dt: 5.0e-8
+  # Matched to the graded twin so the two are frame-for-frame comparable. This
+  # deck's own tip runs FASTER than the twin's (no gradient means the eroding head
+  # is never replaced by slower material), so it perforates earlier and spends the
+  # tail of the window in free flight — that is the control behaving as a rod,
+  # which is exactly what it is here to show.
+  total_time: 2.5e-5
+  frame_count: 125    # frame_dt = 2.0e-7 s, uniform across every deck

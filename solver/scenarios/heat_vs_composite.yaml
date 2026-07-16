@@ -47,13 +47,21 @@ solver:
   grid_resolution: 768   # tracks the x-extent to hold dx ~= 0.39 mm
   particles_per_cell: 4
   dt: 5.0e-8          # substep dt (CFL-bound); NOT frame_dt
-  # ~25 us, and this window is set by the DOMAIN, not by the event.
+  # ~25 us, sized to the jet's TIP passage (measured on this deck, not inherited
+  # from the rod stand-in this replaced):
+  #   t= 0.4 us  tip crosses the front face (x=150)
+  #   t= 9.2 us  tip reaches the spaced ceramic (x=190)
+  #   t=23.0 us  tip clears the back of the stack (x=235) — perforation
+  #   t=24.8 us  end of window, tip at 241 mm, still 59 mm clear of the far wall
+  # so nothing is pinned against the _g2p clamp (the "debris piled against an
+  # invisible wall" artifact) and the whole perforation is in frame.
   #
-  # At 7 mm/us the tip crosses the stack (backs onto x=235) in ~17 us and then
-  # eats the remaining 65 mm of domain in ~9 us. A 40 us window ran the tip into
-  # the far wall at ~30 us, where the _g2p clamp pinned it for the last quarter of
-  # the bake — the "debris piled against an invisible wall" artifact this pass
-  # exists to remove. 25 us stops with the tip clear of the clamp.
+  # Note the penetration front advances at only ~3-5 mm/us, well under the 7 mm/us
+  # seeded tip speed, and that is not a bug: the tip ERODES, so the leading
+  # material is continuously consumed and replaced by material from further back —
+  # which the velocity gradient makes slower. A graded jet decelerates its own
+  # penetration front. This is why 25 us covers a passage that a 7 mm/us rod would
+  # have finished far sooner.
   #
   # KNOWN LIMIT, and grading makes it structural rather than incidental: the jet
   # does NOT fully transit the stack in this window, and no sane domain lets it.

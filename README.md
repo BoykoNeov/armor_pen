@@ -99,11 +99,13 @@ tip-to-tail **velocity gradient**, and the rest emerges. Because each element fl
 at its own constant speed, the jet **stretches**, and that is kinematic, so it is
 predictable in advance and therefore falsifiable: free-flight markers separate at
 **2.085 mm/µs measured against 2.083 predicted (+0.1%)**. The control is the
-convincing half — with the gradient as the *only* change, a uniform projectile's
-markers stay **exactly** 50 mm apart and its body *shortens* 115 → 68 mm by erosion,
-where the jet stretches to 165 mm. Fluid-like erosion came free: at a 7 km/s
-stagnation point copper's yield is ~1000× below the pressure, so the ordinary von
-Mises return mapping caps deviatoric stress near zero by itself.
+convincing half — `heat_vs_composite_uniform` is the same deck with the gradient
+*omitted and nothing else changed*, and its body **shortens 40 mm** by tip erosion
+where the jet **stretches 40 mm**: symmetric, opposite in sign. The rate reproduces
+on tungsten too (+0.0%), a 7.5× different yield — which is what "kinematic" has to
+mean, since the prediction uses only the seeded velocities. Fluid-like erosion came
+free: at a 7 km/s stagnation point copper's yield is ~1000× below the pressure, so
+the ordinary von Mises return mapping caps deviatoric stress near zero by itself.
 
 Two things it does **not** claim. **Particulation never fires** — a real jet
 eventually tears into a fragment train, and this one stays continuous. The

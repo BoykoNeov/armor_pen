@@ -474,23 +474,35 @@ particle count and keeps particles persistent (CACHE_FORMAT §5), so a particle
 index is a material label. Two 4 mm bands in the free-flight body, at 60 mm and
 110 mm behind the tip:
 
-| deck | predicted growth | measured | separation |
-|---|---|---|---|
-| uniform 7000 (control) | 0 mm/µs | **−0.003 mm/µs** | 50.0 → 50.0 mm |
-| graded 7000→2000, tungsten | 2.083 mm/µs | **2.084 mm/µs** (+0.0 %) | 50.0 → 101.7 mm |
-| graded 7000→2000, copper | 2.083 mm/µs | **2.085 mm/µs** (+0.1 %) | 50.0 → 101.7 mm |
+The shipped A/B is `heat_vs_composite` against `heat_vs_composite_uniform` — the
+same copper, geometry, mass, nose, timing and particle count (9210 both), with
+`tail_velocity` omitted in the control, so **the gradient is the only variable**:
 
-The control is the decisive half: with the gradient as the *only* change (same
-deck, same material, same geometry, same timing), a uniform projectile's markers
-stay **exactly** 50 mm apart and its body **shortens** 115 → 68 mm by tip erosion,
-while the graded one **stretches** to 165 mm. Residual from a straight line is
-0.020 mm (tungsten) and 0.001 mm (copper) — ballistic free flight.
+| deck | material | predicted | measured | separation | body length |
+|---|---|---|---|---|---|
+| `heat_vs_composite_uniform` | copper | 0 mm/µs | **−0.064 mm/µs** | 50.0 → 45.3 mm | 117.5 → **77.5** mm |
+| `heat_vs_composite` (the jet) | copper | 2.083 mm/µs | **2.085 mm/µs** (+0.1 %) | 50.0 → 101.7 mm | 117.5 → **157.9** mm |
+| *(development, tungsten)* | tungsten | 0 mm/µs | **−0.003 mm/µs** | 50.0 → 50.0 mm | 115.5 → **68.3** mm |
+| *(development, tungsten)* | tungsten | 2.083 mm/µs | **2.084 mm/µs** (+0.0 %) | 50.0 → 101.7 mm | 115.5 → **165.1** mm |
 
-That copper/tungsten difference is itself a physical result, not noise. Tungsten's
-1500 MPa yield transmits tensile drag along the stretching jet — enough to
-*accelerate its own tail* by ~5 % (2248 → 2371 m/s) as the faster material ahead
-pulls it. Copper, at 200 MPa, transmits ~20× less and flies almost perfectly
-ballistically. A real jet is soft copper for exactly this reason.
+The control is the decisive half: the jet's body **stretches** +40.4 mm while the
+control's **shortens** −40.0 mm by tip erosion — near-perfectly symmetric, and
+opposite in sign. Residual from a straight line is 0.001 mm (copper) and 0.020 mm
+(tungsten), i.e. ballistic free flight.
+
+**The rate reproduces across two materials whose yields differ 7.5×** (+0.1 % and
++0.0 %). That is not redundancy — it is the point: the prediction is computed from
+the *seeded velocities alone*, so a material-independent result is what "kinematic"
+has to mean. If strength mattered to the rate, these two rows would disagree.
+
+**Strength does show up, just not in the rate — and it is a real finding, not
+noise.** The two controls differ: stiff tungsten holds its markers at −0.003 mm/µs,
+where soft copper *contracts* at −0.064 mm/µs as the impact shock runs back into
+it. The same coupling appears in tension: tungsten's 1500 MPa yield drags along the
+stretching jet hard enough to **accelerate its own tail** ~5 % (2248 → 2371 m/s) as
+the faster material ahead pulls it, while copper at 200 MPa transmits ~20× less and
+flies almost perfectly ballistically (residual 0.001 vs 0.020 mm). Tensile coupling
+scales with yield. A real jet is soft copper for exactly this reason.
 
 **Fluid-like erosion is free.** At a 7 km/s tip the stagnation pressure is
 ~0.5·ρv² ≈ 2×10⁵ MPa, about **1000× copper's yield**, so von Mises return-mapping

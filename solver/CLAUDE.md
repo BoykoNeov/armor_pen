@@ -180,11 +180,22 @@ Grow the reference MLS-MPM incrementally, validating visually with
    floor.
    - **Verified (PHYSICS §3.4): the jet stretches at the kinematic rate, +0.1 %.**
      Measured Lagrangianly (persistent particle indices = material labels), because
-     tip-to-tail length is confounded by tip erosion. Free-flight markers 60 mm and
-     110 mm behind the tip separate at **2.085 mm/µs measured vs 2.083 predicted**;
-     the **uniform control**, with the gradient as the only difference, holds them
-     at **exactly 50 mm** (−0.003 mm/µs) and its body **shortens** 115 → 68 mm by
-     erosion where the jet **stretches** to 165 mm.
+     tip-to-tail length is confounded by tip erosion. The A/B is
+     `heat_vs_composite` vs the committed twin **`heat_vs_composite_uniform`** —
+     same copper, geometry, mass, nose, timing, particle count (9210 both), with
+     `tail_velocity` omitted, so the gradient is the ONLY variable. Free-flight
+     markers 60/110 mm behind the tip separate at **2.085 measured vs 2.083
+     predicted mm/µs**; the jet's body **stretches +40.4 mm** (117.5 → 157.9) where
+     the control's **shortens −40.0 mm** (117.5 → 77.5) by erosion — symmetric and
+     opposite in sign. The rate also reproduces on **tungsten** (+0.0 %), a 7.5×
+     different yield: a kinematic prediction computed from seeded velocities alone
+     MUST be material-independent, and it is.
+   - **Strength shows up off the rate, and it is signal:** the tungsten control
+     holds its markers (−0.003 mm/µs) where the softer copper control *contracts*
+     (−0.064) as the shock runs back into it; in tension, tungsten drags on its own
+     stretching jet hard enough to accelerate its tail ~5 % (2248 → 2371 m/s) while
+     copper transmits ~20× less (straight-line residual 0.001 vs 0.020 mm). Tensile
+     coupling scales with yield — which is *why* a real jet is soft copper.
    - **Fluid-like erosion needed no work:** at a 7 km/s stagnation point (~2e5 MPa)
      copper's 200 MPa yield is ~1000× smaller, so the existing von Mises return
      mapping caps deviatoric stress near zero on its own. The advisor's predicted
