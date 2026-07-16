@@ -927,6 +927,33 @@ era_inert. The bulge change is attributable to **plasticity, not spall**: the
 plasticity-only control gives near-identical plate separation (53.8 vs 53.6 mm
 beside the channel) with 0 % spall instead of 18.65 %.
 
+> **Read that as "more cohesive than the shredding twin, therefore ship-safe" — NOT
+> as "the bulge is preserved", which is NOT shown.** The distinction is the evidence
+> each rests on:
+> - **Spall %** is measured over **all** filler particles and is the claim's spine.
+>   It is the one figure here that is *not* live-set-confounded, and it is what
+>   establishes that the arm did not collapse into `era_filler_inert`.
+> - **Coherent % and x-extent** are computed over **live** particles, so they inherit
+>   the same selection effect that hands era_inert its flattering 0.6813 worst-`J`.
+>   Directionally right, quantitatively soft.
+> - **The separation figures are from a probe that reads exactly 18.000 mm at `t=0`
+>   but cannot reproduce §3.3's published 16.1/21.1 even on the PRE-M12 bake** (it
+>   gets 14.1/13.3 — opposite sign beside the channel). The plasticity-vs-spall
+>   *attribution* is sound because it compares two arms through the *same* probe; the
+>   absolute millimetres are not, and M12 also flipped the baseline's own separation
+>   behaviour (13.3 → 53.6). **The bulge GEOMETRY is not re-established, and
+>   reconciling or rebuilding that metric is genuine documentation debt** — it is the
+>   first thing to fix for anyone revisiting the NERA arm.
+
+**A tidy corroboration, and a diagnosis of what was wrong before.** `_clamp_reactive_v`
+no longer caps this filler (it is not reactive), so a velocity runaway was the thing to
+check. There is none — and the numbers say why the clamp was needed at all. Pre-M12 the
+filler reached the **full 3000 mm/ms clamp**, nearly **2× the 1600 mm/ms rod driving
+it**: a solid that cannot yield stores the shock and springs. Post-M12 it peaks at
+**1586 mm/ms** — 53 % of the removed clamp, just under the rod's own speed. **A filler
+that dissipates does not out-run the thing hitting it.** The fix removed the clamp's
+*reason*, not merely its effect.
+
 **`era_filler_inert`'s lovely 0.6813 is a trap, not a target.** Its filler is not
 uncrushed — the crushed particles spall instantly and leave the *live* set.
 `worst live J` is **not comparable across arms with different `damage_threshold`**:

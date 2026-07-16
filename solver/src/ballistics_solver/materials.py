@@ -191,6 +191,13 @@ LIBRARY: dict[str, Material] = {
     # and its justification (runaway from the F-independent detonation source) never
     # applied to a filler with no detonation.
     #
+    # The fix removed the clamp's REASON, not just its effect, and the measurement is
+    # a tidy statement of what was wrong before: pre-M12 the filler reached the full
+    # 3000 mm/ms clamp — nearly 2x the 1600 mm/ms rod that drove it, because a solid
+    # that cannot yield stores the shock and springs. Post-M12 it peaks at 1586, i.e.
+    # 53 % of the removed clamp and just under the rod's own speed. A filler that
+    # dissipates does not out-run the thing hitting it.
+    #
     # BOTH FIELDS BELOW ARE NOW LIVE — they were dead before, and neither is tuned:
     #   yield_strength  50 MPa — unchanged from the value the dead field already
     #                   carried, deliberately NOT re-picked to land an answer.
