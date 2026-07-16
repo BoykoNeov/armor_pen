@@ -642,27 +642,48 @@ The ceramic row is the falsifiable one, and it is also the only one worth quotin
 to four decimals. §3.4 argued that ceramic fails at `J≈0.98` (its brittle threshold
 is ~3 GPa, i.e. mild compression), where *any* monotonic volumetric law shares the
 same tangent bulk modulus and agrees to <1 % — so no EOS could move ceramic
-comminution. It held. The jet tip rides `J≈0.93` in free flight and dives to ~0.43
-only at the ceramic interface (t≈10 µs): impact-driven compression that
-**recovers**, not a permanently crushed tip.
+comminution. It held. The jet tip rides `J≈0.93` in free flight and dives only at
+an interface: impact-driven compression that **recovers**, not a permanently
+crushed tip.
 
-**The tip `J` is not timestep-converged, and that is a result rather than a
-caveat.** It rises monotonically as the substep shrinks:
+**⚠️ REWRITTEN BY MILESTONE 11 (§3.9). What this section used to call "the tip
+`J`" is the FRONT-PLATE IMPACT TRANSIENT, and comparing it to `J_eq = 0.6056` was
+a category error.** The old text quoted a dt table (0.3923 / 0.3971 / 0.4315 at
+47 / 98 / 240 substeps) "against an equilibrium `J_eq = 0.6056`", concluded the
+gap was an undamped **shock ring**, and named the ring the dominant tip defect.
+Milestone 11 built the artificial viscosity that was supposed to fix it, measured
+the tip **every substep** (frame-cadence sampling *aliases* the ring — nothing at
+frame rate can see it), and found:
 
-| substeps/frame | tip `J` | ring ratio `J / J_eq` |
-|---|---|---|
-| 47 | 0.3923 | 0.648 |
-| 98 | 0.3971 | 0.656 |
-| 240 *(shipped)* | 0.4315 | 0.713 |
+| what, measured per substep | AV off |
+|---|---|
+| front RHA plate impact, t≈0.4 µs | `J` **0.4589** |
+| ceramic interface impact, t≈9.8 µs | `J` 0.5704 |
+| **steady penetration**, t≈12 µs | `J` **0.6287** |
 
-against an equilibrium `J_eq = 0.6056`. Refining `dt` resolves the **shock ring**
-(the second honest limit below) and the overshoot shrinks toward the equilibrium —
-so tip-`J` measures the ring, not the EOS. Quote it as **~0.43 and dt-dependent**;
-the four-decimal figure this section first carried was measured at 98 substeps and
-was superseded by its own shipped cache. The *conclusion* only strengthens:
-0.0706 → ~0.43 is a bigger improvement than 0.0706 → 0.397. (An earlier "1.2 %
-converged" claim here was drawn from the 47 → 98 pair alone; 98 → 240 moves it
-**+8.7 %**. Two points are not a convergence study.)
+* The whole-bake "worst live `J`" (the CFL audit's number, and this table's old
+  ~0.43) is the **first impact shock**, not the steady stagnation point — and not
+  the ceramic interface either, which this section previously claimed owned it.
+* `J_eq = 0.6056` is a **steady** stagnation prediction (`p_stag = ½ρv²`). The
+  sustained penetration state actually sits at ~0.63 — just *above* it, which is
+  the right side, since by t≈12 µs the material arriving is from further back in a
+  7000→2000 graded jet and so is slower than the tip. Consistency, **not** a
+  precision check: do not quote an agreement percentage, because the arriving
+  velocity is not 7000.
+* So the ~30 % "gap" was mostly **two different physical states being compared**,
+  plus coarse-`dt` error. An impact shock is genuinely more severe than steady
+  stagnation — `mpm.py`'s own CFL comment says so.
+* **The dt-drift converges on its own by ~400 substeps, with AV off**
+  (0.4615 / 0.4595 / 0.4652 at 400 / 800 / 1600 — flat to ±0.6 %). The 47→240
+  climb was simply the coarse-`dt` regime; the shipped deck runs at 240, just
+  inside it. Those extrema are themselves aliased, so read them only as "the
+  frame-level state is dt-converged by ~400".
+
+Quote the tip as **~0.46 at first impact, ~0.63 in steady penetration** — and
+never to four decimals: it is a single-particle extremum over ~179 k particles and
+150 frames, which wobbles ~1 % run to run (the repo's ≤0.11 % scatter floor is for
+*aggregates* and does not license precision here). That was milestone 8's exact
+trap and it is easy to fall into twice.
 
 **Honest limits — the two that remain.**
 
@@ -675,14 +696,13 @@ converged" claim here was drawn from the 47 → 98 pair alone; 98 → 240 moves 
   across the jet's own 2→7 km/s gradient the spread went from ~1.70× to ~1.37×.
   **Anything that reads absolute pressure, or sweeps velocity, still inherits
   this.** Fixing it properly means Mie-Grüneisen and real per-material `c₀/s/Γ`.
-- **No artificial (shock) viscosity, so the front rings — and this is now the
-  dominant tip defect.** MPM resolves a shock across a couple of cells with nothing
-  to damp the elastic overshoot, so the tip overshoots its own equilibrium
-  (`J_eq=0.6056`): ring ratio **0.713** at the shipped 240 substeps, and still
-  climbing toward 1 as `dt` falls. That the overshoot is a *numerical* ring rather
-  than physics is exactly what the dt table above shows. It is a different defect
-  from the missing EOS, and it is what `EOS_CFL_J_MARGIN` is sized against.
-  Standard fix: von Neumann–Richtmyer artificial bulk viscosity. Not done.
+- **~~No artificial (shock) viscosity, so the front rings — and this is now the
+  dominant tip defect.~~ RETIRED ON EVIDENCE by milestone 11 (§3.9).** The ring is
+  real but it is **~0.9 % peak-to-peak** on `J`, carrying ~8 % of an already tiny
+  residual — it cannot explain a ~30 % discrepancy, and §3.5 above explains what
+  did. Artificial viscosity is now implemented (von Neumann–Richtmyer) and ships
+  **default off**, because damping ~1 % is not worth +57 % substeps. It is kept as
+  a prerequisite for Mie-Grüneisen, not as a fix.
 - For reference: copper's Hugoniot poles at `J = 1 − 1/s = 0.328`, i.e. real copper
   essentially cannot be compressed past that. The measured tip at ~0.43 sits above
   it — severe, but inside physics, where the old law's 0.0706 was not.
@@ -808,9 +828,12 @@ The convergence is the claim; **0.04 % is the 7 km/s value, not a flat property 
 the model.** Note the two fractional shortfalls only *coincide* at 7 km/s — at
 2500 they are 0.910 vs 0.868, plainly material-dependent, because that is where
 strength still bites and the two arms' yields differ 7.5×. What survives at the top
-of the range is a shortfall the arms share (the cold-curve pressure error of §3.5
-and the undamped shock ring); residual **strength** is what makes the low-v end
-differ, so it is the thing that cancels *last*, not something that cancels at all.
+of the range is a shortfall the arms share — chiefly the cold-curve pressure error
+of §3.5, plus the grid resolution of §3.8; residual **strength** is what makes the
+low-v end differ, so it is the thing that cancels *last*, not something that
+cancels at all. (This sentence used to list "the undamped shock ring" as a
+component. §3.9 measured that ring at **~0.9 % peak-to-peak** and it is not a
+plausible contributor at this size — the attribution, not the trend, was wrong.)
 
 **The trend is not a timestep artifact — controlled, not argued.** The production
 decks are CFL-sized, and the EOS-aware bound scales with stagnation pressure ~`v²`,
@@ -1008,6 +1031,104 @@ cells-across is dominant but not the only term.
 - **The shipped family stays at `dx=0.375`** because the same four decks at
   `dx=0.1875` would cost ~44 GB of cache against ~11 GB. The convergence decks carry
   the physics; the shipped decks are for playback and for the *shape* of the trend.
+
+---
+
+### 3.9 Artificial (shock) viscosity — and the defect that wasn't (milestone 11)
+
+Milestone 8 left a named, documented defect: *"no artificial viscosity, so the
+front rings — and this is now the dominant tip defect."* Milestone 11 built the
+standard fix, measured it, and **retired the diagnosis on evidence**. The feature
+ships **default off**. The deliverable is the measurement, not the feature — the
+same shape as §3.4 (the SPH hedge retired) and §3.8 (the headline is the limit).
+
+**The law.** von Neumann–Richtmyer: a bulk pressure resisting compression *rate*,
+
+> `q = ρ₀·l·(c_q·l·(div v)² − c_l·c·div v)` for `div v < 0`, else `0`
+
+added in `_p2g` only — never in `_fixed_corotated_pft`. That placement is
+load-bearing and pinned by a test: the constitutive law feeds the brittle
+fracture triggers and is mirrored on the host by `_von_mises`, which sees only
+`F` and *cannot* know `div v`. Letting a numerical term reach those would shatter
+ceramic for a numerical reason and break the two-path pin. Consequence, stated
+because it is real: the cache's `stress` column **excludes** `q`. `div v` is
+`trace(C)` — APIC's affine matrix already *is* the velocity gradient, so this
+needs no new array and no extra transfer. Coefficients are deck fields
+(`SolverParams.av_c_q` / `av_c_l`), default `0.0`.
+
+**Why frame-cadence metrics could not answer the question — the real blocker.** A
+grid-scale (~2dx) oscillation has period `~2dx/c`; post-shock RHA at `J≈0.73` has
+`c≈9800 mm/ms`, giving **~159 substeps**, while frames are 400–1600 substeps
+apart. Every frame-sampled metric therefore lands at effectively random phase.
+That is why "worst live `J`" went *non-monotone* across a matched refinement (the
+AV-on arm ended up *below* the AV-off arm at the finest `dt` after being above it
+at two coarser ones) — aliasing, not physics. The CFL audit has the same blind
+spot and says so. The measurement that works is a **per-substep trace of a single
+particle** followed through the shock (`mpm.bake(..., j_trace=...)`): a
+min-over-a-*set* reduction traces the envelope of out-of-phase oscillations and
+can *hide* a ring; one particle cannot. Particle indices persist (contract §4), so
+an index is a durable material label — the §3.4 Lagrangian trick again.
+
+**The ring exists, and it is ~1 %.** RHA particle on the axis 3 mm behind the
+front face, every substep, matched `dt`:
+
+| | shock arrives | `J` min | `J` end | tail p2p | power in the ~159-substep band |
+|---|---|---|---|---|---|
+| AV off | substep 693 | 0.7148 | 0.7319 | 0.0063 | **8.2 %** |
+| AV on | substep 636 | 0.7400 | 0.7460 | 0.0054 | **3.2 %** |
+
+The ring is **~0.9 % peak-to-peak** on `J≈0.73` and carries ~8 % of an already
+tiny residual; the dominant periods are the window length, i.e. detrending
+residue. AV cuts the ring band's share 8.2 % → 3.2 % but total amplitude only
+~7 %. **A 1 % oscillation cannot explain the ~30 % discrepancy it was blamed for**
+— §3.5 explains what did.
+
+**What AV costs, measured.**
+- **+57 % substeps** on the jet deck (240 → 377): AV raises the signal speed the
+  CFL bound is sized from. The bound and the per-frame audit both account for it
+  now (`_av_signal_speed`); a bound left on the bare EOS `c` would under-report
+  exactly at the shock front and print "OK" on a breached bake.
+- **Shifts the post-shock state +2–3.5 %.** A Hugoniot-preserving viscosity should
+  leave the post-shock equilibrium alone; it does not here because penetration is
+  ongoing, so `div v ≠ 0` and `q` persists as a small standing pressure wherever
+  material compresses.
+- **Shocks arrive ~8 % earlier** (substep 693 → 636) — the classic over-strong-AV
+  artifact.
+
+**It is inert below hypervelocity, and that is structural.** `apfsds_vs_rha` at
+matched 150 substeps moves ≤0.20 % on every metric (tip −0.00 %, RHA spall
++0.20 %, rod velocity −0.00 %) — at the ≤0.11 % repeat-bake scatter floor. Not
+luck: a KE deck barely compresses (worst live `J` **0.7818** vs the jet's 0.46)
+and its compression rate is an order of magnitude lower (`div_v` **−313** vs
+−3606 /ms), and `q` scales with both.
+
+**Why it is kept, and why it is off.** Off, because damping ~1 % is not worth
++57 % substeps plus re-timing and re-measuring 30 baked decks. Kept, because it is
+the **prerequisite for Mie-Grüneisen**: AV work is currently dissipated to
+*nothing* — there is no energy equation and Murnaghan is a cold curve, so no
+thermal pressure exists to feed. That is self-consistent today, but the moment a
+thermal term lands, AV heating *should* raise thermal pressure. This is also the
+cleanest reason AV had to come **before** Mie-Grüneisen rather than after: you
+cannot measure what a thermal term moves while the quantity you would measure it
+with is still misattributed. With `av_c_q = av_c_l = 0` the term is identically
+zero *and* the CFL bound is untouched, so every existing deck is bit-for-effect
+the pre-AV solver — a property pinned by `tests/test_artificial_viscosity.py`.
+
+**Verified by rebake, not by argument** (§3.4's rule): the shipped
+`heat_vs_composite` re-baked on the AV code with the default off gives **240
+substeps** — the pre-AV count exactly — and **worst live `J` = 0.4314** against the
+**0.4315** recorded pre-AV, a match to 1 part in 4300. That agreement is also
+*independent corroboration of the misattribution above*: milestone 9 extended this
+deck's window 25 → 30 µs, which normally invalidates every quoted figure, yet this
+number did not move — **because it is set at the first impact at t≈0.4 µs, inside
+both windows.** A figure invariant to a window extension is a figure set early,
+which is precisely what "impact transient, not steady stagnation" predicts.
+
+**A near-miss worth recording.** The first spectral test asked for power at
+`freqs > 0.25·Nyquist` — period < 8 substeps — found exactly zero, and would have
+published *"there is no ring"*. That band is ~20× too fast to contain a
+159-substep ring. **A null in the wrong band rules out nothing:** compute the
+predicted period *first*, then choose the band.
 
 ---
 

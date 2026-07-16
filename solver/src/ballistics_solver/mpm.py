@@ -164,6 +164,85 @@ EOS_CFL_J_MARGIN: float = 0.35
 # mean the saturation had become load-bearing.
 J_FLOOR: float = 0.05
 
+# --- Artificial (shock) viscosity: what it is and why it is allowed ---------
+#
+# DEFAULT OFF (`SolverParams.av_c_q/av_c_l` = 0). Read this before enabling it.
+#
+# An explicit scheme cannot represent a discontinuity, so with nothing to dissipate
+# it the compressed front overshoots and RINGS. Milestone 8 believed it had
+# measured exactly that — the jet tip's worst J read 0.3923 / 0.3971 / 0.4315 at
+# 47 / 98 / 240 substeps, climbing as dt shrank — and named the ring "the dominant
+# tip defect". Milestone 11 built this term to fix it, measured properly, and
+# FALSIFIED that diagnosis (PHYSICS §3.9):
+#
+#   * that number is the FIRST IMPACT TRANSIENT (J~0.46), not the jet-tip
+#     stagnation state (J~0.63) that J_eq=0.6056 predicts — two different physical
+#     states were being compared, which is where the "30% gap" came from;
+#   * the dt-climb flattens by ~400 substeps with AV OFF (0.4615/0.4595/0.4652 at
+#     400/800/1600). It was ordinary coarse-dt error; the shipped deck sits at 240,
+#     just inside it;
+#   * the ring is REAL but ~0.9% peak-to-peak on J — it cannot explain a 30% gap.
+#
+# So this term is kept, but OFF: it damps ~1% for +57% substeps (it raises the
+# signal speed the CFL bound is sized from, 240 -> 377 on the jet deck). It is
+# retained as the PREREQUISITE FOR MIE-GRUENEISEN (see the limitation below), and
+# because it is inert below hypervelocity — apfsds_vs_rha moves <=0.20% at matched
+# dt, since a KE deck barely compresses (worst J 0.78 vs the jet's 0.46) and q
+# scales with both compression and its rate.
+#
+# The classical fix (von Neumann-Richtmyer; Wilkins) is a bulk pressure that
+# resists COMPRESSION RATE, active only where material is being compressed:
+#
+#     q = rho0 * l * (c_q * l * (div v)^2  -  c_l * c * div v)   for div v < 0
+#     q = 0                                                       otherwise
+#
+# with l = dx the cell size and c the EOS sound speed. The quadratic term spreads
+# strong shocks across a few cells; the LINEAR term is the one that damps the
+# ring. Units check in mm-ms-g with no conversion (root §7): rho0*l*c*div_v is
+# g/mm^3 * mm * mm/ms * 1/ms = g/(mm*ms^2) = MPa, and rho0*l^2*(div v)^2 likewise.
+#
+# WHY THIS IS NOT RE-TUNING THE EOS — the objection to answer first. q is a
+# conservative stress scattered through the ordinary momentum-conserving P2G, so
+# in principle it preserves the Hugoniot jump conditions: it changes a shock's
+# THICKNESS and its ringing, not the post-shock equilibrium. (The weaker-sounding
+# claim "q vanishes at equilibrium" is FALSE and should not be used — inside a
+# steady shock div v is nonzero and so is q; that is the whole point of it.)
+#
+# MEASURED CAVEAT, because the principle is not the whole story here: enabling AV
+# shifts the post-shock state by +2..3.5% (J end 0.7319 -> 0.7460 on a traced RHA
+# particle), and makes shocks arrive ~8% EARLIER (it raises the effective signal
+# speed). The jump conditions are preserved for a shock that has RUN OUT; during
+# penetration div v never returns to zero, so q persists as a small standing
+# pressure wherever material is compressing. Mild systematic bias — another reason
+# it is off by default, and a thing to re-measure before trusting it under
+# Mie-Grueneisen.
+#
+# Never tune c_l/c_q until tip-J hits a target — that is fitting the answer (§10).
+# The pass criterion was fixed in advance as dt-CONVERGENCE and COEFFICIENT-
+# INSENSITIVITY, explicitly NOT landing on the 1D steady J_eq=0.6056, because the
+# jet tip is a 2D transient stagnation point with lateral relief.
+#
+# WHERE IT LIVES, and why not next to the EOS: `_p2g` only, never inside
+# `_fixed_corotated_pft`. That function is the CONSTITUTIVE law — it feeds the
+# brittle fracture triggers via `_stress_invariants` and is pinned to its host
+# NumPy mirror `_von_mises` by tests/test_stress_paths.py. q is a NUMERICAL
+# device, so letting it reach those would shatter ceramic for a numerical reason
+# and break the two-path pin. Consequence, stated because it is a real one: the
+# cache's `stress` column reports the constitutive stress and EXCLUDES q. That is
+# deliberate and correct — it is the material's stress, not the solver's crutch.
+#
+# HONEST LIMITATION (root §10): the work q does is dissipated to NOTHING. There
+# is no energy equation here and Murnaghan is a cold curve, so there is no
+# thermal pressure for the dissipated energy to feed. Self-consistent today —
+# nothing present is being dropped — but the moment a Mie-Grueneisen thermal term
+# lands, AV heating SHOULD raise thermal pressure and this becomes a genuine
+# missing coupling. It is also the cleanest reason AV comes BEFORE Mie-Grueneisen
+# rather than after: you cannot measure what a thermal term moves while the
+# quantity you would measure it with is still ringing.
+#
+# The coefficients themselves are deck fields (`SolverParams.av_c_q/av_c_l`), so
+# a sensitivity family is data rather than an edited constant.
+
 
 def assert_gpu(device: str = "cuda:0") -> None:
     """Fail loudly if the solver is not actually on a CUDA device.
@@ -254,6 +333,51 @@ def _eos_pressure(J: float, K0: float):
     """
     Jc = wp.max(J, _J_FLOOR)
     return (K0 / EOS_KP) * (wp.pow(Jc, -EOS_KP) - 1.0)
+
+
+@wp.func
+def _av_tau(
+    F: wp.mat22,
+    C: wp.mat22,
+    mu: float,
+    lam: float,
+    rho0: float,
+    l: float,
+    c_q: float,
+    c_l: float,
+):
+    """Kirchhoff stress of the von Neumann-Richtmyer artificial viscosity.
+
+    See the AV block near the top of this module for the law, the units, and the
+    reason this is NOT part of ``_fixed_corotated_pft``. Returns zero for any
+    particle that is expanding or at rest, so it costs nothing away from a shock.
+
+    ``div v`` is ``trace(C)``: MLS-MPM's affine matrix IS the velocity-gradient
+    estimate (``_g2p`` builds it as the MLS gradient, and evolves F by
+    ``F <- (I + dt C) F``, i.e. C = dF/dt F^-1 = L). So the compression rate is
+    already on hand — no extra transfer, no new array. It lags by one substep
+    (``_p2g`` reads the C that ``_g2p`` wrote last substep), which is ordinary
+    explicit-scheme staggering; at the first substep C=0, so q=0.
+
+    Sign convention matches the EOS branch it sits beside: a POSITIVE pressure is
+    a NEGATIVE-diagonal Kirchhoff stress (tau = -q*J*I), which resists the
+    compression driving it. rho0 is the REST density (mass/vol0) — the same
+    convention ``_eos_sound_speed`` and the CFL audit already use; the O(1)
+    difference from current density is absorbed by the coefficients, which the
+    sensitivity sweep varies anyway.
+    """
+    div_v = C[0, 0] + C[1, 1]
+    # Compression only. In expansion an artificial viscosity would resist material
+    # coming APART — it would glue open a spall crack, which is precisely the
+    # physics this repo exists to show.
+    if div_v >= 0.0:
+        return wp.mat22(0.0, 0.0, 0.0, 0.0)
+    Jc = wp.max(wp.determinant(F), _J_FLOOR)
+    c = wp.sqrt(((lam + mu) * wp.pow(Jc, -EOS_KP) + mu) / rho0)
+    # div_v < 0 here, so BOTH terms are positive: the quadratic by squaring, the
+    # linear by the explicit minus sign.
+    q = rho0 * l * (c_q * l * div_v * div_v - c_l * c * div_v)
+    return wp.mat22(-q * Jc, 0.0, 0.0, -q * Jc)
 
 
 @wp.func
@@ -599,6 +723,61 @@ def _update_reactive(
 
 
 @wp.kernel
+def _trace_j(
+    F: wp.array(dtype=wp.mat22),
+    damage: wp.array(dtype=float),
+    mat: wp.array(dtype=float),
+    target: float,
+    slot: int,
+    jmin: wp.array(dtype=float),
+    jsum: wp.array(dtype=float),
+    jcnt: wp.array(dtype=float),
+):
+    """Debug hook: reduce live J for one material into per-SUBSTEP slots.
+
+    Exists because every frame-cadence metric ALIASES the shock ring rather than
+    measuring it. A grid-scale (~2dx) oscillation has period ~2dx/c — post-shock
+    RHA at J~0.73 gives c~9800 mm/ms and dx~0.39mm, i.e. **~159 substeps** — while
+    frames are 400-1600 substeps apart. Frame sampling therefore lands at
+    effectively random phase, which is exactly what the non-monotone `worst live J`
+    sequence was showing. The CFL audit has the same blind spot and says so ("a
+    shorter-than-a-frame excursion stays invisible").
+
+    Compute the predicted period BEFORE choosing a band to look in: the first pass
+    here tested period < 8 substeps, found nothing, and nearly published "there is
+    no ring". A null in the wrong band rules out nothing (PHYSICS §3.9).
+
+    Accumulates into a preallocated device array indexed by substep, so the whole
+    window costs ONE readback at the end rather than a sync per substep.
+    """
+    p = wp.tid()
+    if damage[p] < 0.5 and mat[p] == target:
+        J = wp.determinant(F[p])
+        wp.atomic_min(jmin, slot, J)
+        wp.atomic_add(jsum, slot, J)
+        wp.atomic_add(jcnt, slot, 1.0)
+
+
+@wp.kernel
+def _trace_particle_j(
+    F: wp.array(dtype=wp.mat22),
+    idx: int,
+    slot: int,
+    out: wp.array(dtype=float),
+):
+    """Debug hook: J of ONE particle, by index, every substep.
+
+    Necessary because a min-over-a-SET reduction cannot answer the ring question:
+    the minimum jumps between particles substep to substep, so if individual
+    particles oscillate out of phase, the min traces their ENVELOPE and hides the
+    oscillation. A single particle followed through the shock cannot hide it —
+    and the contract fixes particle count and persists particles, so an index is
+    a durable material label (the milestone-7 trick).
+    """
+    out[slot] = wp.determinant(F[idx])
+
+
+@wp.kernel
 def _p2g(
     x: wp.array(dtype=wp.vec2),
     v: wp.array(dtype=wp.vec2),
@@ -618,6 +797,8 @@ def _p2g(
     inv_dx: float,
     dx: float,
     dt: float,
+    av_c_q: float,
+    av_c_l: float,
 ):
     p = wp.tid()
     Xp = (x[p] - origin) * inv_dx
@@ -630,6 +811,12 @@ def _p2g(
     # scaling (-dt * vol0 * 4 * inv_dx^2) is shared by every branch below.
     coeff = -dt * vol0[p] * 4.0 * inv_dx * inv_dx
     affine = mass[p] * C[p]
+    # Artificial (shock) viscosity — added to the ELASTIC branches only, below.
+    # It rides with the constitutive stress and inherits its gating exactly: a
+    # particle that carries no stress (spalled fragment, burning or spent filler)
+    # carries no q either. A free fragment has no shock to damp — it is debris —
+    # and damping burning filler would fight the detonation source term.
+    av = _av_tau(F[p], C[p], mu[p], lam[p], mass[p] / vol0[p], dx, av_c_q, av_c_l)
     if reactive[p] > 0.5:
         # Reactive filler runs its OWN state machine, keyed off burn/damage and
         # never the ductile-spall gate (see the reactive note above):
@@ -644,7 +831,7 @@ def _p2g(
             pd = det_pressure[p]
             affine = coeff * wp.mat22(-pd, 0.0, 0.0, -pd) + affine
         elif damage[p] < 0.5:
-            affine = coeff * _fixed_corotated_pft(F[p], mu[p], lam[p]) + affine
+            affine = coeff * (_fixed_corotated_pft(F[p], mu[p], lam[p]) + av) + affine
         # else spent: no stress term
     elif damage[p] < 0.5:
         # A spalled particle (damage>=0.5) is a free fragment: it drops its
@@ -652,7 +839,7 @@ def _p2g(
         # perforation channel / back-face spall spray opens up. It KEEPS its mass
         # and APIC momentum so grid momentum is conserved and it still collides
         # (grid-shared contact) instead of ghosting through the rod.
-        affine = coeff * _fixed_corotated_pft(F[p], mu[p], lam[p]) + affine
+        affine = coeff * (_fixed_corotated_pft(F[p], mu[p], lam[p]) + av) + affine
 
     for i in range(3):
         for j in range(3):
@@ -798,6 +985,28 @@ def _eos_equilibrium_j(p: float, K0: float) -> float:
     the kernels.
     """
     return (1.0 + materials.EOS_KP * p / K0) ** (-1.0 / materials.EOS_KP)
+
+
+def _av_signal_speed(c: float, div_v: float, l: float, c_q: float, c_l: float) -> float:
+    """Effective signal speed once artificial viscosity is on (mm/ms).
+
+    AV is not free of the CFL condition: it adds a compression-rate stress, and
+    that stress carries a signal. Its effective speed is largest exactly at the
+    shock front the viscosity is aimed at, so a bound computed from the pure-EOS
+    ``c`` alone UNDER-reports the wave speed precisely where it matters, and the
+    failure mode is milestone 8's: a bake that validates clean and is quietly
+    wrong (or NaNs late).
+
+    Standard hydrocode structure — the linear coefficient scales the sound speed,
+    the quadratic one adds a term set by the compression rate across a cell:
+
+        c_eff = c * (1 + c_l)  +  c_q * l * |div v|
+
+    Host-side only: used to size the substep a priori and, in ``bake``'s per-frame
+    audit, to MEASURE what was actually reached. Same predict-then-verify contract
+    the EOS bound already runs under (see ``EOS_CFL_J_MARGIN``).
+    """
+    return c * (1.0 + c_l) + c_q * l * abs(min(div_v, 0.0))
 
 
 def _eos_sound_speed(J: float, K0: float, mu: float, rho: float) -> float:
@@ -1060,8 +1269,16 @@ def _von_mises(F: np.ndarray, mu: np.ndarray, lam: np.ndarray) -> np.ndarray:
 # ===========================================================================
 
 
-def bake(scenario, writer, device: str = "cuda:0") -> None:
+def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
     """Run the elastic MLS-MPM substep loop and dump render frames.
+
+    ``j_trace`` is an optional DEBUG hook, ``(frame_lo, frame_hi, material, path)``:
+    log min/mean live J for ``material`` on EVERY SUBSTEP over ``[frame_lo,
+    frame_hi)`` and save to ``path`` as .npz. It exists because the shock ring is
+    a sub-frame phenomenon (see ``_trace_j``) and nothing sampled at frame cadence
+    can see it — not the cache, not the CFL audit. Windowed, so the cost is
+    bounded; off by default and ``run.py`` never sets it. Not a schema change:
+    it writes its own file and touches no cache column.
 
     Wiring is in run.py; the physics is here. Sets ``writer.particle_count``
     after seeding (run.py constructs the writer with a placeholder 0).
@@ -1072,6 +1289,12 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
     # --- units: convert the two SI-seconds deck fields to ms once (root §7) ---
     dt_deck_ms = sp.dt * 1.0e3
     total_ms = sp.total_time * 1.0e3
+
+    # Artificial (shock) viscosity coefficients — dimensionless, so no conversion.
+    # Deck fields with defaults, so every existing deck inherits them silently;
+    # see the AV block at the top of this module.
+    av_c_q = sp.av_c_q
+    av_c_l = sp.av_c_l
 
     # --- grid geometry (mm-ms-g) ---
     grid_res = sp.grid_resolution
@@ -1109,7 +1332,16 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
         # bake can afford the substeps (root §1); a NaN at frame 300 cannot.
         Jd = EOS_CFL_J_MARGIN * _eos_equilibrium_j(p_stag, K0)
         j_design = min(j_design, Jd)
-        c_max = max(c_max, _eos_sound_speed(Jd, K0, mu, mat.density))
+        # Artificial viscosity raises the signal speed, so the bound has to carry
+        # it too. A priori the worst compression rate is a shock resolved across
+        # ~one cell, |div v| ~ v_tip/dx — which makes the quadratic contribution
+        # c_q*dx*(v_tip/dx) = c_q*v_tip, independent of dx. Like the J estimate
+        # above this is a PREDICTION; the frame loop measures whether it held.
+        c_eos = _eos_sound_speed(Jd, K0, mu, mat.density)
+        div_v_design = -scenario.projectile.velocity / dx
+        c_max = max(
+            c_max, _av_signal_speed(c_eos, div_v_design, dx, av_c_q, av_c_l)
+        )
     dt_cfl = CFL * dx / c_max
     dt_sim = min(dt_deck_ms, dt_cfl)
 
@@ -1167,7 +1399,7 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
         grid_m.zero_()
         wp.launch(_p2g, dim=n, device=device, inputs=[
             x, v, C, F, mass, vol0, mu, lam, damage, reactive, det_pressure, burn,
-            grid_v, grid_m, origin, inv_dx, dx, dt])
+            grid_v, grid_m, origin, inv_dx, dx, dt, av_c_q, av_c_l])
         wp.launch(_grid_op, dim=(nx, ny), device=device, inputs=[
             grid_v, grid_m, nx, ny])
         wp.launch(_g2p, dim=n, device=device, inputs=[
@@ -1204,12 +1436,41 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
     # frame boundaries, so a shorter-than-a-frame excursion stays invisible.
     K0_h = seed["lam"] + seed["mu"]
     rho_h = seed["mass"] / np.maximum(seed["vol0"], 1e-30)
-    audit = {"c": 0.0, "J": 1.0}
+    audit = {"c": 0.0, "J": 1.0, "div_v": 0.0}
+
+    # --- per-substep J trace (debug hook; see `_trace_j` and the AV block) ----
+    tr = None
+    if j_trace is not None:
+        tr_lo, tr_hi = j_trace["frames"]
+        tr_matname = j_trace["material"]
+        tr_particle = j_trace.get("particle")
+        tr_target = float(materials.get(tr_matname).material_id)
+        tr_slots = max(1, (tr_hi - tr_lo) * substeps)
+        tr = {
+            "lo": tr_lo, "hi": tr_hi, "path": j_trace["path"], "target": tr_target,
+            "slot": 0, "particle": tr_particle,
+            "mat": wp.array(seed["mat_id"], dtype=float, device=device),
+            # jmin starts high so atomic_min lands; jsum/jcnt start at 0.
+            "jmin": wp.full(tr_slots, 1.0e30, dtype=float, device=device),
+            "jsum": wp.zeros(tr_slots, dtype=float, device=device),
+            "jcnt": wp.zeros(tr_slots, dtype=float, device=device),
+            "jone": wp.zeros(tr_slots, dtype=float, device=device),
+        }
+        print(
+            f"[mpm] J-trace: material {tr_matname!r} every substep over frames "
+            f"[{tr_lo},{tr_hi}) = {tr_slots} slots"
+            + (f", single particle #{tr_particle}" if tr_particle is not None else "")
+            + f" -> {j_trace['path']}"
+        )
 
     def dump_frame():
         pos = x.numpy()
         vel = v.numpy()
         Fn = F.numpy().reshape(n, 2, 2)
+        # C (the APIC affine matrix) is the velocity gradient, so trace(C) is the
+        # compression rate the AV term keys off. Read back for the CFL audit only —
+        # it is not a cache column.
+        Cn = C.numpy().reshape(n, 2, 2)
         dmg = damage.numpy()
         vel_mag = np.linalg.norm(vel, axis=1)
         stress = _von_mises(Fn, seed["mu"], seed["lam"])
@@ -1225,7 +1486,17 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
             c_live = np.sqrt(
                 (K0_h[live] * Jl ** (-materials.EOS_KP) + seed["mu"][live]) / rho_h[live]
             )
-            audit["c"] = max(audit["c"], float(c_live.max()))
+            # The bound `dt` was sized against is the AV-augmented signal speed, so
+            # the audit has to measure THAT, not the bare EOS one — otherwise it
+            # under-reports exactly where AV is strongest (the shock front) and
+            # cheerfully prints "OK" on a bake that breached. `_p2g` reads the same
+            # trace(C) this does, so the two agree by construction.
+            div_v_live = np.trace(Cn[live], axis1=1, axis2=2)
+            audit["div_v"] = min(audit["div_v"], float(div_v_live.min()))
+            c_eff = c_live * (1.0 + av_c_l) + av_c_q * dx * np.abs(
+                np.minimum(div_v_live, 0.0)
+            )
+            audit["c"] = max(audit["c"], float(c_eff.max()))
         # A spalled particle carries no stress (it lost cohesion); zero the
         # readout so the colormap isn't skewed by a broken fragment's stale F.
         stress = np.where(dmg > 0.5, 0.0, stress)
@@ -1238,11 +1509,41 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
 
     # Frame 0 is the seeded state at t=0; then step and dump for the rest.
     dump_frame()
-    for _ in range(sp.frame_count - 1):
+    for _fi in range(sp.frame_count - 1):
+        # Iteration _fi advances the state from frame _fi to frame _fi+1.
+        tracing = tr is not None and tr["lo"] <= _fi < tr["hi"]
         for _s in range(substeps):
             substep()
+            if tracing:
+                wp.launch(_trace_j, dim=n, device=device, inputs=[
+                    F, damage, tr["mat"], tr["target"], tr["slot"],
+                    tr["jmin"], tr["jsum"], tr["jcnt"]])
+                if tr["particle"] is not None:
+                    wp.launch(_trace_particle_j, dim=1, device=device, inputs=[
+                        F, tr["particle"], tr["slot"], tr["jone"]])
+                tr["slot"] += 1
         wp.synchronize_device(device)
         dump_frame()
+
+    if tr is not None:
+        wp.synchronize_device(device)
+        cnt = tr["jcnt"].numpy()
+        np.savez(
+            tr["path"],
+            jmin=tr["jmin"].numpy(),
+            jmean=np.divide(tr["jsum"].numpy(), cnt, out=np.full_like(cnt, np.nan),
+                            where=cnt > 0),
+            jone=tr["jone"].numpy(),
+            particle=-1 if tr["particle"] is None else tr["particle"],
+            count=cnt,
+            substeps_per_frame=substeps,
+            frame_lo=tr["lo"],
+            frame_hi=tr["hi"],
+            av_c_q=av_c_q,
+            av_c_l=av_c_l,
+            dt_ms=dt,
+        )
+        print(f"[mpm] J-trace written: {tr['path']}")
 
     # --- did the a-priori substep sizing actually hold? ---------------------
     if audit["J"] <= J_FLOOR:
@@ -1257,13 +1558,15 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
         print(
             f"[mpm] WARNING: CFL margin BREACHED. dt was sized for c_max="
             f"{c_max:.0f} mm/ms (EOS design J={j_design:.3f}), but live material "
-            f"reached J={audit['J']:.4f} -> c={audit['c']:.0f} mm/ms "
-            f"({audit['c']/c_max:.2f}x the budget). The bake may be unstable past "
-            f"that point; lower EOS_CFL_J_MARGIN and rebake."
+            f"reached J={audit['J']:.4f}, div_v={audit['div_v']:.3e} /ms -> "
+            f"c_eff={audit['c']:.0f} mm/ms ({audit['c']/c_max:.2f}x the budget). "
+            f"The bake may be unstable past that point; lower EOS_CFL_J_MARGIN "
+            f"(or av_c_q/av_c_l, if the AV term is what pushed it over) and rebake."
         )
     else:
         print(
-            f"[mpm] CFL audit OK: worst live J={audit['J']:.4f} -> c="
-            f"{audit['c']:.0f} mm/ms, {audit['c']/c_max:.0%} of the c_max="
-            f"{c_max:.0f} mm/ms budgeted (EOS design J={j_design:.3f})"
+            f"[mpm] CFL audit OK: worst live J={audit['J']:.4f}, "
+            f"div_v={audit['div_v']:.3e} /ms -> c_eff={audit['c']:.0f} mm/ms, "
+            f"{audit['c']/c_max:.0%} of the c_max={c_max:.0f} mm/ms budgeted "
+            f"(EOS design J={j_design:.3f}, av_c_q={av_c_q}, av_c_l={av_c_l})"
         )

@@ -111,6 +111,27 @@ class SolverParams:
     dt: float = 1.0e-7  # substep dt (SI seconds by convention here) — CFL-bound
     total_time: float = 4.0e-5  # simulated seconds to bake (~tens of microseconds)
     frame_count: int = 90  # render frames dumped (target 60-120)
+    # Artificial (shock) viscosity coefficients — DIMENSIONLESS NUMERICS, not
+    # material data, which is why they live here beside `dt`/`grid_resolution`
+    # and not in materials.py (CLAUDE.md §7 governs *physical* constants). The
+    # law and the reasoning are documented in mpm.py; see `mpm._av_tau`.
+    #
+    # They are deck fields for the same reason `dt` and `grid_resolution` are:
+    # a convergence/sensitivity family is then DATA (a set of decks) rather than
+    # an edited module constant — the pattern milestone 10's `standoff_conv_*`
+    # decks established.
+    #
+    # DEFAULT OFF, deliberately. Zero means q is identically zero AND the CFL
+    # bound is untouched, so every existing deck is bit-for-effect the pre-AV
+    # solver and nothing rebakes differently. Turning AV on is not free: it costs
+    # ~57% more substeps on the jet deck (240 -> 377, because AV raises the signal
+    # speed the CFL bound is sized from) and it would silently re-time and
+    # re-measure all 30 baked decks. A default is a claim that the benefit is
+    # worth that; it is not defaulted on until the benefit is demonstrated on a
+    # measurement that can actually SEE the shock ring (frame-cadence metrics
+    # alias it — see the AV block in mpm.py). Set them per-deck to opt in.
+    av_c_q: float = 0.0  # quadratic: spreads strong shocks over a few cells
+    av_c_l: float = 0.0  # linear: damps the post-shock elastic RING
 
 
 @dataclass
@@ -129,6 +150,14 @@ class Scenario:
             raise ValueError("scenario has no armor layers")
         if self.solver.frame_count <= 0:
             raise ValueError("frame_count must be positive")
+        # Negative artificial viscosity would ADD energy at the shock front
+        # instead of removing it — an anti-damper, unstable by construction.
+        if self.solver.av_c_q < 0.0 or self.solver.av_c_l < 0.0:
+            raise ValueError(
+                f"artificial viscosity coefficients must be >= 0 "
+                f"(got av_c_q={self.solver.av_c_q}, av_c_l={self.solver.av_c_l}); "
+                f"a negative coefficient pumps energy into the shock"
+            )
         iy = self.projectile.impact_y
         if iy is not None and not (self.domain.ymin < iy < self.domain.ymax):
             raise ValueError(

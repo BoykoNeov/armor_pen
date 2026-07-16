@@ -21,7 +21,7 @@ first** — this file only adds solver-local notes.
 | `config.py` | Scenario schema (dataclasses), YAML loader | working |
 | `materials.py` | Material library, all constants in mm-ms-g | data (all fields now consumed: elasticity, yield, ductile `damage_threshold`, `brittle`, reactive block) |
 | `cache_writer.py` | Writes manifest.json + frames.bin (the contract) | working |
-| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + Murnaghan EOS + von Mises plasticity + ductile & brittle damage + multi-material stack + reactive ERA/NERA layer + oblique rod seeding + velocity-graded shaped-charge jet (last touched by milestone 8)** — see below. Milestones 9 and 10 are decks + `tools/` only: they added **zero** kernel code, which is the point — the scenario schema already carried `velocity` and `standoff`. |
+| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + Murnaghan EOS + von Mises plasticity + ductile & brittle damage + multi-material stack + reactive ERA/NERA layer + oblique rod seeding + velocity-graded shaped-charge jet + artificial viscosity, default OFF (last touched by milestone 11)** — see below. Milestones 9 and 10 are decks + `tools/` only: they added **zero** kernel code, which is the point — the scenario schema already carried `velocity` and `standoff`. |
 | `run.py` | CLI: scenario.yaml → cache dir | working (Warp init + GPU assert + bake) |
 
 ## Build order (root §9) — where we are
@@ -244,12 +244,18 @@ Grow the reference MLS-MPM incrementally, validating visually with
      velocity-dependent pressure error (~1.70× → ~1.37× across the jet's own
      gradient); it did not remove it. A velocity sweep still inherits it. The real
      fix is Mie-Grüneisen + per-material `c₀/s/Γ`.
-   - **Do NOT quote tip-`J` to four decimals — it is not dt-converged.** 0.3923 (47
-     substeps) → 0.3971 (98) → 0.4315 (240), rising as the substep shrinks, because
-     what it measures is the undamped **shock ring**, not the EOS. An earlier
-     "1.2 % converged" claim in the docs came from the 47→98 pair alone and was
-     wrong; 98→240 moves it +8.7 %. Two points are not a convergence study. The
-     ceramic figure (0.9910) *is* robust — quote that one.
+   - **Do NOT quote tip-`J` to four decimals.** 0.3923 (47 substeps) → 0.3971 (98)
+     → 0.4315 (240). An earlier "1.2 % converged" claim in the docs came from the
+     47→98 pair alone and was wrong; 98→240 moves it +8.7 %. Two points are not a
+     convergence study. The ceramic figure (0.9910) *is* robust — quote that one.
+   - **⚠️ This note used to say the climb "measures the undamped shock ring". It
+     does not — milestone 11 falsified that.** The number is the **first impact
+     transient** (not the jet-tip stagnation, and not the ceramic interface); the
+     climb is ordinary coarse-`dt` error that flattens by ~400 substeps with AV
+     *off*; and the ring is ~0.9 %, far too small to be the story. The 47/98
+     points are also **not reproducible** now — the solver takes
+     `min(deck_dt, cfl_dt)` and this deck's CFL floor is 240 substeps, so those
+     came from a different `EOS_CFL_J_MARGIN` era (0.8 → 0.55 → 0.35). See §3.5/§3.9.
 
 7. **Milestone 9 — velocity sweep vs the hydrodynamic asymptote (PHYSICS §3.7).**
    Ten `sweep_*` decks, `{tungsten, copper} × {1500..7000} m/s` into an identical
@@ -306,7 +312,33 @@ Grow the reference MLS-MPM incrementally, validating visually with
      not particulate (§3.4, and free-flight damage at S=90 is exactly 0.0000), so no
      optimum is reachable and none was manufactured.
 
-Don't rewrite from scratch. The full solver arc (milestones 1–10) is done.
+9. **Milestone 11 — artificial (shock) viscosity (PHYSICS §3.9).** Built the fix
+   milestone 8 asked for, measured it, and **retired milestone 8's diagnosis**.
+   `SolverParams.av_c_q` / `av_c_l`, **default 0.0 = OFF**. Read §3.9 before
+   touching any of it; the four things to know:
+   - **Default off is a measured decision, not laziness.** AV costs **+57 %
+     substeps** (240 → 377 on the jet: it raises the signal speed the CFL bound is
+     sized from) to damp a ring that is **~0.9 % peak-to-peak**. With the
+     coefficients at 0 the term is identically zero *and* the CFL bound is
+     untouched, so all 30 baked decks are bit-for-effect the pre-AV solver.
+     `tests/test_artificial_viscosity.py` pins that. Turning it on means rebaking
+     and re-measuring everything — do it only with a reason.
+   - **AV goes in `_p2g`, NEVER in `_fixed_corotated_pft`.** The latter is the
+     constitutive law: it feeds the brittle triggers and is mirrored on the host by
+     `_von_mises`, which sees only `F` and cannot know `div v`. A numerical term
+     there would shatter ceramic for a numerical reason and break the two-path pin.
+     A test asserts the law stays rate-free. The `stress` column excludes `q`.
+   - **Frame-cadence metrics ALIAS the ring — do not try to measure it from a
+     cache.** Period ~159 substeps vs 400–1600 substeps per frame. Use
+     `mpm.bake(..., j_trace={...})`, the windowed per-substep debug hook, and trace
+     a SINGLE particle: a min-over-a-set traces the envelope of out-of-phase
+     oscillations and hides the ring. The CFL audit has the same blind spot.
+   - **AV is inert below hypervelocity** (`apfsds_vs_rha` moves ≤0.20 % at matched
+     dt, i.e. the scatter floor) because KE decks barely compress. So a future
+     Mie-Grüneisen milestone can switch it on for the jet without re-tuning the KE
+     decks — which is the reason it is kept at all.
+
+Don't rewrite from scratch. The full solver arc (milestones 1–11) is done.
 
 **Stale-number correction (measured 2026-07-16):** the "~16 % RHA spall" quoted in
 the milestone 3/4 notes above and the 15.6 % in milestone 6 were measured at

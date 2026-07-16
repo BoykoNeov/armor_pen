@@ -129,15 +129,15 @@ is closed: the volumetric response is a **Murnaghan EOS** (`p = (K₀/K′)(J^�
 220 GPa stagnation point crush copper to `J≈0.15` where reality gives `≈0.61`.
 Costs **zero** new material constants and is tangent-matched at `J=1`, so it is a
 large-strain-only change — KE decks barely move. Measured: the jet tip goes `J`
-0.0706 → **~0.43**, the RHA plate 0.1747 → **0.50**, and ceramic comminution stays
+0.0706 → **~0.46**, the RHA plate 0.1747 → **0.50**, and ceramic comminution stays
 put at **0.9910 vs 0.9912** — the a-priori prediction that no volumetric fix could
-move it, confirmed. (Only the ceramic figure deserves four decimals: the tip `J` is
-**not** dt-converged, because what it now measures is the undamped shock ring
-rather than the EOS.) Independent check: `K₀ = λ+µ = 136.4 GPa`
+move it, confirmed. (Only the ceramic figure deserves four decimals; the tip `J` is
+a noisy extremum. Milestone 11 later showed that number is the **first impact
+transient**, not the jet-tip stagnation, and *not* the undamped shock ring this
+README used to blame it on.) Independent check: `K₀ = λ+µ = 136.4 GPa`
 derived from the elastic moduli agrees to **2 %** with `ρ₀c₀² = 139.1 GPa` from
 public shock data. Still honest about it: Murnaghan is a *cold* curve, so it under-
-reads pressure by ~0.68× at a 7 km/s tip, and MPM has no artificial viscosity so
-the shock front rings. See PHYSICS §3.5.
+reads pressure by ~0.68× at a 7 km/s tip. See PHYSICS §3.5.
 
 **Milestone 9 — velocity sweep vs the hydrodynamic asymptote.** The first
 experiment that varies impact velocity, and the first whose claim is a *trend*.
@@ -190,11 +190,28 @@ under-resolved curve *saturates*, which looks exactly like the textbook standoff
 optimum this jet cannot produce. Six `standoff_conv_*` decks are committed so the
 convergence is reproducible rather than asserted. See PHYSICS §3.8.
 
+**Milestone 11 — artificial viscosity, and the defect that wasn't.** Milestone 8
+left a named defect: *"nothing damps the shock ring, now the dominant tip
+defect."* This milestone built the standard fix (von Neumann–Richtmyer), measured
+it, and **retired the diagnosis on evidence** — so the feature ships **default
+off**. Three findings, and the measurement is the deliverable. (1) Every
+frame-cadence metric **aliases** the ring: it has a ~159-substep period while
+frames are 400–1600 substeps apart, which is why the obvious metric went
+*non-monotone*. Seeing it at all needs a **per-substep trace of one particle**
+through the shock — a min-over-a-set traces the envelope and hides it. (2) The
+ring is real but **~0.9 % peak-to-peak**, which cannot explain the ~30 % gap it
+was blamed for. (3) That gap was a **category error**: the famous "tip `J`≈0.43"
+is the *first impact transient*, while the *steady* stagnation state — the thing
+`J_eq=0.6056` actually predicts — sits at **~0.63**. AV costs +57 % substeps to
+damp ~1 %, so it stays off; it is kept because it is the prerequisite for
+Mie-Grüneisen (AV work currently dissipates to *nothing*). It is inert on KE decks
+(≤0.20 %, at the scatter floor). See PHYSICS §3.9.
+
 **Next:** **Mie-Grüneisen** (the thermal term Murnaghan lacks — it is what still
-makes the pressure error velocity-dependent), **artificial viscosity** (nothing
-damps the shock ring, now the dominant tip defect), a **dissipation path for
-`nera_filler`** (PHYSICS §3.6), and **domain/BC** work so oblique-deck debris never
-reaches a wall. See the per-directory `CLAUDE.md` files for the build order.
+makes the pressure error velocity-dependent, and the one thing that would give AV
+somewhere to put its energy), a **dissipation path for `nera_filler`**
+(PHYSICS §3.6), and **domain/BC** work so oblique-deck debris never reaches a
+wall. See the per-directory `CLAUDE.md` files for the build order.
 
 ## Quick start
 
