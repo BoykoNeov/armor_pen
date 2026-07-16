@@ -173,9 +173,22 @@ def main(argv=None) -> int:
         print("CONVERGENCE: is the standoff shortfall numerical?")
         print("  The derivation is DIAMETER-INDEPENDENT, so every row predicts 1.536.")
         print("  Two independent routes to 16 cells across the jet: refine dx, or fatten the jet.\n")
-        print("  configuration                  cells  " + "".join(f" f={f:.2f} " for f in MATCH_FRACTIONS) + "   mean")
+        # The half-space premise is checked HERE too, not only in --family. The 6 mm
+        # jet carries 2x the mass of the 3 mm one, so it is the row most able to
+        # perforate — and it is also the load-bearing independent confirmation. A
+        # ceiling-capped S=0 depth would INFLATE the ratio, i.e. flatter a row that
+        # exists to be believed.
+        measured = {}
+        print("  half-space check (a perforated baseline would INFLATE its row's ratio)")
         for name, cells, c0, c9 in cfg:
             a, b = measure(args.caches / c0), measure(args.caches / c9)
+            measured[name] = (a, b)
+            for r in (a, b):
+                _report(r)
+        print()
+        print("  configuration                  cells  " + "".join(f" f={f:.2f} " for f in MATCH_FRACTIONS) + "   mean")
+        for name, cells, c0, c9 in cfg:
+            a, b = measured[name]
             rs = compare(a, b)
             print(f"  {name:<30} {cells:4d}  " + "".join(f"{r:7.4f} " for r in rs)
                   + f"  {np.nanmean(rs):6.4f}")
