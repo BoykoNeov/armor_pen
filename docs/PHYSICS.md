@@ -738,6 +738,104 @@ filler a real dissipation path is its own milestone; it is not done.
 
 ---
 
+### 3.7 Velocity sweep vs the hydrodynamic asymptote (milestone 9)
+
+The first experiment that **varies impact velocity**, and the first whose claim is
+a *trend* rather than a state. Ten decks, one factorial: `{tungsten_rod,
+copper_jet}` × `{1500, 2500, 3500, 5000, 7000}` m/s into an identical 120 mm
+semi-infinite RHA half-space, everything else held fixed (`sweep_*.yaml`).
+
+**What is predicted, and why it is falsifiable.** Ideal hydrodynamic
+(Tate–Alekseevskii) penetration is a pressure balance,
+`½ρ_p(v−u)² = ½ρ_t·u²`, so as strength becomes negligible the penetration velocity
+`u` approaches a ratio fixed by **density alone**:
+
+```
+u/v  →  1 / (1 + √(ρ_t/ρ_p))        tungsten 0.5996     copper 0.5165
+```
+
+Two arms, two *different* a-priori numbers, one physics. A single arm approaching
+a single number could be coincidence; two arms approaching two different numbers
+computed beforehand from density could not. And the bound has a direction: strength
+can only hold `u` **below** the ideal limit, never past it — so exceeding the
+asymptote is not "inaccurate", it is impossible.
+
+**Measured** (`tools/measure_penetration.py`, which identifies the penetrator as
+whatever is moving at t=0, measures `v` from frame 0 rather than being told it, and
+derives its fit window from the erosion curve):
+
+| v (m/s) | tungsten `u/v` | vs asym | copper `u/v` | vs asym |
+|---|---|---|---|---|
+| 1500 | 0.4040 | 0.674× *(not steady — see below)* | 0.3819 | 0.739× |
+| 2500 | 0.5457 | 0.910× | 0.4484 | 0.868× |
+| 3500 | 0.5576 | 0.930× | 0.4649 | 0.900× |
+| 5000 | 0.5613 | 0.936× | 0.4745 | 0.919× |
+| 7000 | 0.5620 | **0.937×** | 0.4839 | **0.937×** |
+
+**Both arms rise monotonically toward their own asymptote and neither crosses it.**
+At 7 km/s both sit at the *same* 0.937× — the shortfall is a property of the model
+(residual strength, the cold-curve pressure error of §3.5, the undamped shock
+ring), not of the material. Which makes the sharp test the **ratio**, where that
+common systematic cancels:
+
+```
+measured   u/v(W) / u/v(Cu)  =  0.5620 / 0.4839  =  1.1614
+predicted        0.5996 / 0.5165                 =  1.1609      → 0.04 %
+```
+
+**The trend is not a timestep artifact — controlled, not argued.** The production
+decks are CFL-sized, and the EOS-aware bound scales with stagnation pressure ~`v²`,
+so substeps *rise* with velocity (copper 75→163, tungsten 81→218). Finer `dt` means
+less numerical dissipation means higher `u/v`, so the fast arm was getting more
+physics *and* less dissipation — the measured rise was physics + artifact in unknown
+proportion. Rebaking all ten at a fixed 250 substeps/frame moves each point by only
+~1–2 % and leaves the shape and the ratio intact (the ratio above **is** the
+uniform-dt number). Uniform `dt` is the right *control* choice and the wrong
+*production* one — a 7 km/s deck genuinely needs a smaller step — so the committed
+decks stay CFL-sized.
+
+**Did this need the EOS?** Yes, and it is worth being precise, because `u/v` was
+partly chosen for being a pressure *balance* in which the EOS error largely cancels
+between the two sides. Baking the copper arm on the pre-EOS solver at matched `dt`:
+
+| v | pre-EOS law | with the EOS |
+|---|---|---|
+| 1500 | 0.3822 (0.740×) | 0.3819 (0.739×) |
+| 7000 | **0.5333 (1.032×)** | 0.4839 (0.937×) |
+
+**The pre-EOS law exceeds the hydrodynamic ceiling at 7 km/s.** Not merely
+inaccurate — 1.032× is on the wrong side of a bound that strength cannot push past.
+The error is velocity-dependent exactly as §3.5 says: ~0 % at 1500, −9 % at 7000.
+(The old law's *better-looking* 0.5000 at its own coarse CFL was simply
+unconverged; 25× finer `dt` moves it to 0.5333, i.e. coarse-step numerical
+dissipation was masking the defect. Nor is the new law perfectly converged —
+163→500 substeps moves copper@7000 by +2.6 % — so **read the trend, not the third
+decimal**.)
+
+**Honest limits.**
+
+- **`u` is the erosion-front velocity, so this is not assumption-free.** Erosion
+  has a partly-numerical component (§3.4: crushed particles latch `damage` and
+  leave the live set). The defence is that this is *systematic* and cancels in the
+  trend and in the cross-arm ratio — not that the metric is clean. Depth is
+  deliberately not reported: it is cumulative and rides on the whole erosion
+  history rather than an instantaneous rate.
+- **tungsten@1500 is flagged NOT STEADY (R²=0.985) and excluded from the trend.**
+  That is physics, not a probe failure: its tip advances 0.86 mm/µs early and
+  0.25 mm/µs late — it **decelerates**, which is Tate's rod deceleration under
+  target resistance. Tungsten's yield is 7.5× copper's, which is exactly why
+  copper@1500 stays straight (R²=0.9999) and tungsten does not. There is no single
+  steady `u` there to report, so the fitted slope is a time-average of a varying
+  rate and is not comparable to the rest of the column.
+- **The asymptote itself assumes incompressible Bernoulli.** Real materials
+  compress at the interface, so `√(ρ_p/ρ_t)` from *initial* densities is the
+  textbook idealisation the sweep is compared *against*, not ground truth.
+  Agreement to 0.04 % in the ratio is better than this model deserves in absolute
+  terms and should be read as the density scaling being right, not as validation
+  (root §1, §10 — plausible, not predictive).
+
+---
+
 ## 4. Timestep & why we bake offline
 
 The cost driver is the **CFL timestep, not particle count**. Steel's sound

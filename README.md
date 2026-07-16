@@ -131,12 +131,33 @@ public shock data. Still honest about it: Murnaghan is a *cold* curve, so it und
 reads pressure by ~0.68× at a 7 km/s tip, and MPM has no artificial viscosity so
 the shock front rings. See PHYSICS §3.5.
 
-**Next:** the open items are a **velocity sweep** against the hydrodynamic
-asymptote `√(ρ_p/ρ_t)`, a **standoff study** (the clean energy-neutral depth
-experiment for the jet — needs no code, `standoff` is already deck data),
-**Mie-Grüneisen** (the thermal term Murnaghan lacks), and **domain/BC** work so
-oblique-deck debris never reaches a wall. See the per-directory `CLAUDE.md` files
-for the build order.
+**Milestone 9 — velocity sweep vs the hydrodynamic asymptote.** The first
+experiment that varies impact velocity, and the first whose claim is a *trend*.
+Ten decks: `{tungsten, copper} × {1500…7000} m/s` into an identical semi-infinite
+RHA half-space. Ideal-hydro (Tate) says the penetration velocity approaches a
+density-only ratio — `u/v → 1/(1+√(ρ_t/ρ_p))`, i.e. **0.600** for tungsten and
+**0.517** for copper. Two arms, two different numbers fixed a priori: a single arm
+hitting a single number could be luck, two arms hitting two different ones could
+not. Measured: both rise monotonically toward their own asymptote, neither crosses
+it, and at 7 km/s both sit at the **same 0.937×** — so the shortfall belongs to the
+model, not the material, and cancels in the ratio:
+
+> measured `u/v(W)/u/v(Cu)` = **1.1614** vs **1.1609** predicted from density —
+> **0.04 %**.
+
+Controlled, not argued: the substep count rises with velocity under the CFL bound,
+so the fast arm got less numerical dissipation too. Rebaking all ten at a fixed
+`dt` moves each point ~1–2 % and leaves the shape and the ratio intact. And the
+sweep genuinely needed the EOS — on the pre-EOS law at matched `dt`, copper@7000
+gives `u/v` = **1.032× its asymptote**, i.e. *past* a ceiling that strength cannot
+push through. See PHYSICS §3.7.
+
+**Next:** **Mie-Grüneisen** (the thermal term Murnaghan lacks — it is what still
+makes the pressure error velocity-dependent), **artificial viscosity** (nothing
+damps the shock ring, now the dominant tip defect), a **standoff study** (needs no
+code, `standoff` is already deck data), a **dissipation path for `nera_filler`**
+(PHYSICS §3.6), and **domain/BC** work so oblique-deck debris never reaches a wall.
+See the per-directory `CLAUDE.md` files for the build order.
 
 ## Quick start
 

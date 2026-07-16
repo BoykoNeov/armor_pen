@@ -244,7 +244,32 @@ Grow the reference MLS-MPM incrementally, validating visually with
      gradient); it did not remove it. A velocity sweep still inherits it. The real
      fix is Mie-Grüneisen + per-material `c₀/s/Γ`.
 
-Don't rewrite from scratch. The full solver arc (milestones 1–8) is done.
+7. **Milestone 9 — velocity sweep vs the hydrodynamic asymptote (PHYSICS §3.7).**
+   Ten `sweep_*` decks, `{tungsten, copper} × {1500..7000} m/s` into an identical
+   120 mm semi-infinite RHA half-space. Measure with
+   `tools/measure_penetration.py` (solver-free; finds the penetrator as whatever
+   moves at t=0, reads `v` from frame 0, derives its window from the erosion curve).
+   - **The claim is the RATIO, not the absolute.** Both arms land at the same
+     0.937× of their own asymptote, so the shortfall is the model's, not the
+     material's, and cancels: measured 1.1614 vs 1.1609 predicted from density,
+     **0.04 %**.
+   - **Read the trend, not the third decimal.** `u/v` is not fully dt-converged
+     (163→500 substeps moves copper@7000 +2.6 %), and `u` is the *erosion-front*
+     velocity, so it inherits erosion's partly-numerical component. The defence is
+     that both are systematic and cancel in a trend/ratio — not that the metric is
+     clean.
+   - **Don't reuse a perforating deck for this.** `u` is only a penetration
+     velocity while the penetrator is inside the target; after perforation the
+     leading edge is a free residual flying at ~`v`, which fits a *beautiful*
+     straight line (`apfsds_vs_rha` reads u/v=0.729 at R²=0.999, above a ceiling
+     that is physically unreachable). R² cannot catch that; the tool's back-face
+     check does.
+   - **Honour the `steady` flag.** tungsten@1500 is R²=0.985 and excluded: its rod
+     *decelerates* (Tate) rather than reaching steady state, because tungsten's
+     yield is 7.5× copper's. That is physics, not a probe bug — and not a deck to
+     re-tune until it "works".
+
+Don't rewrite from scratch. The full solver arc (milestones 1–9) is done.
 
 **Stale-number correction (measured 2026-07-16):** the "~16 % RHA spall" quoted in
 the milestone 3/4 notes above and the 15.6 % in milestone 6 were measured at
