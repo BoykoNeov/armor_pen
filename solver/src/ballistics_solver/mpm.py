@@ -1162,6 +1162,22 @@ def _g2p(
     #
     #     rho0*e1*(1 + Gamma0*dJ/2) = rho0*e0 - [ (p_cold(J1) + p0)/2 + q ] * dJ
     #
+    # VERIFIED IN THE KERNEL, not just in the scheme. PHYSICS §3.10's 1-D piston is a
+    # separate numpy implementation: it validates the ALGEBRA and cannot catch a bug in
+    # this threading, in the F_old/C_old timing, or in whether the `q` fed here is the
+    # one `_p2g` actually scattered. And every AV-OFF bake exercises only the reversible
+    # -p*dJ term, so it cannot exercise this path at all. Measured on apfsds_vs_rha with
+    # AV ON (c_q=1.5, c_l=0.6), live shocked rha well clear of the guard:
+    #
+    #   median J = 0.918,  median e = 9.8e4  (nonzero: e IS fed)
+    #   median p(J,e)/p_H = 0.9959           <- lands on the Hugoniot
+    #   median p_cold/p_H = 0.9208           <- where it would sit if e were dead
+    #   thermal share of p = 7.6%
+    #
+    # 0.9959 vs 0.9208 is the whole milestone, in the kernel. If a future change makes
+    # these two converge, `e` has stopped being fed; if p/p_H lands BETWEEN them, `q` has
+    # stopped reaching the energy equation (the isentrope — the falsifier's exact shape).
+    #
     # HONEST LIMIT (root §10): this is the VOLUMETRIC work plus AV only. Plastic
     # dissipation is NOT fed to e, so strongly-shearing regions are missing a real
     # heat source. Deliberate and stated: it is negligible at the near-hydrostatic jet
