@@ -152,43 +152,65 @@ LIBRARY: dict[str, Material] = {
         yield_strength=0.05e3, damage_threshold=0.02,
         reactive=False,
     ),
-    # NERA (non-explosive reactive armor) interlayer: a soft elastic filler that
-    # NEVER detonates but stays cohesive, so the sandwich plates bulge apart on
-    # the shock alone and the bulge is *held open* rather than collapsing.
+    # NERA (non-explosive reactive armor) interlayer: a soft filler that carries no
+    # explosive, so the sandwich plates bulge apart on the impact shock alone and
+    # the cohesive interlayer *holds the bulge open* rather than collapsing.
     #
     # Same mass/stiffness as era_filler / era_filler_inert, so all three are the
     # equal-areal-mass arms of one A/B family; they differ ONLY in the filler's
     # response path:
     #   era_filler       reactive, ignites   -> detonation overpressure
-    #   era_filler_inert non-reactive        -> plasticity + ductile spall at
-    #                                           damage_threshold=0.02, i.e. the
-    #                                           soft filler shreds and gets out
-    #                                           of the way
-    #   nera_filler      reactive, no ignite -> mpm.py skips BOTH return-mapping
-    #                                           and the ductile-spall gate for
-    #                                           reactive particles, so this stays
-    #                                           soft-elastic and cohesive forever
+    #   era_filler_inert non-reactive, ductile, damage_threshold=0.02
+    #                                        -> the soft filler shreds and gets
+    #                                           out of the way
+    #   nera_filler      non-reactive, ductile, damage_threshold=3.0
+    #                                        -> yields and flows, but survives:
+    #                                           the cohesive bulge
     #
-    # `ignition_compression=0` is what makes it never ignite (`_update_reactive`
-    # gates ignition on `ic > 0`). That, NOT `detonation_pressure=0`, is the
-    # persistent-bulge branch: zero pressure still ignites on the impact shock,
-    # latches the particle spent, and collapses it to limp debris.
+    # MILESTONE 12 CHANGED THIS MATERIAL. It used to be `reactive=True` with
+    # `ignition_compression=0` — a filler that never ignites. That was a
+    # mis-encoding: `reactive=True` exists to run the ERA state machine, but mpm.py
+    # ALSO uses it to gate out `_return_mapping` (L538) and `_update_damage` (L653).
+    # The stated reason for those gates is that a filler "must not spall before it
+    # detonates" — which cannot apply to a filler that never detonates. nera_filler
+    # inherited a gate written for its igniting twin, and the cost was that it could
+    # neither yield nor break: no dissipation path at all.
     #
-    # DEAD FIELDS — do not tune these here, they are not consumed. `reactive=True`
-    # makes mpm.py skip BOTH `_return_mapping` (plasticity) and `_update_damage`
-    # (ductile spall) for this particle. So `yield_strength` and
-    # `damage_threshold` below are inert, kept only for parity with the twins:
-    # this filler is governed by E / nu / density alone. Consequence to be honest
-    # about (PHYSICS §3.3): it can neither yield nor break, so it stores elastic
-    # energy without dissipating it — stiffer-than-real, and any "the cohesive
-    # filler resists the rod better" A/B against era_filler_inert is confounded by
-    # that, not just by cohesion. Verified stable (thickness plateaus, no NaN).
+    # The fix is the one apfsds_vs_nera.yaml already prescribed in its own header —
+    # "a NON-reactive filler with a high damage_threshold" — and it needs ZERO
+    # kernel code. Both gates key off `reactive>0.5`, so going non-reactive turns
+    # plasticity and the spall path back on; the raised threshold is what keeps the
+    # interlayer cohesive rather than letting it shred like era_filler_inert.
+    #
+    # NOTHING PHYSICAL WAS LOST by dropping `reactive=True`, verified path by path:
+    # `_update_reactive` was a true no-op here (ic=0, burn=0, damage=0 -> every
+    # branch falls through) and `_p2g` takes the identical elastic stress term for
+    # an unignited particle. ONE real difference: `_clamp_reactive_v` no longer caps
+    # this filler at REACTIVE_VMAX. Measured on the pre-M12 bake, that clamp bound on
+    # exactly ONE particle across frames 158-159 of 550 — negligible, but not zero,
+    # and its justification (runaway from the F-independent detonation source) never
+    # applied to a filler with no detonation.
+    #
+    # BOTH FIELDS BELOW ARE NOW LIVE — they were dead before, and neither is tuned:
+    #   yield_strength  50 MPa — unchanged from the value the dead field already
+    #                   carried, deliberately NOT re-picked to land an answer.
+    #   damage_threshold 3.0  — representative elastomer elongation-to-failure
+    #                   (public order-of-magnitude, root §10). Real NERA interlayers
+    #                   are rubber, which stretches hundreds of percent before it
+    #                   tears; 3.0 is that reserve, ~150x era_filler_inert's 0.02.
+    #                   It is NOT "infinity": debris dragged downrange and crushed
+    #                   between the rod and the main plate SHOULD fail, and does.
+    #
+    # HONEST LIMIT (PHYSICS §3.3): a real elastomer dissipates viscoelastically, not
+    # by von Mises plastic flow. Plasticity is the dissipation path this solver has,
+    # and it is the right *kind* of thing (irreversible, isochoric, cohesion-
+    # preserving) rather than the right constitutive model. Plausible, not
+    # predictive (root §1).
     "nera_filler": Material(
         name="nera_filler", material_id=5,
         density=1.6e-3, youngs_modulus=5.0e3, poisson_ratio=0.40,
-        yield_strength=0.05e3, damage_threshold=0.02,  # both DEAD — see above
-        reactive=True,
-        detonation_pressure=0.0, burn_time=0.0, ignition_compression=0.0,
+        yield_strength=0.05e3, damage_threshold=3.0,  # both LIVE — see above
+        reactive=False,
     ),
 }
 

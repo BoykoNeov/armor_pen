@@ -118,7 +118,14 @@ Grow the reference MLS-MPM incrementally, validating visually with
    `_update_damage` (spall), so `nera_filler` can neither yield nor break and its
    `yield_strength` / `damage_threshold` are **dead fields**. It illustrates the
    damage model (spalled particles keep momentum but drop their stress term in
-   `_p2g`, so they stop resisting), not armor. Two
+   `_p2g`, so they stop resisting), not armor.
+   **⚠️ M12 SUPERSEDES THIS CAVEAT'S PREMISE — and its numbers.** `nera_filler` is
+   non-reactive and ductile now; both fields are **live** and the A/B is
+   single-variable (milestone 12 below). The confound is gone — but so is the
+   material, so **the rod deltas this caveat refers to are NOT re-measured and must
+   not be quoted**. Un-confounding them does not promote them to an armor claim; the
+   "it illustrates the damage model, not armor" reading is the part that survives.
+   Two
    stability guards, reactive-particles-only: burning **and** spent
    filler get `F` pinned to identity (no elastic memory; return-mapping skips
    them so `F` would otherwise drift to inf and overflow the host readout), and
@@ -312,6 +319,61 @@ Grow the reference MLS-MPM incrementally, validating visually with
      not particulate (§3.4, and free-flight damage at S=90 is exactly 0.0000), so no
      optimum is reachable and none was manufactured.
 
+10. **Milestone 12 — the NERA filler's dissipation path (PHYSICS §3.6.1/§3.6.2).**
+   Zero kernel code; `materials.py` only. Read §3.6.1 before trusting any
+   `worst live J` in this repo.
+   - **`nera_filler` was mis-encoded, and the fix was written in the deck's own
+     header.** It was `reactive=True` with `ignition_compression=0` — a filler that
+     never ignites. But `reactive` *also* gates out `_return_mapping` (L538) and
+     `_update_damage` (L653), and that gate's stated reason is "must not spall
+     before it detonates" — which **cannot apply to a filler that never detonates.**
+     It inherited a gate written for its igniting twin and had no dissipation path.
+     Now `reactive=False`, `damage_threshold` 0.02 → **3.0**, `yield_strength`
+     unchanged at 50 MPa. Both fields were **dead**; both are now **live**.
+   - **The headline finding: `J=0.2159` was never a bulk state.** PHYSICS §3.6 said
+     the filler "genuinely reaches ~79 % volume loss" and sized `EOS_CFL_J_MARGIN`
+     (~2.5× substeps on **every** deck) from it. Measured: **25 of 36 966 particles**
+     below J=0.5 (**0.068 %**), median **0.9932**, and the mean live J **never** drops
+     below 0.9495. `worst live J` is a **min over every particle over every frame** —
+     it is one particle, and §3.9 already warned that a min-over-a-set is the wrong
+     instrument.
+   - **They are not even in the interlayer.** The filler seeds at x=156.1–167.9; the
+     crushed particles sit at **x=200.8–202.0**, inside the *main plate's* crater,
+     pinned by the rod tip (leading edge 201.87) **34 mm downrange across the standoff
+     gap**. 68.95 % of the filler is still behind the back plate.
+   - **The "converged" check refined the wrong axis.** 0.2159@110 vs 0.2120@336 is the
+     same trapped particles both times; `dt` cannot dissolve a geometric trap. Fourth
+     time this repo has been bitten by a convergence claim — see the memory note.
+   - **The CFL bonus did NOT arrive, and it never could.** Ratio 0.442 vs the jet's
+     0.713, so nera **still binds** and the margin **stays 0.35**. The sub-0.3
+     particles carry `alpha`=**2.91 of a 3.0 reserve (97 %)** — they are not failing
+     to yield, they are **saturating** the yield surface and are still crushed.
+     Plastic flow is isochoric, so it cannot relieve volumetric confinement however
+     hard it engages. **Relief needs a VOLUMETRIC (compaction) criterion.** Not done.
+   - **Do NOT compare `worst live J` across arms with different `damage_threshold`.**
+     `era_filler_inert` reads a lovely 0.6813 *because* it shreds — the crushed
+     particles spall out of the **live** set. Lowering `dthr` to buy CFL headroom is
+     buying it with cohesion, i.e. tuning toward the answer (§10).
+   - **Counterintuitive and measured:** spall makes worst-J **worse** (0.2421 with
+     `dthr=3.0` vs 0.2903 with spall off). A spalled particle drops its stress term in
+     `_p2g` and stops resisting, concentrating the crush on its live neighbours.
+   - **Cohesion survives — the go/no-go.** vs the shredding twin (one field apart):
+     spall **18.65 % vs 69.59 %**, coherent **66.0 % vs 30.4 %**. A plasticity-only
+     control attributes the bulge change to **plasticity, not spall** (53.8 vs 53.6 mm
+     banded separation at 0 % vs 18.65 % spall). The control is **not** the ship
+     candidate: `dthr=∞` scores better on CFL (44 %) but re-creates a **dead field**,
+     the exact defect M12 removes.
+   - **⚠️ The sequencing rationale FAILED — carry this into M13.** M12 was done first
+     so Mie-Grüneisen would land where every material is inside its Hugoniot's valid
+     range. `nera_filler`'s pole is at `J = 1−1/s ≈ 0.5`; M12 leaves worst live J at
+     **0.2421**, still far past it. **The MG pole guard stays load-bearing on this
+     deck** and must be designed, not assumed.
+   - **What did NOT get re-measured** (stated, not buried): §3.3's plate-separation
+     figures (16.1/21.1) and rod deltas (tip 261.8 etc.) were measured on the pre-M12
+     filler. An independent probe that reads exactly 18.000 at t=0 does **not**
+     reproduce 16.1/21.1 even on the pre-M12 bake (it gets 14.1/13.3 — opposite sign
+     beside the channel). M5's probe was ad-hoc and never committed. Don't quote them.
+
 9. **Milestone 11 — artificial (shock) viscosity (PHYSICS §3.9).** Built the fix
    milestone 8 asked for, measured it, and **retired milestone 8's diagnosis**.
    `SolverParams.av_c_q` / `av_c_l`, **default 0.0 = OFF**. Read §3.9 before
@@ -338,7 +400,7 @@ Grow the reference MLS-MPM incrementally, validating visually with
      Mie-Grüneisen milestone can switch it on for the jet without re-tuning the KE
      decks — which is the reason it is kept at all.
 
-Don't rewrite from scratch. The full solver arc (milestones 1–11) is done.
+Don't rewrite from scratch. The full solver arc (milestones 1–12) is done.
 
 **Stale-number correction (measured 2026-07-16):** the "~16 % RHA spall" quoted in
 the milestone 3/4 notes above and the 15.6 % in milestone 6 were measured at

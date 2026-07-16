@@ -109,27 +109,57 @@ CFL: float = 0.3
 # MEASURED, not guessed — and the binding case is not the one you would expect.
 #
 #   copper jet tip  predicted J_eq=0.6056, reached 0.4315 -> ratio 0.713
-#   nera_filler     predicted J_eq=0.5480, reached 0.2159 -> ratio 0.394  <-- binds
+#   nera_filler     predicted J_eq=0.5480, reached 0.2421 -> ratio 0.442  <-- binds
 #
 # Note the jet's ratio is itself dt-dependent (0.648 at 47 substeps, 0.713 at 240)
 # because it measures the shock ring, which resolves as dt falls. The filler's does
-# NOT drift (0.2159 at 110 substeps vs 0.2120 at 336), so the binding number is the
-# stable one — which is the only reason a single margin can be trusted here.
+# NOT drift, so the binding number is the stable one — which is the only reason a
+# single margin can be trusted here.
 #
-# The **NERA filler** sets this constant, not the hypervelocity jet. `nera_filler`
-# is reactive with `ignition_compression=0`, so ``_p2g`` skips BOTH the return
-# mapping and the ductile-spall gate: it can neither yield nor break nor self-vent
-# (materials.py says so outright). It is soft (K0≈8.9 GPa) with no dissipation
-# path and nowhere to go, so the rod squeezes it to ~79 % volume loss. Under the
-# pre-EOS law that was harmless — it simply went limp. Under a stiffening EOS the
-# same state is a 50 000 mm/ms sound speed.
+# The **NERA filler** sets this constant, not the hypervelocity jet — but NOT for
+# the reason this comment used to give. It said the filler "can neither yield nor
+# break nor self-vent ... so the rod squeezes it to ~79 % volume loss", and that
+# J≈0.21 was "REAL ... converged to 1.8 %", so "the filler genuinely goes there".
 #
-# That J≈0.21 is REAL, not an instability eating itself: at margins 0.35 and 0.20
-# (110 vs 336 substeps/frame) it lands at 0.2159 and 0.2120 — converged to 1.8 %.
-# So the filler genuinely goes there and the substep has to cover it.
+# MILESTONE 12 FALSIFIED THAT (PHYSICS §3.6.1). Two errors compounded:
 #
-# 0.35 is the measured value, verified by audit (79 % of budget used on the deck
-# that binds, 27-57 % elsewhere). Earlier cuts and why they were wrong: 0.8 only
+#   * `worst live J` is a MIN over every live particle over every frame — ONE
+#     particle. Read as a bulk state it is simply wrong: at the worst frame only
+#     25 of 36966 filler particles (0.068 %) are below J=0.5, the median is 0.9932,
+#     and the mean live J NEVER drops below 0.9495 over the whole event. There is
+#     no 79 % volume loss. (§3.9 already warned a min-over-a-set is the wrong
+#     instrument; this constant was sized with it anyway.)
+#   * The "converged to 1.8 %" check refined dt on a GEOMETRIC trap — the same
+#     handful of particles at 110 and 336 substeps. Wrong axis, same class of error
+#     as §3.8's grid-limited jet.
+#
+# What it actually is: filler debris dragged 34 mm downrange ACROSS THE STANDOFF
+# GAP and pinned in the MAIN PLATE's crater between the rod tip and the plate — a
+# tungsten-vs-RHA vise. The mechanism the old comment named (no dissipation path ->
+# squeezed arbitrarily far) was right; the magnitude and the location were not.
+#
+# M12 gave the filler a real dissipation path (materials.py: non-reactive, ductile).
+# It did NOT relieve this, and cannot: the trapped particles carry equivalent
+# plastic strain 2.91 of a 3.0 reserve — 97 %, i.e. SATURATING the yield surface —
+# and are still crushed, because plastic flow is isochoric and volumetric
+# confinement is orthogonal to it. Relief needs a VOLUMETRIC (compaction) criterion.
+# Until then the substep still has to cover these particles, so this margin stays.
+#
+# 0.35 is the measured value, verified by audit (post-M12: 63 % of budget used on
+# the deck that binds, was 79 % pre-M12; 27-57 % elsewhere, not re-measured).
+#
+# WHY IT IS NOT RAISED, now that M12 moved the binding deck from 0.2159 to 0.2421.
+# It could be, arithmetically: the margin sets design J = margin * J_eq, so 0.40
+# would design for J=0.219 and still clear the reached 0.2421, saving ~23 % of
+# substeps ((0.35/0.40)^2). It is deliberately NOT taken. The number it would be
+# sized against is a SINGLE-PARTICLE EXTREMUM that wobbles ~1 % run to run (the
+# repo's <=0.11 % scatter floor is for aggregates), so a margin with ~10 % headroom
+# above it is fragile in exactly the way this constant exists to prevent. And the
+# margin is GLOBAL: raising it demands re-measuring predicted-vs-reached on every
+# deck, not just the one that moved. A cheap substep saving is not worth a bake
+# that validates clean and is quietly wrong.
+#
+# Earlier cuts and why they were wrong: 0.8 only
 # survived `heat_vs_composite` because that deck's ceramic donated headroom the
 # copper tip borrowed; 0.55 covered the jet but let `apfsds_vs_nera` breach by
 # 2.41x. Substeps scale as (1/margin)^(K'/2), so this costs ~2.5x over an

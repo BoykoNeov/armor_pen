@@ -368,6 +368,37 @@ both decks — another reason to read the A/B **delta**, not the absolutes.
 
 ### 3.3 NERA persistent bulge — the unignited branch (verified)
 
+> **⚠️ MILESTONE 12 REPLACED THE MATERIAL THIS SECTION MEASURES. READ §3.6.2 FIRST.**
+>
+> Every NERA figure below was measured on a `nera_filler` that was `reactive=True`
+> with `ignition_compression=0` — a filler that could **neither yield nor break**.
+> That was a mis-encoding, not a design (§3.6.2), and M12 replaced it with a
+> non-reactive ductile filler (`yield_strength` 50 MPa and `damage_threshold` 3.0,
+> both now **live**). **The numbers below are therefore stale, and one of them is
+> now false outright:**
+>
+> - *"Across all 550 frames the NERA filler's damage fraction is **0.000** … This
+>   is the decisive claim"* — **no longer true, and deliberately so.** The M12
+>   filler spalls **18.65 %**. It never *ignites* (that was always about
+>   `ignition_compression`, and it is now simply non-reactive), but it can now
+>   **tear**, because a filler that can never break is the defect M12 removed.
+> - The **cohesion claim survives on a better footing.** Against the shredding twin
+>   — now one field apart (`dthr` 3.0 vs 0.02) instead of confounded — NERA spalls
+>   **18.65 % vs 69.59 %** and keeps **66.0 % vs 30.4 %** of its filler coherent.
+>   That is the real claim, and it is the single-variable test this section's own
+>   closing paragraph used to ask for and call "not done here."
+> - The **plate-separation figures (16.1 / 21.1 mm) have NOT been re-measured**,
+>   and are not merely stale — an independent probe reading exactly 18.000 mm at
+>   `t=0` does not reproduce them even on the **pre-M12** bake (it gets 14.1
+>   plate-wide and 13.3 banded, i.e. the *opposite sign* beside the channel). M5's
+>   probe was ad-hoc and never committed as a tool, so the disagreement is
+>   unresolved. **Do not quote 16.1 / 21.1 until the metric is rebuilt and
+>   committed.** Flagged rather than quietly re-derived.
+>
+> The *structural* claim of this section — a cohesive interlayer behaves unlike a
+> shredding one, and the two disagree in sign between plate-wide and banded
+> metrics — is unaffected. The magnitudes are not.
+
 §3.1 describes a **persistent NERA bulge** as the reactive path's *unignited*
 branch held open: a filler with `ignition_compression=0` never ignites
 (`_update_reactive` gates ignition on `ic > 0`), so it stays soft-elastic and
@@ -381,7 +412,8 @@ differing only in the filler's response path.
 
 **The branch works as specified.** Across all 550 frames the NERA filler's damage
 fraction is **0.000** — it never ignites and never spalls. This is the decisive
-claim and it reproduces exactly, unchanged by the pointed nose.
+claim and it reproduces exactly, unchanged by the pointed nose. *(Pre-M12. The
+filler now spalls 18.65 % by design — see the box above.)*
 
 The supporting evidence is the **cohesion**: the filler expands far less than
 either twin — thickness (1st–99th percentile x-span) 11.8 → **39.5 mm**, where the
@@ -415,6 +447,15 @@ perfectly elastic — it stores the shock and springs — where the inert filler
 and dissipates it. (See the model-mechanics note below: that is a statement about
 the model's construction, not about armor.)
 
+> **⚠️ M12: that explanation described the mis-encoding, not the physics.** The
+> filler is no longer perfectly elastic and no longer "stores the shock and
+> springs" — it yields at 50 MPa and tears at `dthr=3.0`. It remains far more
+> cohesive than the shredding twin (18.65 % vs 69.59 % spall), so the *behaviour*
+> this paragraph describes still has a mechanism; it is now **dissipative cohesion**
+> rather than **elastic inability to fail**. Measured attribution (§3.6.2): the
+> separation change is driven by **plasticity, not spall** — a plasticity-only
+> control with 0 % spall gives near-identical separation (53.8 vs 53.6 mm banded).
+
 Never measure this *inside* the channel: there the plates are perforated and their
 material is dragged downrange, which reads as a large "gap" that is debris
 transport, not bulge. And never compare a plate-wide figure against a banded one —
@@ -445,6 +486,21 @@ than an equal mass of cohesive material. A genuine single-variable cohesion test
 would be a **non-reactive** filler with a high `damage_threshold` against the
 0.02 one; that isolates cohesion without also disabling plasticity, and is not
 done here.
+
+> **✅ M12 DID IT — this paragraph's own prescription is now what ships.**
+> `nera_filler` is non-reactive with `damage_threshold=3.0`, so it yields *and*
+> tears; the fields above are **live**, not dead. The A/B against
+> `era_filler_inert` differs in **exactly one field** (`dthr` 3.0 vs 0.02), pinned
+> by `tests/test_nera_dissipation.py`, so it now isolates cohesion at equal
+> toughness — "cohesive vs shredding" rather than "unbreakable vs shredding". It
+> cost **zero kernel code**: both gates key off `reactive > 0.5`.
+>
+> **The rod deltas quoted just above (tip 261.8, speed 1146, damage 0.487) were
+> measured on the pre-M12 filler and are NOT re-measured.** The old confound is
+> gone, but so is the material — do not quote them as the current model's answer,
+> and do not read the *un*-confounding as promoting them to an armor claim. The
+> paragraph's core warning stands on its own: a spalled particle keeps its momentum
+> but drops its stress term, so this illustrates the **damage model**, not armor.
 
 Honesty caveats (root §1/§10): one bake per condition, and MPM grid `atomic_add`
 ordering is non-deterministic — but the deltas are large, monotonic, and
@@ -739,15 +795,25 @@ reaches it. `tests/test_stress_paths.py` pins both paths together.
 
 ### 3.6 What the EOS did to the NERA filler (an unwelcome finding)
 
-The deck that binds the substep is not the 7 km/s jet. It is **`apfsds_vs_nera`**,
-and the reason is a real interaction rather than a numerical nuisance.
+> **Written at milestone 8, and describing a `nera_filler` that no longer exists.**
+> Kept because its *diagnosis of the mechanism* was right and is what motivated the
+> fix. Its magnitude claim was wrong (§3.6.1) and its cause is now removed (§3.6.2).
+> Everything below is in the **past tense as of M12**; the tense in the original has
+> been left alone so the record reads as it was.
 
-`nera_filler` is `reactive=True` with `ignition_compression=0`, which means
-`mpm.py` skips **both** the return mapping and the ductile-spall gate for it, and
-it never ignites. So it can neither yield, nor break, nor self-vent — §3.3 and
-`materials.py` already say this outright ("it can neither yield nor break, so it
-stores elastic energy without dissipating it — stiffer-than-real"). It is soft
-(`K₀ ≈ 8.9 GPa`) with no dissipation path and nowhere to go.
+The deck that binds the substep is not the 7 km/s jet. It is **`apfsds_vs_nera`**,
+and the reason is a real interaction rather than a numerical nuisance. *(Still true
+after M12: it still binds, at ratio 0.442 vs the jet's 0.713 — but for a reason
+§3.6.1 restates, and the margin stays 0.35.)*
+
+`nera_filler` **was** `reactive=True` with `ignition_compression=0`, which meant
+`mpm.py` skipped **both** the return mapping and the ductile-spall gate for it, and
+it never ignited. So it could neither yield, nor break, nor self-vent — §3.3 and
+`materials.py` said this outright ("it can neither yield nor break, so it stores
+elastic energy without dissipating it — stiffer-than-real"). It is soft
+(`K₀ ≈ 8.9 GPa`), and it had no dissipation path and nowhere to go. **M12 gave it
+one** (§3.6.2): it is now non-reactive and ductile, and both fields are live. The
+paragraph below diagnoses why that mattered — and §3.6.1 corrects how much.
 
 Under the pre-EOS law that was *harmless*: the rod squeezed it, `λ(J−1)J` decayed
 toward zero, and it went limp. Under a stiffening EOS the identical situation
@@ -759,9 +825,20 @@ gives a **50 000 mm/ms sound speed**:
 | 0.35 | 110 | 0.2159 | OK, 79 % of budget |
 | 0.20 | 336 | 0.2120 | OK, 27 % of budget |
 
-**That `J ≈ 0.21` is real, not the instability eating itself.** Shrinking `dt` by
-3× moves it 1.8 %, so it is converged: the filler genuinely reaches ~79 % volume
-loss. Its predicted-vs-reached ratio is **0.394**, far worse than the copper jet's
+*(All three rows are **pre-M12**, on the no-dissipation filler. Post-M12 the shipped
+0.35 row reads `J = 0.2421` at **63 %** of budget; the 0.55 and 0.20 rows were not
+re-measured. The margin **stays at 0.35** — see `mpm.EOS_CFL_J_MARGIN` for why the
+~23 % substep saving M12 arithmetically permits is deliberately not taken.)*
+
+> **⚠️ THE PARAGRAPH THAT STOOD HERE WAS WRONG, AND MILESTONE 12 MEASURED IT WRONG.**
+> It read: *"That `J ≈ 0.21` is real, not the instability eating itself. Shrinking
+> `dt` by 3× moves it 1.8 %, so it is converged: **the filler genuinely reaches
+> ~79 % volume loss**."* The `J` value is real and reproduces exactly. **The
+> sentence built on it is not: the filler's bulk is never meaningfully compressed
+> at all.** See §3.6.1 — the rest of this section's *mechanism* survives, its
+> *magnitude* and *location* do not.
+
+Its predicted-vs-reached ratio is **0.394**, far worse than the copper jet's
 **0.713** — which is why it, not the jet, sets `EOS_CFL_J_MARGIN`. That the
 filler's ratio is *stable* under refinement while the jet's drifts (0.648 → 0.713
 as substeps go 47 → 240, because the jet's is a shock-ring artifact) is what makes
@@ -770,11 +847,124 @@ a single margin trustworthy: the binding number is the one that does not move.
 The honest reading: this is **not a new defect the EOS introduced**, it is an old
 one the EOS made *visible*. A material with no dissipation path was always going
 to be squeezed arbitrarily far; the old law just hid it by going soft at exactly
-the moment it should have resisted. What §3.3 already flagged as
-"stiffer-than-real" is now quantified. Any conclusion that rests on the NERA
-filler's stiffness — notably the cohesive-bulge A/B against `era_filler_inert` —
-was confounded before and is still confounded, now measurably so. Giving the
-filler a real dissipation path is its own milestone; it is not done.
+the moment it should have resisted.
+
+### 3.6.1 What `J = 0.2159` actually is (milestone 12)
+
+**It is 27 particles out of 36 966, and they are not in the interlayer.**
+
+The audit's `worst live J` is a **min over every live particle over every frame** —
+a single-particle extremum, the least trustworthy metric class in this repo by its
+own lessons (§3.9: *"a min-over-a-set traces the envelope … trace a SINGLE
+particle"*). §3.6 above read that extremum as a **bulk** statement. Traced properly
+(`_trace_j` on material 5, every substep, whole event, unmodified solver):
+
+| quantity | measured |
+|---|---|
+| worst live filler `J` | **0.2159** (reproduces the pre-M12 docs exactly) |
+| **mean** live filler `J` at that same instant | **1.0105** |
+| **minimum the mean ever reaches**, whole event | **0.9495** |
+| **median** live filler `J` at the worst frame | **0.9932** |
+| particles below `J=0.5` at the worst frame | **25 / 36 966 = 0.068 %** |
+| particles below `J=0.3` | **3 = 0.008 %** |
+
+The bulk filler loses ~5 % of its volume at worst. There is no 79 % volume loss.
+
+**And the crushed particles are 34 mm downrange of the interlayer.** The filler
+seeds at `x = 156.1–167.9`; the sub-0.5 particles sit at `x = 200.8–202.0` — inside
+the **main plate's** crater (`199.1–228.9`), pinned there by the rod tip (leading
+edge `201.87` at that frame). 68.95 % of the filler is still behind the back plate,
+median `x = 165.0`. So this was never the interlayer being squeezed in the sandwich;
+it is filler debris dragged across the standoff gap and caught in a
+**tungsten-rod-vs-RHA vise**.
+
+**Why the convergence check passed and still misled.** 0.2159 at 110 substeps vs
+0.2120 at 336 is the *same handful of trapped particles* in both. Refining `dt`
+cannot dissolve a geometric trap — the axis was wrong. This is exactly the failure
+§3.8 catalogued for the jet (*"cells across the jet is the controlling parameter"*),
+arrived at from the opposite direction, and it is the fourth time this repo has been
+bitten by a convergence claim that measured the wrong thing.
+
+**What survives, and it is the part that mattered.** The *mechanism* §3.6 names — a
+material with no dissipation path gets squeezed arbitrarily far — is correct. It
+just applies to ~0.07 % of the filler in a vise, not to the interlayer in bulk. That
+mechanism is real enough to have set `EOS_CFL_J_MARGIN` for the whole repo, and
+milestone 12 fixed its cause.
+
+### 3.6.2 The fix, and the bonus that did not arrive (milestone 12)
+
+`nera_filler` was `reactive=True` with `ignition_compression=0` — a filler that
+never ignites. That flag exists to run the ERA state machine, but `mpm.py` **also**
+uses it to gate out `_return_mapping` and `_update_damage`, and the stated reason
+for those gates is that a filler *"must not spall before it detonates."* **That
+reason cannot apply to a filler that never detonates.** `nera_filler` inherited a
+gate written for its igniting twin, and the price was no dissipation path at all.
+
+The fix is what `apfsds_vs_nera.yaml`'s own header already prescribed — *"a
+NON-reactive filler with a high damage_threshold"* — and it cost **zero kernel
+code**, because both gates key off `reactive > 0.5`. `yield_strength` (50 MPa,
+unchanged) and `damage_threshold` (0.02 → 3.0, representative elastomer
+elongation-to-failure) are now **live fields**; they were dead. Nothing physical was
+lost: `_update_reactive` was a verified no-op here (`ic=0`, `burn=0`, `damage=0` →
+every branch falls through) and `_p2g` takes the identical elastic term for an
+unignited particle. One real difference, reported rather than waved away:
+`_clamp_reactive_v` no longer caps this filler, and on the pre-M12 bake that clamp
+bound on **exactly one particle across frames 158–159 of 550**.
+
+**Measured.**
+
+| arm | `dthr` | worst live `J` | CFL budget | filler spall | coherent |
+|---|---|---|---|---|---|
+| pre-M12 (no dissipation) | — | 0.2159 | 79 % | 0.00 % | 68.3 % |
+| **M12 (shipped)** | **3.0** | **0.2421** | **63 %** | **18.65 %** | **66.0 %** |
+| control: plasticity only | ∞ | 0.2903 | 44 % | 0.00 % | 77.7 % |
+| `era_filler_inert` | 0.02 | 0.6813 | 17 % | 69.59 % | 30.4 % |
+
+**Cohesion holds — the claim the fix had to not break.** Against the shredding twin
+(one field apart), NERA spalls **18.65 % vs 69.59 %** and keeps **66.0 % vs 30.4 %**
+of its filler coherent, sitting beside the pre-M12 arm (68.3 %), nowhere near
+era_inert. The bulge change is attributable to **plasticity, not spall**: the
+plasticity-only control gives near-identical plate separation (53.8 vs 53.6 mm
+beside the channel) with 0 % spall instead of 18.65 %.
+
+**`era_filler_inert`'s lovely 0.6813 is a trap, not a target.** Its filler is not
+uncrushed — the crushed particles spall instantly and leave the *live* set.
+`worst live J` is **not comparable across arms with different `damage_threshold`**:
+it measures different populations. Lowering `dthr` to buy CFL headroom is buying it
+with cohesion, and it would be tuning toward the answer (§10).
+
+**The CFL bonus did not arrive, and here is why it never could.** M12's ratio is
+`0.2421 / 0.5480 = 0.442`, still below the jet's 0.713, so **`apfsds_vs_nera` still
+binds `EOS_CFL_J_MARGIN` and the margin stays at 0.35.** No substep saving. The
+mechanism is measurable rather than arguable: at the worst frame the sub-0.3
+particles carry **equivalent plastic strain `alpha = 2.91` against a 3.0 reserve** —
+**97 %**, and 4.5× the bulk's 0.65. They are not failing to yield; they are
+**saturating** the yield surface and are still crushed. Plastic flow is **isochoric**
+(§3.5), so it cannot relieve volumetric confinement no matter how hard it engages.
+That orthogonality is not a tuning problem, and it predicts the counterintuitive
+ordering above: spall at `dthr=3.0` makes worst-`J` *worse* than never spalling
+(0.2421 vs 0.2903), because a spalled particle drops its stress term in `_p2g` and
+stops resisting, concentrating the crush on its live neighbours.
+
+**So: relieving this needs a VOLUMETRIC criterion (compaction/pore collapse), not a
+deviatoric one.** That is a separate milestone and it is not done. Two consequences
+worth stating plainly:
+
+- Any conclusion resting on the NERA filler's stiffness — notably the cohesive-bulge
+  A/B — was confounded before, and the confound is **now removed**: the A/B is
+  single-variable (`dthr` 3.0 vs 0.02, everything else equal), pinned by
+  `tests/test_nera_dissipation.py`.
+- **The stated reason for doing this before Mie-Grüneisen was not achieved.** M12
+  was sequenced first so MG would land on a solver where every material stays inside
+  its Hugoniot's valid range. `nera_filler`'s pole sits at `J = 1 − 1/s ≈ 0.5`, and
+  M12 leaves the worst live `J` at **0.2421** — still far past it. **A pole guard
+  stays load-bearing on this deck under milestone 13**, and it must be designed as
+  such rather than treated as a formality.
+
+**Honest limit on the fix itself.** A real elastomer dissipates *viscoelastically*;
+von Mises plastic flow is the dissipation path this solver has. It is the right
+*kind* of thing — irreversible, isochoric, cohesion-preserving — rather than the
+right constitutive model. Plausible, not predictive (§1).
 
 ---
 
