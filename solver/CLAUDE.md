@@ -38,9 +38,10 @@ Grow the reference MLS-MPM incrementally, validating visually with
    isochoric, no hardening. `apfsds_vs_rha` bakes clean on the RTX 5090 (no
    NaN/Inf), passes `validate_cache`, and the rod **mushrooms** (length 60→42 mm,
    width 8→40 mm) while the plate craters — **no perforation hole** (that needs
-   damage, milestone 3). Bulk stress reads ~yield; a thin over-read tail at the
-   compression shock front is a fixed-corotated/no-EOS property, tamed
-   viewer-side by a percentile colormap clamp (see `_von_mises`, PHYSICS §3).
+   damage, milestone 3). Bulk stress reads ~yield; the thin over-read tail that
+   used to appear at the compression shock front was a no-EOS property and
+   **milestone 8 removed its cause** (PHYSICS §3.5), so the viewer's percentile
+   colormap clamp is now a styling default, not a cover for the physics.
    Equivalent plastic strain accumulates into an internal `alpha` array (guarded
    against inversion/over-compression spikes via `MAX_DALPHA`) — wired for
    milestone 3; the `damage` cache column stays 0 until then.
@@ -213,14 +214,35 @@ Grow the reference MLS-MPM incrementally, validating visually with
      twice (graded carries less KE than uniform-7000; copper is half tungsten's
      density). The clean energy-neutral depth test is a **standoff** study, and
      `ArmorLayer.standoff` already exists, so it needs no code. Not done.
-   - **Known limit, the honest one:** yield caps only the **deviatoric** response;
-     the volumetric response is still fixed-corotated with **no EOS** and
-     *under*-resists at extreme compression (`λ(J−1)J → 0` as `J → 0`). A
-     hypervelocity stagnation point is exactly where an EOS matters most, so the
-     jet-tip pressure is the least trustworthy quantity in the model. SPH would not
-     have fixed that either — the §1 SPH hedge is retired on evidence (PHYSICS §1).
+   - **~~Known limit, the honest one:~~ fixed in milestone 8** (PHYSICS §3.5). This
+     used to read "the volumetric response has no EOS, so jet-tip pressure is the
+     least trustworthy quantity in the model." It was true and it is now closed:
+     the volumetric response is a **Murnaghan EOS**, monotone and stiffening,
+     tangent-matched at `J=1` so KE decks barely move. Measured: the jet tip goes
+     `J` 0.0706 → **0.3971**. SPH would not have fixed it either — the §1 SPH hedge
+     stays retired on evidence (PHYSICS §1).
+   - **Retracted while fixing it:** an interim diagnosis called the old law a
+     "softening branch the jet crushes through". That was a **Kirchhoff-vs-Cauchy
+     units error** — `½ρv²` is Cauchy, the turnover is Kirchhoff, and the Cauchy
+     response is monotone, so nothing ran away. The law was simply far too
+     compressible. Don't reintroduce the crush-through framing.
 
-Don't rewrite from scratch. The full solver arc (milestones 1–7) is done.
+6. **Milestone 8 — equation of state (PHYSICS §3.5).** Murnaghan
+   `p(J) = (K₀/K′)(J^−K′ − 1)`, `K₀ = λ+µ`, `K′ = 4` in `materials.EOS_KP`. Zero
+   new per-material constants. Two things to know before touching it:
+   - **The CFL bound is no longer the rest sound speed.** The EOS stiffens, so
+     `c ~ J^(−K′/2)`; `bake` sizes `dt` from the deck's predicted stagnation
+     compression plus `EOS_CFL_J_MARGIN`, then *measures* the sound speed actually
+     reached and warns on a breach. Read that audit line on every new deck —
+     especially a faster one. It is how the sweep geometry's breach was caught.
+   - **What is still wrong, and it is velocity-dependent.** Murnaghan is a *cold*
+     curve with no shock heating: vs copper's public Hugoniot it reads 0.93× at
+     `J=0.9` but 0.68× at a 7 km/s equilibrium. So the EOS **shrank** the
+     velocity-dependent pressure error (~1.70× → ~1.37× across the jet's own
+     gradient); it did not remove it. A velocity sweep still inherits it. The real
+     fix is Mie-Grüneisen + per-material `c₀/s/Γ`.
+
+Don't rewrite from scratch. The full solver arc (milestones 1–8) is done.
 
 **Stale-number correction (measured 2026-07-16):** the "~16 % RHA spall" quoted in
 the milestone 3/4 notes above and the 15.6 % in milestone 6 were measured at

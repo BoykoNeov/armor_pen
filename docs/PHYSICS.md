@@ -27,9 +27,9 @@ jet stretching to within 0.1 % of the kinematic prediction with no new kernel, a
 fluid-like erosion needs no special path at all — at a 7 km/s stagnation point the
 jet's yield is ~1000× below the pressure, so the existing von Mises return mapping
 caps deviatoric stress near zero by itself. The hedge is retired on evidence, not
-abandoned on preference. (The real gap that a jet exposes is the missing
-**equation of state** for the volumetric response — see §3.4 — and SPH would not
-have fixed that either.)
+abandoned on preference. (The real gap a jet exposed was the missing **equation of
+state** for the volumetric response — closed in §3.5 — and SPH would not have
+fixed that either.)
 
 ### Transfer cycle (per substep)
 
@@ -163,11 +163,12 @@ Elasticity + rate-independent plasticity + a damage threshold:
   reconstruct `F`. Plastic flow is isochoric (volumetric log-strain untouched).
   Two plausibility notes (root §1): the `√(2/3)` and the deviatoric split use a
   2D two-principal-strain convention, not exact 3D J2; and because the reported
-  stress is fixed-corotated Cauchy von Mises (the momentum-driving stress), it
-  reads *approximately* capped near yield — with a small over-read tail at
-  extreme volumetric compression at the shock front, since fixed-corotated has
-  no equation of state (`λ(J−1)J → 0` as `J → 0`). This is a pre-existing
-  property of the elastic model, best tamed viewer-side by a percentile clamp.
+  stress is Cauchy von Mises (the momentum-driving stress), it reads
+  *approximately* capped near yield rather than exactly. It used to grow a wild
+  over-read tail at the shock front (~327 GPa at a jet tip) because the volumetric
+  response had no equation of state; **§3.5 removed that cause**, so the tail
+  should be gone rather than clamped away. A viewer-side percentile clamp is still
+  a fine colormap default — it is just no longer covering for the physics.
 - **Damage:** a scalar in `[0, 1]` (latched, irreversible). When a particle
   fails it **detaches** into a free fragment — `_p2g` drops its stress term so it
   keeps mass + momentum but can no longer hold tension/shear. This is the spall
@@ -525,13 +526,14 @@ window) while everything beyond 40 mm reads exactly 0.000.
 
 **Honest limits.**
 
-- **No equation of state, and this is where it bites hardest.** `yield_strength`
-  caps only the **deviatoric** response. The volumetric response is still
-  fixed-corotated, which *under*-resists at extreme compression
-  (`λ(J−1)J → 0` as `J → 0`, §3). A hypervelocity stagnation point is precisely
-  where an EOS would matter most, so **the pressure at the jet tip is the least
-  trustworthy quantity in this model**, and lowering the yield does not touch it.
-  Plausible, not predictive (root §1).
+- **~~No equation of state, and this is where it bites hardest.~~** *Superseded by
+  §3.5 (milestone 8): there is an EOS now.* The claim this bullet used to make —
+  that jet-tip pressure was the least trustworthy quantity in the model — was
+  true, and it was the defect that motivated §3.5. `yield_strength` still caps
+  only the **deviatoric** response, but the volumetric response is no longer
+  fixed-corotated: it is a Murnaghan EOS, monotone and stiffening. What remains
+  untrustworthy at the tip is smaller and different in kind — see §3.5's own
+  honest limits.
 - **Do not compare this deck's penetration to the uniform stand-in it replaced.**
   That comparison is **energy-confounded twice over**: a graded jet carries far
   less kinetic energy than a uniform-7000 rod of the same mass, *and* copper is
@@ -547,6 +549,123 @@ window) while everything beyond 40 mm reads exactly 0.000.
   field can contain a graded jet's *tip passage* or its *tail transit*, never both.
   This deck claims the tip's passage — where the penetration happens; the trailing
   body is honestly out of frame.
+
+---
+
+### 3.5 An equation of state (milestone 8)
+
+§3.4 shipped with an admission: the volumetric response had **no equation of
+state**, and a hypervelocity stagnation point is exactly where one matters most.
+This section is that hole being filled, and the measurements that say so.
+
+**What was actually wrong — and a retraction.** A first diagnosis of this defect
+called it a *softening branch* that the jet "crushed through". **That was wrong,
+and it was a units error:** the Kirchhoff stress `τ = P(F)Fᵀ` (which drives the
+P2G scatter) really does peak and collapse toward zero as `J → 0`, but the
+stagnation demand `½ρv²` is a **Cauchy** pressure, and `σ = τ/J` is *monotone*
+(`dσ_xx/ds = 2µ/s² + 2λs > 0`). Compared in one currency there is no ceiling and
+nothing runs away. The true defect was quieter: the law was simply **far too
+compressible**. Under a 220 GPa demand the model equilibrated at `J ≈ 0.15` where
+real copper gives `≈ 0.61`. The same root cause wore two faces — Kirchhoff
+collapsing (dynamics under-resist) while Cauchy `τ/J` diverged (the `stress`
+column over-read ~327 GPa at the tip, 1600× copper's yield, which the viewer was
+quietly clamping away).
+
+**The law.** Deviatoric and volumetric responses are now split, and the pressure
+comes from a **Murnaghan EOS** (Murnaghan 1944 — textbook finite-strain, public):
+
+```
+τ  =  dev₂[ 2µ(F−R)Fᵀ ]  −  p(J)·J·I
+p(J) =  (K₀/K′) · (J^−K′ − 1)          K₀ = λ+µ,  K′ = 4
+K(J) =  −J·dp/dJ = K₀·J^−K′            (tangent bulk modulus)
+```
+
+Three properties earn it its place:
+
+- **Monotone and stiffening.** `p → ∞` as `J → 0`, so compression always finds an
+  equilibrium. This is the property the old law lacked.
+- **Zero new material constants.** `K₀ = λ+µ` already follows from `E`/`ν`; `K′≈4`
+  is the standard default for metals and dense solids and lives once, in
+  `materials.EOS_KP`. Contrast Mie-Grüneisen, which needs per-material `c₀/s/Γ`.
+- **Tangent-matched at rest.** `K(1) = K₀ = λ+µ` is *exactly* the rest stiffness
+  of the term it replaces, so the EOS-aware p-wave speed at `J=1` is bit-identical
+  to the old `√((λ+2µ)/ρ)`. Milestone 8 is a **large-strain-only** change by
+  construction: a 1600 m/s KE deck barely moves, a 7 km/s jet tip moves a lot.
+
+Note the deviator: `2µ(F−R)Fᵀ` is **not** purely deviatoric at finite strain — under
+isotropic compression `F = sI` it is `2µ(s−1)s·I`, a pure pressure, which is why
+the old rest bulk modulus was `λ+µ` and not `λ`. Now that the EOS owns pressure,
+that trace is removed or it would be double-counted. The 2D deviator splits at
+`tr/2`, matching `_return_mapping`'s `e_mean = (e1+e2)/2`, so the stress the yield
+surface caps is the stress `_p2g` actually scatters. Plastic flow stays isochoric,
+so plasticity and the EOS are genuinely orthogonal.
+
+**An independent corroboration of K₀.** `K₀ = λ+µ = 136.4 GPa` is derived from
+copper's `E`/`ν`. Public shock data gives `ρ₀c₀² = 139.1 GPa` from the bulk sound
+speed — a completely unrelated route. **They agree to 2 %.** Nothing was tuned to
+make that happen.
+
+**Measured (`heat_vs_composite`, same probe before and after).**
+
+| quantity | pre-EOS | post-EOS | note |
+|---|---|---|---|
+| worst live **jet** `J` | 0.0706 | **0.3971** | 93 % → 60 % volume loss |
+| worst live **rha** `J` | 0.1747 | **0.4918** | target no longer crushed |
+| worst live **ceramic** `J` | 0.9912 | **0.9911** | **unmoved — predicted a priori** |
+
+The ceramic row is the falsifiable one. §3.4 argued that ceramic fails at `J≈0.98`
+(its brittle threshold is ~3 GPa, i.e. mild compression), where *any* monotonic
+volumetric law shares the same tangent bulk modulus and agrees to <1 % — so no EOS
+could move ceramic comminution. It held to four decimals. The jet tip rides
+`J≈0.93` in free flight and dives to 0.397 only at the ceramic interface (t=10 µs,
+9 particles below 0.5 of 7843 live): impact-driven compression that **recovers**,
+not a permanently crushed tip.
+
+Halving `dt` (47 → 98 substeps/frame) moved the tip `J` by **1.2 %** — the result
+is timestep-converged.
+
+**Honest limits — the two that remain.**
+
+- **Murnaghan is a *cold* curve: no shock heating.** It carries no thermal
+  pressure, so it stays too soft, and *how* too soft still depends on velocity.
+  Against copper's public shock Hugoniot (`u_s = c₀ + s·u_p`, which does include
+  heating) the model reads **0.93×** at `J=0.9` (KE regime — negligible), **0.68×**
+  at the jet's 7 km/s equilibrium, and **0.17×** at the measured 0.397 excursion.
+  So milestone 8 shrank a velocity-dependent error, it did **not** remove one:
+  across the jet's own 2→7 km/s gradient the spread went from ~1.70× to ~1.37×.
+  **Anything that reads absolute pressure, or sweeps velocity, still inherits
+  this.** Fixing it properly means Mie-Grüneisen and real per-material `c₀/s/Γ`.
+- **No artificial (shock) viscosity, so the front rings.** MPM resolves a shock
+  across a couple of cells with nothing to damp the elastic overshoot, so the tip
+  overshoots its own equilibrium: predicted `J_eq=0.6056`, measured 0.3971 — a
+  ratio of **0.648**. That is a *different* defect from the missing EOS, it is now
+  the dominant one at the tip, and it is what `EOS_CFL_J_MARGIN` is sized against.
+  Standard fix: von Neumann–Richtmyer artificial bulk viscosity. Not done.
+- For reference: copper's Hugoniot poles at `J = 1 − 1/s = 0.328`, i.e. real copper
+  essentially cannot be compressed past that. The measured tip at 0.397 sits just
+  above it — severe, but not outside physics, where the old law's 0.0706 was.
+
+**Cost, and why the substep had to be re-derived.** The EOS *stiffens* under
+compression, so the rest-state sound speed is no longer the CFL bound:
+`c(J) = √((K₀·J^−K′ + µ)/ρ)` climbs as `J^(−K′/2)`. `bake` now sizes `dt` from the
+compression the deck's own stagnation pressure predicts, with `EOS_CFL_J_MARGIN`
+of headroom for the ring above — and then **measures**, every frame, the sound
+speed actually reached, warning if the margin was breached. The first cut used a
+margin of 0.8 and survived only because that deck's ceramic donated headroom the
+copper tip borrowed; the measured overshoot ratio (0.648) says the honest number
+is 0.55. Cost: `heat_vs_composite` goes 18 → 98 substeps/frame. Irrelevant for an
+offline bake (root §1); a NaN at frame 300 would not be.
+
+**A bug the old law could not have had.** A divergent EOS makes degeneracies
+dangerous rather than merely wrong. With a raw negative `J` from a momentarily
+inverted element, `−p(J)·J` **flips sign** and reports colossal *tension* — which
+`_stress_invariants` feeds straight to the brittle tensile-fracture trigger,
+shattering ceramic for a purely numerical reason. The old decaying law couldn't
+produce this. Hence `mpm.J_FLOOR`: one shared floor (0.05) so the Warp and NumPy
+paths floor identically, positioned as a **degeneracy backstop, not a physical
+limit** — it is ~25 000× beyond what a 7 km/s stagnation point demands, the
+measured worst live `J` is 8× above it, and `bake` warns if live material ever
+reaches it. `tests/test_stress_paths.py` pins both paths together.
 
 ---
 

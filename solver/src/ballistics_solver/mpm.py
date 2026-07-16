@@ -1,12 +1,13 @@
 """MLS-MPM transfer kernels (NVIDIA Warp) — the physics core.
 
-STATUS: milestone 7 — **elastic + von Mises plasticity + ductile & brittle damage
-+ multi-material armor stack + reactive (ERA/NERA) impulse layer + oblique seeding
-+ velocity-graded shaped-charge jet** MLS-MPM. A KE rod (or a jet) and an
-arbitrary front-to-back armor stack (any number of layers, each its
-own material, with optional standoff gaps) are seeded from the scenario and run
-through a P2G / grid-update / G2P substep cycle with fixed-corotated
-hyperelasticity, followed by a perfectly-plastic von Mises radial return
+STATUS: milestone 8 — **elastic + equation of state + von Mises plasticity +
+ductile & brittle damage + multi-material armor stack + reactive (ERA/NERA)
+impulse layer + oblique seeding + velocity-graded shaped-charge jet** MLS-MPM. A
+KE rod (or a jet) and an arbitrary front-to-back armor stack (any number of
+layers, each its own material, with optional standoff gaps) are seeded from the
+scenario and run through a P2G / grid-update / G2P substep cycle with a corotated
+deviator + Murnaghan EOS pressure (``_fixed_corotated_pft``, PHYSICS §3.5),
+followed by a perfectly-plastic von Mises radial return
 (``_return_mapping``) that caps deviatoric stress at each material's yield and
 lets metal flow. Every material constant is a per-particle array
 (``mu/lam/yield/dthr/brittle/reactive/det_pressure/burn_time/ign_comp``), so
@@ -61,10 +62,10 @@ of the kinematic rate against a uniform control that instead SHORTENS by erosion
 and it erodes FLUID-LIKE because at a 7 km/s stagnation point ``copper_jet``'s
 yield is ~1000x below the pressure, so ``_return_mapping`` caps deviatoric stress
 near zero unaided. ``tail_velocity=None`` (the default) is the uniform path and
-seeds bit-for-bit as before, so every KE deck is untouched. Honest limit: yield
-caps only the DEVIATORIC response — the volumetric response has no EOS and
-*under*-resists at extreme compression, which is exactly the stagnation point.
-See PHYSICS §3.4.
+seeds bit-for-bit as before, so every KE deck is untouched. Yield caps only the
+DEVIATORIC response; the volumetric response is the EOS added in milestone 8
+(``_eos_pressure``), which is what stopped the stagnation point from crushing to
+an absurd J. See PHYSICS §3.4 and §3.5.
 
 Two hard rules for whoever grows this (root §2, §11):
 
@@ -96,6 +97,57 @@ from . import materials
 # CFL number for the explicit substep. Conservative for high-speed impact; the
 # substep dt is min(deck dt, CFL * dx / c_p). See root §6/§11 and PHYSICS §4.
 CFL: float = 0.3
+
+# Overshoot margin for the EOS-aware CFL bound (milestone 8). The substep is
+# sized from the volume ratio the deck's own stagnation pressure predicts
+# (``_eos_equilibrium_j``), but the impact shock is a TRANSIENT that overshoots
+# that equilibrium before settling. Since Murnaghan stiffens as K = K0·J^-K', the
+# sound speed climbs as J^(-K'/2), so an overshoot the substep was not sized for
+# is a CFL violation rather than a small error. Design for a J this fraction
+# BELOW the predicted equilibrium.
+#
+# MEASURED, not guessed. `heat_vs_composite` predicts a copper-tip equilibrium of
+# J_eq=0.6056 and the bake reaches J=0.3923 — an overshoot ratio of **0.648**. So
+# any margin above ~0.65 does not actually cover the transient; the first cut at
+# 0.8 only survived because that deck's ceramic (stiffer, so a higher design
+# sound speed) happened to leave global headroom the copper tip borrowed. A jet
+# into plain RHA has no such donor and breaches outright — which is exactly the
+# milestone 9 velocity-sweep geometry.
+#
+# 0.55 sits ~15 % under the measured ratio. That headroom covers the two things
+# the measurement does not: whether the ratio holds at other impact velocities
+# (unknown — the sweep will say), and shorter-than-a-frame excursions, which the
+# audit in ``bake`` samples too coarsely to see. Substeps scale as
+# (1/margin)^(K'/2), so this costs ~2x over an unmargined bound — irrelevant for
+# an offline solver (root §1), unlike a NaN at frame 300.
+#
+# Why this transient exists at all: MPM resolves a shock front across a couple of
+# cells with no artificial (shock) viscosity to damp the elastic ring, so the
+# front overshoots its equilibrium. That is a separate, still-open defect from the
+# missing-EOS one this milestone fixed — see PHYSICS §3.5.
+EOS_CFL_J_MARGIN: float = 0.55
+
+# Volume-ratio floor: the most-compressed state the EOS will represent. Below it
+# the pressure saturates. Shared by every path that divides by J or raises it to a
+# negative power, as ONE constant so the Warp and NumPy paths floor identically.
+#
+# The pre-EOS law needed no such bound because it *decayed* to zero at small J.
+# Murnaghan diverges, which makes two degeneracies dangerous rather than merely
+# wrong. A particle that momentarily inverts (J<=0) at the shock front would take
+# a negative base to a fractional power; worse, `-p(J)*J` with J<0 flips the sign
+# and reports a colossal *tension* — which `_stress_invariants` feeds straight to
+# the brittle tensile-fracture trigger, shattering ceramic for a purely numerical
+# reason. And a damaged particle's F keeps evolving with no stress feedback, so it
+# can wander arbitrarily close to zero and overflow float32 to inf/NaN.
+#
+# 0.05 is a degeneracy backstop, NOT a physical limit, and the distinction is the
+# whole point: it corresponds to ~5.5e6 GPa in copper, roughly 25 000x the 220 GPa
+# a 7 km/s stagnation point actually demands, and the measured worst live J in the
+# jet deck is 0.3923 — eight times above it. So it never binds on material the
+# solver is still simulating; it only catches elements that have already left
+# physics. `bake` warns if a LIVE particle ever reaches it, because that would
+# mean the saturation had become load-bearing.
+J_FLOOR: float = 0.05
 
 
 def assert_gpu(device: str = "cuda:0") -> None:
@@ -151,18 +203,75 @@ def _polar_r(F: wp.mat22):
     return wp.mat22(c, -s, s, c)
 
 
+# Murnaghan K' as a Warp compile-time constant. ``materials.EOS_KP`` remains the
+# single definition (root §7 puts physical constants in materials.py); this is
+# only the JIT-visible mirror of it. Same for the J floor defined above.
+EOS_KP = wp.constant(materials.EOS_KP)
+_J_FLOOR = wp.constant(J_FLOOR)
+
+
+@wp.func
+def _eos_pressure(J: float, K0: float):
+    """Murnaghan EOS — Cauchy pressure in MPa, positive in compression.
+
+        p(J) = (K0/K') (J^-K' - 1)
+
+    **Monotone** decreasing in J, and p → +∞ as J → 0, so compression always
+    finds an equilibrium: there is no ceiling to crush through. Tangent bulk
+    modulus K(J) = -J dp/dJ = K0 · J^-K', hence K(1) = K0 = λ+µ *exactly* — the
+    same rest stiffness as the fixed-corotated volumetric term this replaces, so
+    the law is first-order identical at small strain and the KE decks barely move
+    (~1 %, measured — not zero). It is the large-strain branch that changes, by
+    up to ~2x at a 7 km/s jet tip. See PHYSICS §3.5.
+
+    Honest limit (root §1, §10): Murnaghan is a *cold* curve — it carries no shock
+    heating, so it still under-predicts pressure at hypervelocity, just by tens of
+    percent instead of the 2x the no-EOS law gave. Getting the thermal term needs
+    Mie-Grüneisen and per-material c0/s/Γ, i.e. real new physical data. Plausible,
+    not predictive.
+
+    J is floored before the fractional power: an element that momentarily inverts
+    (J≤0) under a violent shock substep would otherwise raise a negative base to a
+    fractional power and NaN everything downstream.
+    """
+    Jc = wp.max(J, _J_FLOOR)
+    return (K0 / EOS_KP) * (wp.pow(Jc, -EOS_KP) - 1.0)
+
+
 @wp.func
 def _fixed_corotated_pft(F: wp.mat22, mu: float, lam: float):
-    """Fixed-corotated Kirchhoff stress term P(F) Fᵀ (root §6, PHYSICS §3).
+    """Kirchhoff stress τ = P(F) Fᵀ — corotated DEVIATOR + EOS pressure.
 
     The elastic stress that drives the P2G momentum scatter. Factored out so the
     reactive filler's ``_p2g`` state machine (elastic → detonation → debris) can
-    reuse the exact same elastic branch as ordinary material without copy-paste.
+    reuse the exact same elastic branch as ordinary material without copy-paste,
+    and called by ``_stress_invariants`` so the brittle trigger cannot drift from
+    the dynamics.
+
+    Milestone 8 split the two branches apart. The volumetric half used to be
+    ``lam*(J-1)*J``, which has **no equation of state** and *under*-resists at
+    extreme compression — a 7 km/s stagnation point equilibrated at J≈0.15 where
+    real copper gives ≈0.61. The EOS owns the pressure now (``_eos_pressure``).
     """
     J = wp.determinant(F)
     R = _polar_r(F)
-    lp = lam * (J - 1.0) * J
-    return 2.0 * mu * (F - R) * wp.transpose(F) + wp.mat22(lp, 0.0, 0.0, lp)
+    # Deviatoric branch. 2µ(F-R)Fᵀ is NOT purely deviatoric at finite strain:
+    # under isotropic compression F = sI it is 2µ(s-1)s·I, a pure PRESSURE — that
+    # term is why the old law's rest bulk modulus was λ+µ rather than λ. Now that
+    # the EOS owns pressure, leaving it in would double-count it, so take the
+    # trace out. The 2D deviator splits at tr/2, matching ``_return_mapping``'s
+    # e_mean = (e1+e2)/2, so the stress the yield surface caps is the same stress
+    # ``_p2g`` scatters.
+    dev = 2.0 * mu * (F - R) * wp.transpose(F)
+    tr_half = 0.5 * (dev[0, 0] + dev[1, 1])
+    # Volumetric branch: Cauchy σ_vol = -p·I, and τ = J·σ, so τ_vol = -p(J)·J·I.
+    # K0 = λ+µ reproduces the rest stiffness of the term being replaced exactly.
+    # Both factors use the FLOORED J (see J_FLOOR): with a raw negative J from an
+    # inverted element, -p·J flips sign and reports enormous tension instead of
+    # the compression that would push it back out.
+    Jc = wp.max(J, _J_FLOOR)
+    lp = -_eos_pressure(Jc, lam + mu) * Jc - tr_half
+    return dev + wp.mat22(lp, 0.0, 0.0, lp)
 
 
 @wp.func
@@ -339,19 +448,22 @@ def _return_mapping(
 
 @wp.func
 def _stress_invariants(F: wp.mat22, mu: float, lam: float):
-    """Von Mises and max tensile principal of the fixed-corotated Cauchy stress.
+    """Von Mises and max tensile principal of the Cauchy stress.
 
-    Cauchy sigma = (1/J) P(F) F^T with the same fixed-corotated P used in _p2g
-    and the host-side ``_von_mises`` readout. Returns wp.vec2(vm, s_max_principal)
-    in MPa. Used by the brittle fracture trigger. ``J`` is floored positive so a
-    momentarily inverted/over-compressed shock-front element can't divide-by-zero
-    or flip principal signs into a spurious tensile reading.
+    Cauchy sigma = (1/J) P(F) F^T, sharing ``_fixed_corotated_pft`` outright with
+    _p2g rather than re-deriving it — the brittle trigger must fire on the stress
+    the dynamics actually apply, and a second copy of the constitutive law is a
+    silent-drift bug waiting for the next material-model change. (The host-side
+    ``_von_mises`` readout is a third path and CANNOT share this one, being NumPy
+    over host arrays; ``tests/test_stress_paths.py`` pins the two together.)
+    Returns wp.vec2(vm, s_max_principal) in MPa. Used by the brittle fracture
+    trigger. ``J`` is floored positive so a momentarily inverted/over-compressed
+    shock-front element can't divide-by-zero or flip principal signs into a
+    spurious tensile reading.
     """
     J = wp.determinant(F)
-    R = _polar_r(F)
-    lp = lam * (J - 1.0) * J
-    PFt = 2.0 * mu * (F - R) * wp.transpose(F) + wp.mat22(lp, 0.0, 0.0, lp)
-    invJ = 1.0 / wp.max(J, 1.0e-6)
+    PFt = _fixed_corotated_pft(F, mu, lam)
+    invJ = 1.0 / wp.max(J, _J_FLOOR)
     sxx = PFt[0, 0] * invJ
     syy = PFt[1, 1] * invJ
     sxy = PFt[0, 1] * invJ
@@ -660,6 +772,27 @@ def _lame(E: float, nu: float) -> tuple[float, float]:
     return mu, lam
 
 
+def _eos_equilibrium_j(p: float, K0: float) -> float:
+    """Volume ratio at which the Murnaghan EOS balances pressure ``p`` (MPa).
+
+    Closed-form inverse of ``_eos_pressure``: J = (1 + K' p/K0)^(-1/K'). Host-side
+    only — used to size the substep a priori (see ``EOS_CFL_J_MARGIN``), never in
+    the kernels.
+    """
+    return (1.0 + materials.EOS_KP * p / K0) ** (-1.0 / materials.EOS_KP)
+
+
+def _eos_sound_speed(J: float, K0: float, mu: float, rho: float) -> float:
+    """P-wave speed (mm/ms) under the EOS at volume ratio ``J``.
+
+    M(J) = K(J) + mu with the EOS tangent K(J) = K0·J^-K'. At J=1 this is exactly
+    ``lam + 2*mu`` — i.e. identical to the pre-EOS rest-state bound — because
+    K0 = lam+mu. Below J=1 it climbs like J^(-K'/2): the reason the substep had to
+    be re-derived in milestone 8 rather than inherited.
+    """
+    return math.sqrt((K0 * J ** (-materials.EOS_KP) + mu) / rho)
+
+
 def _fill_rect(x0: float, x1: float, y0: float, y1: float, spacing: float):
     """Regular lattice of points filling a rectangle, at cell centers."""
     nx = max(1, int(round((x1 - x0) / spacing)))
@@ -851,16 +984,25 @@ def _seed(scenario, dx: float, spacing: float):
 def _von_mises(F: np.ndarray, mu: np.ndarray, lam: np.ndarray) -> np.ndarray:
     """Von Mises equivalent of the Cauchy stress (MPa), for the `stress` column.
 
-    Cauchy sigma = (1/J) P(F) F^T with fixed-corotated P. This is the
-    plane-*stress* vM invariant (drops sigma_zz) used in a plane-strain sim —
-    fine for a plausibility readout; it nudges the bulk median slightly above
-    yield. With plasticity active this reads *approximately* capped near each
-    material's yield, not exactly: the small-strain elastic offset and 2D
-    deviatoric convention account for the bulk, and a thin tail over-reads at
-    extreme volumetric compression (small J) at the shock front, because
-    fixed-corotated has no EOS. That tail is a pre-existing property of the
-    elastic model (latent since milestone 1), not a plasticity artifact; tame it
-    viewer-side with a percentile clamp on the colormap (see ``_return_mapping``).
+    Cauchy sigma = (1/J) P(F) F^T. **A hand-kept NumPy mirror of the Warp
+    ``_fixed_corotated_pft`` / ``_eos_pressure`` pair** — it runs on host arrays
+    in ``dump_frame`` and so cannot call the device funcs. Any change to the
+    constitutive law must land here too; ``tests/test_stress_paths.py`` fails if
+    the two drift apart.
+
+    This is the plane-*stress* vM invariant (drops sigma_zz) used in a
+    plane-strain sim — fine for a plausibility readout; it nudges the bulk median
+    slightly above yield. With plasticity active this reads *approximately*
+    capped near each material's yield, not exactly: the small-strain elastic
+    offset and 2D deviatoric convention account for the bulk.
+
+    Milestone 8 note: this readout used to grow a thin tail that over-read wildly
+    at the shock front (~327 GPa at the jet tip, 1600x copper's yield), because
+    the volumetric law had no EOS — Kirchhoff τ collapsed toward zero while
+    Cauchy τ/J diverged, one defect wearing two faces. The EOS removes the cause,
+    so the tail should now be absent rather than clamped away. The viewer's
+    percentile clamp is still a reasonable colormap default, but it is no longer
+    covering for the physics.
     """
     a, b, c, d = F[:, 0, 0], F[:, 0, 1], F[:, 1, 0], F[:, 1, 1]
     J = a * d - b * c
@@ -875,13 +1017,23 @@ def _von_mises(F: np.ndarray, mu: np.ndarray, lam: np.ndarray) -> np.ndarray:
     m01 = fr00 * c + fr01 * d
     m10 = fr10 * a + fr11 * b
     m11 = fr10 * c + fr11 * d
-    lp = lam * (J - 1.0) * J
-    pft00 = 2.0 * mu * m00 + lp
+    # Mirror of _fixed_corotated_pft: corotated deviator + Murnaghan EOS pressure.
+    dev00 = 2.0 * mu * m00
+    dev11 = 2.0 * mu * m11
+    Jc = np.maximum(J, J_FLOOR)  # floors identically to the Warp path (see J_FLOOR)
+    p = ((lam + mu) / materials.EOS_KP) * (Jc ** (-materials.EOS_KP) - 1.0)
+    lp = -p * Jc - 0.5 * (dev00 + dev11)
+    pft00 = dev00 + lp
     pft01 = 2.0 * mu * m01
     pft10 = 2.0 * mu * m10
-    pft11 = 2.0 * mu * m11 + lp
-    Js = np.where(np.abs(J) < 1e-9, 1.0, J)
-    s00, s01, s10, s11 = pft00 / Js, pft01 / Js, pft10 / Js, pft11 / Js
+    pft11 = dev11 + lp
+    # Divide by the SAME floored J the kernel uses. The old guard here
+    # (`where(|J|<1e-9, 1.0, J)`) both passed inverted elements through with a
+    # flipped sign — where the kernel floors them — and left J small enough that,
+    # now that the EOS pressure diverges as J->0, a damaged particle's runaway F
+    # overflowed float32 to inf/NaN. The value is discarded for damaged particles
+    # anyway, but a RuntimeWarning on every bake is how a real one gets missed.
+    s00, s01, s10, s11 = pft00 / Jc, pft01 / Jc, pft10 / Jc, pft11 / Jc
     return np.sqrt(np.maximum(s00 * s00 - s00 * s11 + s11 * s11 + 3.0 * s01 * s10, 0.0))
 
 
@@ -915,12 +1067,31 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
     writer.particle_count = n  # <-- the writer was built with a placeholder 0
 
     # --- CFL: pick a stable substep dt, decoupled from the (optimistic) deck dt ---
+    # The EOS STIFFENS under compression (K = K0·J^-K'), so the REST sound speed is
+    # no longer the bound — a shocked particle is several times stiffer than a
+    # resting one, and c ~ J^(-K'/2). Size the substep from the compression this
+    # deck's own stagnation pressure drives its materials to, with
+    # EOS_CFL_J_MARGIN of headroom for the transient overshoot past equilibrium.
+    # This is a prediction, so the frame loop below MEASURES whether it held.
+    proj = materials.get(scenario.projectile.material)
+    # Tip velocity — `tail_velocity` (if any) is slower by construction, so the
+    # tip bounds the deck's stagnation pressure.
+    p_stag = 0.5 * proj.density * scenario.projectile.velocity ** 2
     c_max = 0.0
-    for name in {scenario.projectile.material, *(l.material for l in scenario.armor)}:
+    j_design = 1.0
+    for name in {scenario.projectile.material, *(a.material for a in scenario.armor)}:
         mat = materials.get(name)
         mu, lam = _lame(mat.youngs_modulus, mat.poisson_ratio)
-        c_p = math.sqrt((lam + 2.0 * mu) / mat.density)  # p-wave speed, mm/ms
-        c_max = max(c_max, c_p)
+        K0 = lam + mu
+        # Deliberately conservative: EVERY material is sized by the projectile's
+        # own stagnation pressure. A target genuinely sees less (Tate's u < v),
+        # but the *impact shock* is more severe than steady stagnation — a
+        # steady-state estimate said the RHA plate would sit at J=0.75 and the
+        # measured value was 0.17 — so this is not a place to shave. An offline
+        # bake can afford the substeps (root §1); a NaN at frame 300 cannot.
+        Jd = EOS_CFL_J_MARGIN * _eos_equilibrium_j(p_stag, K0)
+        j_design = min(j_design, Jd)
+        c_max = max(c_max, _eos_sound_speed(Jd, K0, mu, mat.density))
     dt_cfl = CFL * dx / c_max
     dt_sim = min(dt_deck_ms, dt_cfl)
 
@@ -931,7 +1102,8 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
     if dt < dt_deck_ms:
         print(
             f"[mpm] deck dt={dt_deck_ms:.3e} ms exceeds CFL limit "
-            f"{dt_cfl:.3e} ms (c_max={c_max:.0f} mm/ms, dx={dx:.4f} mm); "
+            f"{dt_cfl:.3e} ms (c_max={c_max:.0f} mm/ms at EOS design J="
+            f"{j_design:.3f}, dx={dx:.4f} mm); "
             f"using dt={dt:.3e} ms, {substeps} substeps/frame"
         )
     print(
@@ -1006,6 +1178,16 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
         wp.launch(_update_reactive, dim=n, device=device, inputs=[
             F, reactive, ign_comp, burn_time, burn, damage, dt])
 
+    # --- CFL audit state (see EOS_CFL_J_MARGIN) -----------------------------
+    # `dt` was sized for c_max, derived from a *predicted* compression. F comes
+    # back to the host every frame for the stress readout anyway, so measuring the
+    # sound speed actually reached is nearly free — and it turns "is the margin
+    # big enough?" from a judgement call into a number. Caveat: this samples at
+    # frame boundaries, so a shorter-than-a-frame excursion stays invisible.
+    K0_h = seed["lam"] + seed["mu"]
+    rho_h = seed["mass"] / np.maximum(seed["vol0"], 1e-30)
+    audit = {"c": 0.0, "J": 1.0}
+
     def dump_frame():
         pos = x.numpy()
         vel = v.numpy()
@@ -1013,6 +1195,19 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
         dmg = damage.numpy()
         vel_mag = np.linalg.norm(vel, axis=1)
         stress = _von_mises(Fn, seed["mu"], seed["lam"])
+
+        # CFL audit over LIVE particles only: _p2g drops a damaged particle's
+        # stress term, so its (still-evolving) F drives nothing and its J is
+        # meaningless here.
+        live = dmg < 0.5
+        if live.any():
+            J_raw = np.linalg.det(Fn[live])
+            audit["J"] = min(audit["J"], float(J_raw.min()))  # raw: J_FLOOR must be visible
+            Jl = np.maximum(J_raw, J_FLOOR)
+            c_live = np.sqrt(
+                (K0_h[live] * Jl ** (-materials.EOS_KP) + seed["mu"][live]) / rho_h[live]
+            )
+            audit["c"] = max(audit["c"], float(c_live.max()))
         # A spalled particle carries no stress (it lost cohesion); zero the
         # readout so the colormap isn't skewed by a broken fragment's stale F.
         stress = np.where(dmg > 0.5, 0.0, stress)
@@ -1030,3 +1225,27 @@ def bake(scenario, writer, device: str = "cuda:0") -> None:
             substep()
         wp.synchronize_device(device)
         dump_frame()
+
+    # --- did the a-priori substep sizing actually hold? ---------------------
+    if audit["J"] <= J_FLOOR:
+        print(
+            f"[mpm] WARNING: LIVE material reached J={audit['J']:.4f}, at or below "
+            f"J_FLOOR={J_FLOOR} — the EOS SATURATED on material still being simulated. "
+            f"That floor exists to catch degenerate/inverted elements, not to cap real "
+            f"physics; if it is load-bearing the volumetric response is soft again in "
+            f"exactly the way milestone 8 set out to fix."
+        )
+    if audit["c"] > c_max:
+        print(
+            f"[mpm] WARNING: CFL margin BREACHED. dt was sized for c_max="
+            f"{c_max:.0f} mm/ms (EOS design J={j_design:.3f}), but live material "
+            f"reached J={audit['J']:.4f} -> c={audit['c']:.0f} mm/ms "
+            f"({audit['c']/c_max:.2f}x the budget). The bake may be unstable past "
+            f"that point; lower EOS_CFL_J_MARGIN and rebake."
+        )
+    else:
+        print(
+            f"[mpm] CFL audit OK: worst live J={audit['J']:.4f} -> c="
+            f"{audit['c']:.0f} mm/ms, {audit['c']/c_max:.0%} of the c_max="
+            f"{c_max:.0f} mm/ms budgeted (EOS design J={j_design:.3f})"
+        )

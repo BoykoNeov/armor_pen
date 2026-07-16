@@ -24,6 +24,26 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# --- Equation of state (milestone 8, PHYSICS §3.5) --------------------------
+# Pressure derivative of the bulk modulus, K' = dK/dp at p=0, for the Murnaghan
+# EOS that supplies the volumetric stress in mpm.py:
+#
+#     p(J) = (K0/K') (J^-K' - 1)        K0 = lam + mu, from E/nu (see mpm._lame)
+#
+# K' ~ 4 is the textbook value for metals and most dense solids, and it is close
+# enough to universal that it is the standard default when a material's own value
+# is unmeasured — which is exactly our situation (root §10: representative, not
+# spec-sheet). One number, shared by every material, so the EOS costs ZERO new
+# per-material constants: K0 already follows from the elastic moduli we have.
+#
+# Deliberately a module constant rather than a `Material` field: nothing here
+# varies it, and a per-particle array would thread a parameter through five
+# kernel signatures to carry the same 4.0 everywhere. Promote it to a field the
+# day a material genuinely needs its own (soft polymer fillers are the plausible
+# case at ~7-12, but they ignite at J=0.98 and never reach compressions where K'
+# is distinguishable).
+EOS_KP: float = 4.0
+
 
 @dataclass(frozen=True)
 class Material:
@@ -81,12 +101,19 @@ LIBRARY: dict[str, Material] = {
     # mapping caps deviatoric stress near zero all by itself. That is why a jet
     # needs no new constitutive model here.
     #
-    # HONEST LIMIT (PHYSICS §3.4): yield caps only the DEVIATORIC response. The
-    # volumetric response is still fixed-corotated with no equation of state, and
-    # fixed-corotated *under*-resists at extreme compression (lam*(J-1)*J -> 0 as
-    # J -> 0). A hypervelocity stagnation point is exactly where an EOS would
-    # matter most, so the pressure there is the least trustworthy part of this
-    # model. Lowering the yield does not fix it. Plausible, not predictive.
+    # HONEST LIMIT (PHYSICS §3.5): yield caps only the DEVIATORIC response. The
+    # volumetric response is a separate law, and until milestone 8 it had no
+    # equation of state at all — it *under*-resisted at extreme compression, so a
+    # 220 GPa stagnation point equilibrated at J~0.15 where real copper gives
+    # ~0.61. It is a Murnaghan EOS now (monotone, stiffening, K0 = lam+mu from the
+    # moduli above, K' = EOS_KP), which measured the tip back to J=0.3971.
+    #
+    # What is STILL true here: Murnaghan is a *cold* curve carrying no shock
+    # heating, so against copper's public Hugoniot it still under-reads pressure —
+    # ~0.93x at J=0.9 (a KE deck: negligible) but ~0.68x at a 7 km/s tip. The
+    # error is smaller and better-behaved, not gone, and it still depends on
+    # velocity. Lowering the yield never touched any of this. Plausible, not
+    # predictive (root §1).
     #
     # `damage_threshold` is ductile copper's plastic-strain reserve, and it is the
     # particulation knob: a stretching jet accumulates plastic strain, and when it

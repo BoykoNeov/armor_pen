@@ -117,12 +117,26 @@ replaced: that comparison is energy-confounded twice over (a graded jet carries 
 KE than a uniform one, and copper is half tungsten's density), so the claim is
 scoped to kinematics, which is immune to both.
 
-**Next:** the full solver arc is done. The open items are a **standoff study** (the
-clean energy-neutral depth experiment for the jet — same jet, different flight
-distance; needs no code, `standoff` is already deck data), an **equation of state**
-for the volumetric response (the honest gap a hypervelocity jet exposes — see
-§3.4), and **domain/BC** work so oblique-deck debris never reaches a wall. See the
-per-directory `CLAUDE.md` files for the build order.
+**Milestone 8 — an equation of state.** The honest gap a hypervelocity jet exposed
+is closed: the volumetric response is a **Murnaghan EOS** (`p = (K₀/K′)(J^−K′−1)`,
+`K₀ = λ+µ`, `K′ = 4`) instead of a law with no EOS at all, which used to let a
+220 GPa stagnation point crush copper to `J≈0.15` where reality gives `≈0.61`.
+Costs **zero** new material constants and is tangent-matched at `J=1`, so it is a
+large-strain-only change — KE decks barely move. Measured: the jet tip goes `J`
+0.0706 → **0.3971**, the RHA plate 0.1747 → **0.4918**, and ceramic comminution
+stays put at **0.9911 vs 0.9912** — the a-priori prediction that no volumetric fix
+could move it, confirmed to four decimals. Independent check: `K₀ = λ+µ = 136.4 GPa`
+derived from the elastic moduli agrees to **2 %** with `ρ₀c₀² = 139.1 GPa` from
+public shock data. Still honest about it: Murnaghan is a *cold* curve, so it under-
+reads pressure by ~0.68× at a 7 km/s tip, and MPM has no artificial viscosity so
+the shock front rings. See PHYSICS §3.5.
+
+**Next:** the open items are a **velocity sweep** against the hydrodynamic
+asymptote `√(ρ_p/ρ_t)`, a **standoff study** (the clean energy-neutral depth
+experiment for the jet — needs no code, `standoff` is already deck data),
+**Mie-Grüneisen** (the thermal term Murnaghan lacks), and **domain/BC** work so
+oblique-deck debris never reaches a wall. See the per-directory `CLAUDE.md` files
+for the build order.
 
 ## Quick start
 
