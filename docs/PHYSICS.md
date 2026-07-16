@@ -116,6 +116,7 @@ Elasticity + rate-independent plasticity + a damage threshold:
 | RHA (steel) | Baseline ductile armor; mushrooms and spalls. |
 | Ceramic / composite | Higher stiffness, **brittle** (`brittle: true`) — fails on the stress trigger above, shattering with ~zero plastic flow. |
 | ERA filler | An impulse layer that degrades the penetrator on contact. *(reactive impulse — implemented, milestone 5; see §3.1.)* |
+| NERA filler | A soft interlayer that never detonates but stays cohesive, so the sandwich plates bulge apart on the shock alone and the bulge is *held open*. *(the unignited branch of the same reactive path — verified, §3.3.)* |
 
 ### 3.1 Reactive layer — ERA/NERA (milestone 5)
 
@@ -221,6 +222,57 @@ artifact, so the A/B **delta** and its time-evolution are the meaningful signal,
 not the absolute spall numbers. One bake per condition; the monotonic divergence
 across 120 frames plus the sign-flip vs 0° is what makes it clearly not MPM
 non-determinism, rather than a repeat bake.
+
+### 3.3 NERA persistent bulge — the unignited branch (verified)
+
+§3.1 describes a **persistent NERA bulge** as the reactive path's *unignited*
+branch held open: a filler with `ignition_compression=0` never ignites
+(`_update_reactive` gates ignition on `ic > 0`), so it stays soft-elastic and
+cohesive and the sandwich plates bulge apart on the impact shock alone. This is
+**not** merely `detonation_pressure=0`, which still ignites on the shock, latches
+the particle spent, and collapses it to limp debris. That branch was implemented
+at milestone 5 but never baked. It is now verified by `apfsds_vs_nera`
+(`nera_filler`), geometry-identical to the two ERA decks — all three seed at
+126157 particles, so they are equal-areal-mass arms of one A/B family differing
+only in the filler's response path.
+
+**The branch works as specified.** Across all 120 frames the NERA filler's damage
+fraction is **0.000** — it never ignites and never spalls — and the sandwich
+stays open: front/back plate separation grows 18.0 → 23.5 mm and *holds*, while
+filler thickness grows 10.6 → ~36 mm and **plateaus** (36.1 at frame 100 → 35.7
+at 119) rather than dispersing. The contrast is clean: the inert twin's filler
+shreds (damage 0.615 by frame 119, thickness still climbing at 50.7 mm), and the
+reactive twin's latches 1.000 by frame 20 and is flung to 69.7 mm with the plates
+driven to 58.5 mm apart. Cohesive, unignited, stable — no NaN, no collapse.
+
+**Model-mechanics note — NOT an armor-performance claim.** In the same bakes the
+rod ends up shallower, slower, and more damaged against the NERA filler than
+against either ERA twin (tip 160.0 vs 164.1/164.3 mm; median intact-rod speed
+1316 vs 1445/1435 m/s; rod damage 0.363 vs 0.275/0.244). **Do not read this as
+"non-explosive beats explosive."** The comparison is confounded by construction,
+twice over: `reactive=True` makes `mpm.py` skip *both* `_return_mapping`
+(plasticity) *and* `_update_damage` (ductile spall) for that particle, so
+`nera_filler` can neither yield nor break — its `yield_strength` and
+`damage_threshold` are dead fields. So this is not "cohesive vs shredding at
+equal toughness"; it is "an unbreakable filler vs one that spalls at threshold
+0.02," and "the unbreakable one resists the rod better" is close to tautological.
+What it does illustrate is a real property of the damage model: a spalled
+particle keeps its mass and momentum but drops its deviatoric stress term in
+`_p2g`, so it stops *resisting* — an equal mass of debris loads the rod far less
+than an equal mass of cohesive material. A genuine single-variable cohesion test
+would be a **non-reactive** filler with a high `damage_threshold` against the
+0.02 one; that isolates cohesion without also disabling plasticity, and is not
+done here.
+
+Honesty caveats (root §1/§10): one bake per condition, and MPM grid `atomic_add`
+ordering is non-deterministic — but the deltas are large, monotonic, and
+sign-stable across many frames, so they are not noise. The main-plate spall
+fractions quoted here are measured over a frame-0 x-band and are **not**
+comparable to the differently-measured 0° absolutes in §3.1 (the *ordering* there
+— reactive ≈ inert, reactive marginally worse — does reproduce). The
+never-yields property also means the filler stores elastic energy without
+dissipating it, i.e. stiffer-than-real; that is a modelling limitation, not a
+bug, and it is another reason the rod deltas above are model-specific.
 
 ---
 

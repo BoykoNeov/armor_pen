@@ -88,6 +88,44 @@ LIBRARY: dict[str, Material] = {
         yield_strength=0.05e3, damage_threshold=0.02,
         reactive=False,
     ),
+    # NERA (non-explosive reactive armor) interlayer: a soft elastic filler that
+    # NEVER detonates but stays cohesive, so the sandwich plates bulge apart on
+    # the shock alone and the bulge is *held open* rather than collapsing.
+    #
+    # Same mass/stiffness as era_filler / era_filler_inert, so all three are the
+    # equal-areal-mass arms of one A/B family; they differ ONLY in the filler's
+    # response path:
+    #   era_filler       reactive, ignites   -> detonation overpressure
+    #   era_filler_inert non-reactive        -> plasticity + ductile spall at
+    #                                           damage_threshold=0.02, i.e. the
+    #                                           soft filler shreds and gets out
+    #                                           of the way
+    #   nera_filler      reactive, no ignite -> mpm.py skips BOTH return-mapping
+    #                                           and the ductile-spall gate for
+    #                                           reactive particles, so this stays
+    #                                           soft-elastic and cohesive forever
+    #
+    # `ignition_compression=0` is what makes it never ignite (`_update_reactive`
+    # gates ignition on `ic > 0`). That, NOT `detonation_pressure=0`, is the
+    # persistent-bulge branch: zero pressure still ignites on the impact shock,
+    # latches the particle spent, and collapses it to limp debris.
+    #
+    # DEAD FIELDS — do not tune these here, they are not consumed. `reactive=True`
+    # makes mpm.py skip BOTH `_return_mapping` (plasticity) and `_update_damage`
+    # (ductile spall) for this particle. So `yield_strength` and
+    # `damage_threshold` below are inert, kept only for parity with the twins:
+    # this filler is governed by E / nu / density alone. Consequence to be honest
+    # about (PHYSICS §3.3): it can neither yield nor break, so it stores elastic
+    # energy without dissipating it — stiffer-than-real, and any "the cohesive
+    # filler resists the rod better" A/B against era_filler_inert is confounded by
+    # that, not just by cohesion. Verified stable (thickness plateaus, no NaN).
+    "nera_filler": Material(
+        name="nera_filler", material_id=5,
+        density=1.6e-3, youngs_modulus=5.0e3, poisson_ratio=0.40,
+        yield_strength=0.05e3, damage_threshold=0.02,  # both DEAD — see above
+        reactive=True,
+        detonation_pressure=0.0, burn_time=0.0, ignition_compression=0.0,
+    ),
 }
 
 

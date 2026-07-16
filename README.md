@@ -42,12 +42,34 @@ caches/       gitignored bake outputs (large)
 
 ## Status
 
-The repository structure, the cache-format contract, and a tiny golden fixture
-are in place. The solver runs **milestone 1: elastic MLS-MPM** (NVIDIA Warp) —
-`apfsds_vs_rha` bakes end-to-end on the RTX 5090 and passes `validate_cache`,
-showing an elastic impact (rod decelerates and rebounds, plate bulges; no
-perforation yet). Next: von Mises plasticity, then damage/spall. See the
-per-directory `CLAUDE.md` files for the build order.
+All six solver milestones are done, and the Godot viewer plays real bakes back in
+motion. Every KE deck bakes on the RTX 5090 (NVIDIA Warp, sm_120) and passes
+`validate_cache`.
+
+1. **Elasticity** — fixed-corotated MLS-MPM; elastic impact, no perforation.
+2. **von Mises plasticity** — radial return in log-strain space; the rod mushrooms
+   and the plate craters.
+3. **Damage / spall** — a plastic-strain threshold detaches particles into free
+   fragments: a penetration channel lined with spall, plus a crater-lip spray.
+4. **Multi-material armor stack** — bonded and spaced decks, plus brittle
+   (stress-triggered) fracture so ceramics shatter with ~zero plastic flow.
+5. **Reactive ERA/NERA layer** — filler ignites on the impact shock and releases a
+   detonation overpressure through the ordinary grid, flinging the sandwich plates
+   apart (emergent, not a scripted rod kick).
+6. **Oblique reactive armor** — the rod strikes nose-first at angle.
+
+**Headline result (verified, `docs/PHYSICS.md` §3.1–3.2).** Measured against an
+equal-areal-mass *inert* twin, at 55° obliquity the reactive layer measurably
+protects the backing plate — main-plate spall ≈40% lower, the gap growing
+monotonically over the event — where the same A/B at 0° is a null. But the
+tungsten rod itself is **not** cut or deflected; the protection arrives through
+the backing plate being shoved forward, cutting rod-relative penetration ~18%.
+The "flyer sweep erodes the rod" expectation did not hold, and is reported as it
+came out rather than tuned toward.
+
+**Next:** the shaped-charge (HEAT) jet is still a tungsten-rod stand-in — a real
+jet model is the open capability gap. See the per-directory `CLAUDE.md` files for
+the build order.
 
 ## Quick start
 
@@ -66,6 +88,13 @@ python tools/inspect_cache.py caches/apfsds_vs_rha
 # Open visualizer/ in Godot 4, point it at the cache dir, play.
 # Or develop the viewer against visualizer/fixtures/tiny_golden_cache/ with no solver present.
 ```
+
+On Windows, each baked deck has a double-click launcher that opens it straight in
+the viewer — `play_apfsds_vs_rha.bat`, `play_apfsds_vs_composite.bat`,
+`play_apfsds_vs_spaced.bat`, `play_apfsds_vs_nera.bat`, and the reactive A/B pairs
+`play_apfsds_vs_era{,_inert}.bat` and `play_apfsds_vs_era_oblique{,_inert}.bat`.
+The `_inert` twins are the equal-areal-mass controls: play a deck against its twin
+to see what the *reactive* layer actually contributes.
 
 ## License
 

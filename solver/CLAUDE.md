@@ -21,7 +21,7 @@ first** — this file only adds solver-local notes.
 | `config.py` | Scenario schema (dataclasses), YAML loader | working |
 | `materials.py` | Material library, all constants in mm-ms-g | data (all fields now consumed: elasticity, yield, ductile `damage_threshold`, `brittle`, reactive block) |
 | `cache_writer.py` | Writes manifest.json + frames.bin (the contract) | working |
-| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + von Mises plasticity + ductile & brittle damage + multi-material stack + reactive ERA/NERA layer (milestone 5)** — see below |
+| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + von Mises plasticity + ductile & brittle damage + multi-material stack + reactive ERA/NERA layer + oblique rod seeding (milestone 6)** — see below |
 | `run.py` | CLI: scenario.yaml → cache dir | working (Warp init + GPU assert + bake) |
 
 ## Build order (root §9) — where we are
@@ -91,7 +91,21 @@ Grow the reference MLS-MPM incrementally, validating visually with
    `mpm.py`). A persistent NERA bulge is the unignited soft-elastic branch held
    open — `ignition_compression=0` so the filler *never* ignites — **not** merely
    `detonation_pressure=0` (that still ignites on the impact shock and collapses
-   to debris: bulge-then-collapse). Untested — no NERA deck baked yet. Two
+   to debris: bulge-then-collapse). ✅ **Now baked and verified** (`nera_filler`,
+   deck `apfsds_vs_nera`, geometry-identical to the two ERA decks — all three seed
+   at 126157 particles): filler damage is **0.000 across all 120 frames** (never
+   ignites, never spalls), plate separation grows 18.0→23.5 mm and holds, and
+   filler thickness plateaus (~36 mm) instead of dispersing — where the inert
+   twin's filler shreds to damage 0.615 and the reactive twin's latches 1.000 by
+   frame 20 and blows the plates 58.5 mm apart. Stable, no NaN, passes
+   `validate_cache`. **Caveat (PHYSICS §3.3):** the rod also ends up
+   shallower/slower/more-damaged vs NERA than vs either ERA twin, but that is
+   confounded *by construction* and is NOT an armor-performance claim —
+   `reactive=True` skips **both** `_return_mapping` (plasticity) and
+   `_update_damage` (spall), so `nera_filler` can neither yield nor break and its
+   `yield_strength` / `damage_threshold` are **dead fields**. It illustrates the
+   damage model (spalled particles keep momentum but drop their stress term in
+   `_p2g`, so they stop resisting), not armor. Two
    stability guards, reactive-particles-only: burning **and** spent
    filler get `F` pinned to identity (no elastic memory; return-mapping skips
    them so `F` would otherwise drift to inf and overflow the host readout), and
