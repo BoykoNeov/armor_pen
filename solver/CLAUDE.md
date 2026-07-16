@@ -221,8 +221,9 @@ Grow the reference MLS-MPM incrementally, validating visually with
      least trustworthy quantity in the model." It was true and it is now closed:
      the volumetric response is a **Murnaghan EOS**, monotone and stiffening,
      tangent-matched at `J=1` so KE decks barely move. Measured: the jet tip goes
-     `J` 0.0706 → **0.3971**. SPH would not have fixed it either — the §1 SPH hedge
-     stays retired on evidence (PHYSICS §1).
+     `J` 0.0706 → **~0.43** (two figures, not four — it is dt-dependent; see below).
+     SPH would not have fixed it either — the §1 SPH hedge stays retired on
+     evidence (PHYSICS §1).
    - **Retracted while fixing it:** an interim diagnosis called the old law a
      "softening branch the jet crushes through". That was a **Kirchhoff-vs-Cauchy
      units error** — `½ρv²` is Cauchy, the turnover is Kirchhoff, and the Cauchy
@@ -243,6 +244,12 @@ Grow the reference MLS-MPM incrementally, validating visually with
      velocity-dependent pressure error (~1.70× → ~1.37× across the jet's own
      gradient); it did not remove it. A velocity sweep still inherits it. The real
      fix is Mie-Grüneisen + per-material `c₀/s/Γ`.
+   - **Do NOT quote tip-`J` to four decimals — it is not dt-converged.** 0.3923 (47
+     substeps) → 0.3971 (98) → 0.4315 (240), rising as the substep shrinks, because
+     what it measures is the undamped **shock ring**, not the EOS. An earlier
+     "1.2 % converged" claim in the docs came from the 47→98 pair alone and was
+     wrong; 98→240 moves it +8.7 %. Two points are not a convergence study. The
+     ceramic figure (0.9910) *is* robust — quote that one.
 
 7. **Milestone 9 — velocity sweep vs the hydrodynamic asymptote (PHYSICS §3.7).**
    Ten `sweep_*` decks, `{tungsten, copper} × {1500..7000} m/s` into an identical

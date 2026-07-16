@@ -634,20 +634,35 @@ make that happen.
 
 | quantity | pre-EOS | post-EOS | note |
 |---|---|---|---|
-| worst live **jet** `J` | 0.0706 | **0.3971** | 93 % → 60 % volume loss |
-| worst live **rha** `J` | 0.1747 | **0.4918** | target no longer crushed |
-| worst live **ceramic** `J` | 0.9912 | **0.9911** | **unmoved — predicted a priori** |
+| worst live **jet** `J` | 0.0706 | **~0.43** | 93 % → 57 % volume loss; **dt-dependent, see below** |
+| worst live **rha** `J` | 0.1747 | **0.50** | target no longer crushed |
+| worst live **ceramic** `J` | 0.9912 | **0.9910** | **unmoved — predicted a priori** |
 
-The ceramic row is the falsifiable one. §3.4 argued that ceramic fails at `J≈0.98`
-(its brittle threshold is ~3 GPa, i.e. mild compression), where *any* monotonic
-volumetric law shares the same tangent bulk modulus and agrees to <1 % — so no EOS
-could move ceramic comminution. It held to four decimals. The jet tip rides
-`J≈0.93` in free flight and dives to 0.397 only at the ceramic interface (t=10 µs,
-9 particles below 0.5 of 7843 live): impact-driven compression that **recovers**,
-not a permanently crushed tip.
+The ceramic row is the falsifiable one, and it is also the only one worth quoting
+to four decimals. §3.4 argued that ceramic fails at `J≈0.98` (its brittle threshold
+is ~3 GPa, i.e. mild compression), where *any* monotonic volumetric law shares the
+same tangent bulk modulus and agrees to <1 % — so no EOS could move ceramic
+comminution. It held. The jet tip rides `J≈0.93` in free flight and dives to ~0.43
+only at the ceramic interface (t≈10 µs): impact-driven compression that
+**recovers**, not a permanently crushed tip.
 
-Halving `dt` (47 → 98 substeps/frame) moved the tip `J` by **1.2 %** — the result
-is timestep-converged.
+**The tip `J` is not timestep-converged, and that is a result rather than a
+caveat.** It rises monotonically as the substep shrinks:
+
+| substeps/frame | tip `J` | ring ratio `J / J_eq` |
+|---|---|---|
+| 47 | 0.3923 | 0.648 |
+| 98 | 0.3971 | 0.656 |
+| 240 *(shipped)* | 0.4315 | 0.713 |
+
+against an equilibrium `J_eq = 0.6056`. Refining `dt` resolves the **shock ring**
+(the second honest limit below) and the overshoot shrinks toward the equilibrium —
+so tip-`J` measures the ring, not the EOS. Quote it as **~0.43 and dt-dependent**;
+the four-decimal figure this section first carried was measured at 98 substeps and
+was superseded by its own shipped cache. The *conclusion* only strengthens:
+0.0706 → ~0.43 is a bigger improvement than 0.0706 → 0.397. (An earlier "1.2 %
+converged" claim here was drawn from the 47 → 98 pair alone; 98 → 240 moves it
+**+8.7 %**. Two points are not a convergence study.)
 
 **Honest limits — the two that remain.**
 
@@ -655,20 +670,22 @@ is timestep-converged.
   pressure, so it stays too soft, and *how* too soft still depends on velocity.
   Against copper's public shock Hugoniot (`u_s = c₀ + s·u_p`, which does include
   heating) the model reads **0.93×** at `J=0.9` (KE regime — negligible), **0.68×**
-  at the jet's 7 km/s equilibrium, and **0.17×** at the measured 0.397 excursion.
+  at the jet's 7 km/s equilibrium, and **0.28×** at the ~0.43 tip excursion.
   So milestone 8 shrank a velocity-dependent error, it did **not** remove one:
   across the jet's own 2→7 km/s gradient the spread went from ~1.70× to ~1.37×.
   **Anything that reads absolute pressure, or sweeps velocity, still inherits
   this.** Fixing it properly means Mie-Grüneisen and real per-material `c₀/s/Γ`.
-- **No artificial (shock) viscosity, so the front rings.** MPM resolves a shock
-  across a couple of cells with nothing to damp the elastic overshoot, so the tip
-  overshoots its own equilibrium: predicted `J_eq=0.6056`, measured 0.3971 — a
-  ratio of **0.648**. That is a *different* defect from the missing EOS, it is now
-  the dominant one at the tip, and it is what `EOS_CFL_J_MARGIN` is sized against.
+- **No artificial (shock) viscosity, so the front rings — and this is now the
+  dominant tip defect.** MPM resolves a shock across a couple of cells with nothing
+  to damp the elastic overshoot, so the tip overshoots its own equilibrium
+  (`J_eq=0.6056`): ring ratio **0.713** at the shipped 240 substeps, and still
+  climbing toward 1 as `dt` falls. That the overshoot is a *numerical* ring rather
+  than physics is exactly what the dt table above shows. It is a different defect
+  from the missing EOS, and it is what `EOS_CFL_J_MARGIN` is sized against.
   Standard fix: von Neumann–Richtmyer artificial bulk viscosity. Not done.
 - For reference: copper's Hugoniot poles at `J = 1 − 1/s = 0.328`, i.e. real copper
-  essentially cannot be compressed past that. The measured tip at 0.397 sits just
-  above it — severe, but not outside physics, where the old law's 0.0706 was.
+  essentially cannot be compressed past that. The measured tip at ~0.43 sits above
+  it — severe, but inside physics, where the old law's 0.0706 was not.
 
 **Cost, and why the substep had to be re-derived.** The EOS *stiffens* under
 compression, so the rest-state sound speed is no longer the CFL bound:
@@ -725,7 +742,10 @@ gives a **50 000 mm/ms sound speed**:
 **That `J ≈ 0.21` is real, not the instability eating itself.** Shrinking `dt` by
 3× moves it 1.8 %, so it is converged: the filler genuinely reaches ~79 % volume
 loss. Its predicted-vs-reached ratio is **0.394**, far worse than the copper jet's
-0.648 — which is why it, not the jet, sets `EOS_CFL_J_MARGIN`.
+**0.713** — which is why it, not the jet, sets `EOS_CFL_J_MARGIN`. That the
+filler's ratio is *stable* under refinement while the jet's drifts (0.648 → 0.713
+as substeps go 47 → 240, because the jet's is a shock-ring artifact) is what makes
+a single margin trustworthy: the binding number is the one that does not move.
 
 The honest reading: this is **not a new defect the EOS introduced**, it is an old
 one the EOS made *visible*. A material with no dissipation path was always going
@@ -773,15 +793,24 @@ derives its fit window from the erosion curve):
 | 7000 | 0.5620 | **0.937×** | 0.4839 | **0.937×** |
 
 **Both arms rise monotonically toward their own asymptote and neither crosses it.**
-At 7 km/s both sit at the *same* 0.937× — the shortfall is a property of the model
-(residual strength, the cold-curve pressure error of §3.5, the undamped shock
-ring), not of the material. Which makes the sharp test the **ratio**, where that
-common systematic cancels:
+The sharp test is the **ratio** of the two arms, because a shortfall common to both
+cancels there — and the ratio *converges* on the density prediction as strength
+becomes negligible, which is precisely what Tate says should happen:
 
-```
-measured   u/v(W) / u/v(Cu)  =  0.5620 / 0.4839  =  1.1614
-predicted        0.5996 / 0.5165                 =  1.1609      → 0.04 %
-```
+| v (m/s) | tungsten/asym | copper/asym | measured ratio | vs 1.1609 predicted |
+|---|---|---|---|---|
+| 2500 | 0.910 | 0.868 | 1.2170 | +4.83 % |
+| 3500 | 0.930 | 0.900 | 1.1994 | +3.32 % |
+| 5000 | 0.936 | 0.919 | 1.1829 | +1.90 % |
+| 7000 | 0.937 | 0.937 | **1.1614** | **+0.04 %** |
+
+The convergence is the claim; **0.04 % is the 7 km/s value, not a flat property of
+the model.** Note the two fractional shortfalls only *coincide* at 7 km/s — at
+2500 they are 0.910 vs 0.868, plainly material-dependent, because that is where
+strength still bites and the two arms' yields differ 7.5×. What survives at the top
+of the range is a shortfall the arms share (the cold-curve pressure error of §3.5
+and the undamped shock ring); residual **strength** is what makes the low-v end
+differ, so it is the thing that cancels *last*, not something that cancels at all.
 
 **The trend is not a timestep artifact — controlled, not argued.** The production
 decks are CFL-sized, and the EOS-aware bound scales with stagnation pressure ~`v²`,

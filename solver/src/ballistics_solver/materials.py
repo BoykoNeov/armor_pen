@@ -106,7 +106,9 @@ LIBRARY: dict[str, Material] = {
     # equation of state at all — it *under*-resisted at extreme compression, so a
     # 220 GPa stagnation point equilibrated at J~0.15 where real copper gives
     # ~0.61. It is a Murnaghan EOS now (monotone, stiffening, K0 = lam+mu from the
-    # moduli above, K' = EOS_KP), which measured the tip back to J=0.3971.
+    # moduli above, K' = EOS_KP), which measured the tip back to J~0.43. (Quote that
+    # to two figures: it is dt-dependent, because what it now measures is the
+    # undamped shock ring rather than the EOS — PHYSICS §3.5.)
     #
     # What is STILL true here: Murnaghan is a *cold* curve carrying no shock
     # heating, so against copper's public Hugoniot it still under-reads pressure —

@@ -123,9 +123,11 @@ is closed: the volumetric response is a **Murnaghan EOS** (`p = (K₀/K′)(J^�
 220 GPa stagnation point crush copper to `J≈0.15` where reality gives `≈0.61`.
 Costs **zero** new material constants and is tangent-matched at `J=1`, so it is a
 large-strain-only change — KE decks barely move. Measured: the jet tip goes `J`
-0.0706 → **0.3971**, the RHA plate 0.1747 → **0.4918**, and ceramic comminution
-stays put at **0.9911 vs 0.9912** — the a-priori prediction that no volumetric fix
-could move it, confirmed to four decimals. Independent check: `K₀ = λ+µ = 136.4 GPa`
+0.0706 → **~0.43**, the RHA plate 0.1747 → **0.50**, and ceramic comminution stays
+put at **0.9910 vs 0.9912** — the a-priori prediction that no volumetric fix could
+move it, confirmed. (Only the ceramic figure deserves four decimals: the tip `J` is
+**not** dt-converged, because what it now measures is the undamped shock ring
+rather than the EOS.) Independent check: `K₀ = λ+µ = 136.4 GPa`
 derived from the elastic moduli agrees to **2 %** with `ρ₀c₀² = 139.1 GPa` from
 public shock data. Still honest about it: Murnaghan is a *cold* curve, so it under-
 reads pressure by ~0.68× at a 7 km/s tip, and MPM has no artificial viscosity so
@@ -138,12 +140,14 @@ RHA half-space. Ideal-hydro (Tate) says the penetration velocity approaches a
 density-only ratio — `u/v → 1/(1+√(ρ_t/ρ_p))`, i.e. **0.600** for tungsten and
 **0.517** for copper. Two arms, two different numbers fixed a priori: a single arm
 hitting a single number could be luck, two arms hitting two different ones could
-not. Measured: both rise monotonically toward their own asymptote, neither crosses
-it, and at 7 km/s both sit at the **same 0.937×** — so the shortfall belongs to the
-model, not the material, and cancels in the ratio:
+not. Measured: both rise monotonically toward their own asymptote and neither
+crosses it, and the **ratio of the arms converges** on the density prediction as
+strength becomes negligible — `+4.8 % → +3.3 % → +1.9 % → +0.04 %` across
+2500→7000 m/s:
 
-> measured `u/v(W)/u/v(Cu)` = **1.1614** vs **1.1609** predicted from density —
-> **0.04 %**.
+> at 7 km/s, measured `u/v(W)/u/v(Cu)` = **1.1614** vs **1.1609** predicted from
+> density — **0.04 %**. The *convergence* is the claim; 0.04 % is the 7 km/s value,
+> not a flat property.
 
 Controlled, not argued: the substep count rises with velocity under the CFL bound,
 so the fast arm got less numerical dissipation too. Rebaking all ten at a fixed

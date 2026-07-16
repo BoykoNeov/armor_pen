@@ -108,8 +108,13 @@ CFL: float = 0.3
 #
 # MEASURED, not guessed — and the binding case is not the one you would expect.
 #
-#   copper jet tip  predicted J_eq=0.6056, reached 0.3971 -> ratio 0.648
+#   copper jet tip  predicted J_eq=0.6056, reached 0.4315 -> ratio 0.713
 #   nera_filler     predicted J_eq=0.5480, reached 0.2159 -> ratio 0.394  <-- binds
+#
+# Note the jet's ratio is itself dt-dependent (0.648 at 47 substeps, 0.713 at 240)
+# because it measures the shock ring, which resolves as dt falls. The filler's does
+# NOT drift (0.2159 at 110 substeps vs 0.2120 at 336), so the binding number is the
+# stable one — which is the only reason a single margin can be trusted here.
 #
 # The **NERA filler** sets this constant, not the hypervelocity jet. `nera_filler`
 # is reactive with `ignition_compression=0`, so ``_p2g`` skips BOTH the return
@@ -236,8 +241,8 @@ def _eos_pressure(J: float, K0: float):
 
     Honest limit (root §1, §10): Murnaghan is a *cold* curve — no shock heating, so
     no thermal pressure. Against copper's public shock Hugoniot it reads 0.93x at
-    J=0.9 (a KE deck — negligible), 0.68x at a 7 km/s equilibrium, and 0.17x at the
-    measured tip excursion. So the pressure error is **smaller but still
+    J=0.9 (a KE deck — negligible), 0.68x at a 7 km/s equilibrium, and 0.28x at the
+    measured ~0.43 tip excursion. So the pressure error is **smaller but still
     velocity-dependent**: milestone 8 shrank it, it did not abolish it, and
     anything that sweeps velocity or reads absolute pressure still inherits it.
     The thermal term needs Mie-Grüneisen and per-material c0/s/Γ — real new
