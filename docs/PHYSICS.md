@@ -237,13 +237,19 @@ at milestone 5 but never baked. It is now verified by `apfsds_vs_nera`
 only in the filler's response path.
 
 **The branch works as specified.** Across all 120 frames the NERA filler's damage
-fraction is **0.000** — it never ignites and never spalls — and the sandwich
-stays open: front/back plate separation grows 18.0 → 23.5 mm and *holds*, while
-filler thickness grows 10.6 → ~36 mm and **plateaus** (36.1 at frame 100 → 35.7
-at 119) rather than dispersing. The contrast is clean: the inert twin's filler
-shreds (damage 0.615 by frame 119, thickness still climbing at 50.7 mm), and the
-reactive twin's latches 1.000 by frame 20 and is flung to 69.7 mm with the plates
-driven to 58.5 mm apart. Cohesive, unignited, stable — no NaN, no collapse.
+fraction is **0.000** — it never ignites and never spalls — and the sandwich opens
+without ever collapsing back: front/back plate separation grows monotonically
+18.0 → 23.5 mm and is still opening at the end of the window.
+
+The decisive evidence is the **cohesion**, not the shape of the tail: the filler
+expands far less than either twin — thickness 10.6 → ~36 mm, levelling off over
+the last frames (36.1 at 100 → 35.7 at 119) — where the inert twin's filler
+shreds (damage 0.615, thickness still climbing at 50.7 mm) and the reactive
+twin's latches 1.000 by frame 20 and is flung to 69.7 mm with the plates driven
+58.5 mm apart. Confirmed visually (viewer `--shots` on the deck): at frame 119
+the interlayer is still **large coherent bent slabs**, split around the rod
+channel but intact, with the white spall spray coming from the *steel plates*,
+not the filler. Cohesive, unignited, stable — no NaN, no collapse.
 
 **Model-mechanics note — NOT an armor-performance claim.** In the same bakes the
 rod ends up shallower, slower, and more damaged against the NERA filler than

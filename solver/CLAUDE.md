@@ -94,11 +94,14 @@ Grow the reference MLS-MPM incrementally, validating visually with
    to debris: bulge-then-collapse). ✅ **Now baked and verified** (`nera_filler`,
    deck `apfsds_vs_nera`, geometry-identical to the two ERA decks — all three seed
    at 126157 particles): filler damage is **0.000 across all 120 frames** (never
-   ignites, never spalls), plate separation grows 18.0→23.5 mm and holds, and
-   filler thickness plateaus (~36 mm) instead of dispersing — where the inert
-   twin's filler shreds to damage 0.615 and the reactive twin's latches 1.000 by
-   frame 20 and blows the plates 58.5 mm apart. Stable, no NaN, passes
-   `validate_cache`. **Caveat (PHYSICS §3.3):** the rod also ends up
+   ignites, never spalls) and the sandwich opens without collapsing back —
+   separation grows monotonically 18.0→23.5 mm, still opening at window end. The
+   decisive signal is cohesion: filler thickness reaches only ~36 mm and levels
+   off, where the inert twin's filler shreds to damage 0.615 (still climbing at
+   50.7 mm) and the reactive twin's latches 1.000 by frame 20 and blows the
+   plates 58.5 mm apart. Visually confirmed (`--shots`): the interlayer is still
+   large coherent bent slabs at frame 119, spall spray coming from the steel
+   plates, not the filler. Stable, no NaN, passes `validate_cache`. **Caveat (PHYSICS §3.3):** the rod also ends up
    shallower/slower/more-damaged vs NERA than vs either ERA twin, but that is
    confounded *by construction* and is NOT an armor-performance claim —
    `reactive=True` skips **both** `_return_mapping` (plasticity) and

@@ -46,6 +46,10 @@ const MATERIAL_COLORS := {
 	2: Color(0.82, 0.72, 0.48),  # ceramic — tan
 	3: Color(0.95, 0.38, 0.12),  # era_filler — hot orange
 	4: Color(0.52, 0.26, 0.18),  # era_filler_inert — dark brick
+	5: Color(0.64, 0.42, 0.80),  # nera_filler — violet (never ignites, never spalls,
+	#                              so it keeps this base tone for the whole bake —
+	#                              deliberately far from rha's gray-blue so the
+	#                              cohesive interlayer reads against the plates)
 }
 const FALLBACK_COLOR := Color(0.6, 0.6, 0.6)
 # Damaged/spalled particles trend toward this hot-spark tone; "heat" (glow)
