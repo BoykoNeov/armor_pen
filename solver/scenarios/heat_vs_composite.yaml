@@ -32,7 +32,18 @@ solver:
   grid_resolution: 768   # tracks the x-extent to hold dx ~= 0.39 mm
   particles_per_cell: 4
   dt: 5.0e-8          # substep dt (CFL-bound); NOT frame_dt
-  # ~40 us. At 7000 m/s the tip crosses the whole 85 mm stack in ~12 us, so this
-  # window is set by the 120 mm BODY needing to follow it through, not the tip.
-  total_time: 4.0e-5
-  frame_count: 200    # frame_dt = 2.0e-7 s, uniform across every deck
+  # ~25 us, and this window is set by the DOMAIN, not by the event.
+  #
+  # At 7 mm/us the tip crosses the stack (backs onto x=235) in ~17 us and then
+  # eats the remaining 65 mm of domain in ~9 us. A 40 us window ran the tip into
+  # the far wall at ~30 us, where the _g2p clamp pinned it for the last quarter of
+  # the bake — the "debris piled against an invisible wall" artifact this pass
+  # exists to remove. 25 us stops with the tip at ~272, ~28 mm clear of the clamp.
+  #
+  # KNOWN LIMIT: the 120 mm body does NOT fully transit the stack in this window,
+  # and no sane domain lets it — a body that long at that speed outruns any
+  # bounded field. This deck is a rod stand-in (see the header), so the tip's
+  # passage is all it is claiming; a real jet model (milestone 7) re-sizes this
+  # deck rather than papering over it here.
+  total_time: 2.5e-5
+  frame_count: 125    # frame_dt = 2.0e-7 s, uniform across every deck

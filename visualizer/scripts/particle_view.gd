@@ -34,7 +34,14 @@ extends MultiMeshInstance2D
 @export var point_size: float = 1.0
 
 ## Simulated playback rate: how many baked frames to advance per wall second.
-@export var frames_per_second: float = 24.0
+##
+## Default 10, not 24, because THIS is what decides smoothness — not the number of
+## frames in the cache. _show_frame costs ~100 ms at 137k particles and ~220 ms at
+## 287k, so above ~10 fps (and ~4.5 on the heaviest decks) the viewer cannot draw
+## every baked frame and starts skipping them — which discards exactly the extra
+## resolution the finer frame_dt was baked for. A lower rate plays every frame:
+## slower in wall-clock, but actually smooth. ↑/↓ retune it per deck.
+@export var frames_per_second: float = 10.0
 
 ## Fraction of the viewport the domain fills (1.0 = edge to edge).
 @export var fit_margin: float = 0.92
@@ -157,10 +164,27 @@ func _process(delta: float) -> void:
 	if not _playing:
 		return
 	_accum += delta * frames_per_second
-	while _accum >= 1.0:
-		_accum -= 1.0
-		_frame = (_frame + 1) % _loader.frame_count
-		_show_frame(_frame)
+	if _accum < 1.0:
+		return
+	# Advance straight to the target frame in ONE _show_frame call.
+	#
+	# This used to loop `while _accum >= 1.0`, drawing every intermediate frame.
+	# _show_frame costs ~100 ms at 137k particles and ~220 ms at 287k (measured —
+	# see the capture path), so whenever it exceeds 1/frames_per_second that loop
+	# rendered N frames nobody saw, which made the next `delta` N times larger,
+	# which rendered N² more: an unbounded catch-up spiral, and every one of those
+	# frames also re-read its slice of frames.bin off disk.
+	#
+	# Skipping to the target bounds the work at one draw per _process. Note it
+	# still SKIPS baked frames whenever the renderer can't keep up, which throws
+	# away the resolution the extra frames bought — press ↓ to lower
+	# frames_per_second until playback stops skipping. The real fix is making
+	# _show_frame cheaper (it runs a per-particle GDScript loop with three
+	# set_instance_* calls each; MultiMesh.set_buffer would collapse that to one).
+	var advance := int(_accum)
+	_accum -= float(advance)
+	_frame = (_frame + advance) % _loader.frame_count
+	_show_frame(_frame)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -622,11 +646,20 @@ func _run_capture() -> void:
 	var n := _loader.frame_count
 	var targets := [0, n / 4, n / 2, (3 * n) / 4, n - 1]
 	for f in targets:
+		var t0 := Time.get_ticks_usec()
 		_show_frame(f)
+		var cost_ms := float(Time.get_ticks_usec() - t0) / 1000.0
 		await RenderingServer.frame_post_draw
 		await RenderingServer.frame_post_draw
 		var img := get_viewport().get_texture().get_image()
 		var path := dir.path_join("frame_%03d.png" % f)
 		var err := img.save_png(path)
-		print("SHOT frame %d -> %s (%d)" % [f, path, err])
+		# _show_frame cost is the playback budget: it runs a per-particle GDScript
+		# loop plus a frame read, once per baked frame. If it exceeds
+		# 1000/frames_per_second ms, _process's catch-up loop starts re-reading and
+		# re-rendering frames nobody sees, and playback skips. Printing it here is
+		# the only cheap measurement available — capture sets process off, so this
+		# is the one code path that exercises _show_frame outside interactive play.
+		print("SHOT frame %d -> %s (%d)  _show_frame=%.1f ms (budget %.1f ms @ %.0f fps)"
+			% [f, path, err, cost_ms, 1000.0 / frames_per_second, frames_per_second])
 	get_tree().quit(0)

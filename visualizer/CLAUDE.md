@@ -28,3 +28,34 @@ adds viewer-local notes.
 
 One draw call for the whole point cloud, per-instance color, trivial `float32`
 reads — the viewer is "just a player." Unlikely to change (root §5).
+
+## Known limit: `_show_frame` is the smoothness ceiling
+
+**Playback smoothness is bound by the viewer, not by the cache.** `_show_frame`
+runs a per-particle GDScript loop making three `set_instance_*` calls each, plus a
+`frames.bin` read. Measured cost:
+
+| deck | particles | `_show_frame` | max sustainable fps |
+|---|---|---|---|
+| `apfsds_vs_rha` | 137k | ~100 ms | ~10 |
+| `heat_vs_composite` | 179k | ~135 ms | ~7 |
+| `apfsds_vs_era_oblique` | 287k | ~220 ms | ~4.5 |
+
+Above that rate `_process` skips baked frames — which **throws away exactly the
+resolution the uniform `frame_dt = 2.0e-7` was baked for**. Hence
+`frames_per_second` defaults to 10, not 24: it is better to play every frame
+slowly than to skip. `↑`/`↓` retunes per deck.
+
+*(Those figures come from the `--shots` path, which reads two frames per call
+because its frames are non-sequential — sequential playback reads one, so the true
+cost is somewhat lower. The ordering and the conclusion hold.)*
+
+**The real fix, when this matters: `MultiMesh.set_buffer()`** — one bulk upload of
+a prebuilt `PackedFloat32Array` (8 transform + 4 color + 4 custom floats per
+instance) instead of ~3×N engine calls per frame. Not done yet; it is the highest-
+value viewer work outstanding. Until then, particle count is a direct tax on
+playback, so weigh it when sizing a deck's domain.
+
+**Gotcha:** `--shots` sets `set_process(false)` and routes no input, so it verifies
+*rendering* only — never playback timing, zoom, pan, or any key. Don't mistake a
+clean capture for a working interactive viewer.
