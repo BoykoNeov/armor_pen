@@ -1426,6 +1426,140 @@ predicted period *first*, then choose the band.
 
 ---
 
+### 3.10 Mie-Grüneisen — the EOS gets an energy equation (milestone 13)
+
+§3.5 shipped Murnaghan and named its own limit precisely: *"a **cold** curve with
+no shock heating"*, reading 0.93× copper's Hugoniot at `J=0.9` but **0.68×** at a
+7 km/s equilibrium. Milestone 13 closes that, and the closure is **the energy
+equation, not the pressure formula**:
+
+    p(J, e) = p_cold(J) + Γ₀ρ₀e          Γ = Γ₀·J   (i.e. Γρ = Γ₀ρ₀)
+    p_H(η)  = K₀η / (1 − sη)²             η = 1 − J
+
+**There is no cheap Mie-Grüneisen. Shipping the reference curve alone is a
+REGRESSION** — the `(1 − Γη/2)` factor *subtracts* pressure, so the cold part lands
+*below* Murnaghan. Measured against copper's Hugoniot, the yardstick §3.5 already
+uses:
+
+| J | Murnaghan (M8) | MG cold only | MG + energy eq |
+|---|---|---|---|
+| 0.90 (KE deck) | 0.95 | 0.90 | **1.00** |
+| 0.63 (jet stagnation) | 0.73 | **0.63** | **1.00** |
+
+The Murnaghan column reproduces §3.5's published 0.93× / ~0.68×, which is how we
+know the script measures the right thing. **The whole benefit of M13 lives in the
+energy equation** — and that vindicates §3.9's ordering: AV work is the shock-heating
+mechanism that *feeds* `e`. AV's real job was never damping the ~0.9 % ring; it was
+carrying shock heating (velocity-error spread 0.223 → 0.003). **AV is therefore ON
+by default from M13**, reversing §3.9's measured "off" — the reason it was off (its
+work dissipated to nothing) no longer exists.
+
+**Two per-material constants, not three.** `c₀` needs no new constant: `c₀ = √(K₀/ρ₀)`
+with the existing `K₀ = λ+µ` lands within 1–10 % of public shock data (copper
+**0.99×**, RHA 1.06×, tungsten 1.10×) and preserves M8's tangent-match at `J=1`, so
+MG stays a **large-strain-only** change. Only `s` and `Γ₀` are new.
+
+**Solved in CLOSED FORM — no iteration.** MG is linear in `e`, so the implicit
+coupling (p depends on e, e depends on p) resolves algebraically:
+
+    ρ₀e¹(1 + Γ₀·ΔJ/2) = ρ₀e⁰ − [(p_cold(J¹) + p⁰)/2 + q]·ΔJ
+
+`q` is AV's, and it must be **the same q the momentum scatter uses** — a different one
+would silently violate the jump conditions. **The deviatoric elastic work is NOT fed
+to `e`**: it already lives in `F` (we are hyperelastic, unlike a hypoelastic
+hydrocode where all work feeds `e`). Feed `e` the volumetric + dissipative work only.
+
+#### What earns the milestone: a 1-D Lagrangian piston
+
+`p(J, e_H) = p_H` is a **TAUTOLOGY** — it is built into the MG algebra and holds for
+any Γ. It validates the algebra, not the scheme. The test that earns the milestone is
+a 1-D piston (no MPM, so no transfer confound):
+
+| u_p (m/s) | p/p_H | p_cold/p_H | u_s measured vs c₀+s·u_p |
+|---|---|---|---|
+| 300 | **1.000** | 0.931 | +1.6 % |
+| 1000 | **1.000** | 0.814 | +0.7 % |
+| 2000 | **0.999** | 0.709 | +0.4 % |
+
+The energy integration **lands on the Hugoniot**, and `u_s = c₀ + s·u_p` matches to
+<2 % having been **fitted to nothing**. **The falsifier matters as much as the
+result:** with AV work not fed to `e`, `p/p_H` drops to **0.923** (the isentrope);
+with `e` never fed, **0.755** (the cold curve). Three states from one knob — so the
+test is sensitive to the accounting, and a broken energy scheme is **worse than
+shipping nothing**.
+
+Confirmed in the kernel too, with AV on: live shocked RHA reads `p/p_H` = **0.9959**
+against `p_cold/p_H` = 0.9208.
+
+#### The pole is a hard singularity and the guard is LOAD-BEARING
+
+`p_H` poles at `J = 1 − 1/s`, and **past the pole it SOFTENS** (the squared
+denominator keeps growing) — losing exactly the monotone-and-stiffening property
+§3.5 chose Murnaghan *for*. Below `J_sw = 1 − MG_F_SWITCH/s` the law hands over to
+Murnaghan, matched in value and tangent. The fallback region then behaves like the
+pre-M13 shipped law, which is the point: **the `u_s`–`c₀`–`s` fit has no meaning past
+its own pole.**
+
+| material | J_pole | J_sw | worst live J (M13) | |
+|---|---|---|---|---|
+| copper_jet | 0.328 | 0.396 | **0.5226** | 32 % clear — guard does not engage |
+| nera_filler | ~0.50 | 0.55 | **0.5434** | **inside the fallback; 2 live particles** |
+
+**§3.6.2 predicted this a priori and it held.** M12 warned "the MG pole guard stays
+load-bearing on this deck and must be designed, not assumed." It is, and it was. An
+interim AV-off bake showed only 1 particle and was briefly read as "a backstop, not
+load-bearing" — that reading did not survive the shipped configuration. **Do not
+silence it by lowering `MG_F_SWITCH`.** The guard naming `copper_jet` or `rha` would
+mean M13 is quietly not in effect where it is supposed to matter.
+
+#### MG relieved the NERA crush that M12 could not
+
+| | worst live J |
+|---|---|
+| Murnaghan (M12) | **0.2421** |
+| Mie-Grüneisen (M13) | **0.5434** |
+
+§3.6.2 concluded that relief "needs a **VOLUMETRIC** (compaction) criterion, not a
+deviatoric one", because plastic flow is isochoric and cannot relieve volumetric
+confinement however hard it engages. **MG's thermal pressure `Γρ₀e` IS that
+volumetric mechanism:** compression feeds `e`, `e` pushes back, and the crush arrests
+at the pole instead of driving 2.3× past it. M12 was right about the *kind* of thing
+required and wrong that MG would not supply it. Not a `dt` artifact — M12's own
+0.2159@110 vs 0.2120@336 shows `dt` cannot move it, and the 2.26× shift is ~200× the
+~1 % extremum wobble. **Do not quote the 4th decimal**: it is a min over every
+particle over every frame (§3.6.1).
+
+This is *not* a CFL saving in M13. `EOS_CFL_J_MARGIN` **stays at 0.35** — the decks
+now use only 18 % (nera) and 7 % (jet) of their budget, so 0.35 is conservative,
+which makes a rebake at it *correct, merely slow* (root §1: bake cost is
+irrelevant). Recalibrating a **global** stability constant inside the same change as
+a new EOS **and** a boundary-condition fix would be three variables at once. Those
+percentages are the evidence base for doing it later, as its own A/B.
+
+#### Honest limits, stated rather than discovered later
+
+- **`e` drops plastic dissipation.** The update is volumetric + AV work only, so
+  strongly-shearing regions — the crater walls, not the jet stagnation point — are
+  missing a real heat source and `e` **under-reads** there. Fine for the
+  near-hydrostatic jet tip; a real omission elsewhere. This is also why the cache
+  column is `internal_energy` and **not** `temperature` (CACHE_FORMAT §2): a
+  temperature would need a per-material `c_v` *and* would under-read exactly in the
+  zones a viewer most wants to look at.
+- **`e ≥ 0` is a theorem here that float32 violates.** Both compression and tension
+  give `ρ₀de = −p·dJ > 0` from rest, and `q ≥ 0` only adds — yet cancellation drives
+  `e` slightly negative at *birth*, in every deck. Left alone that seeds a runaway
+  (negative `e` ⇒ negative thermal pressure ⇒ spurious tension ⇒ more negative `e`).
+  The clamp is one-sided, so it injects a bounded trickle rather than removing any.
+  **Judge it RELATIVE to `e`, never in absolute J/kg**: the shipped decks clamp at
+  0–9 float32 eps of their own `e_max`, and an absolute 1.0 J/kg verdict is
+  *anti-correlated* with the risk — it condemned `apfsds_vs_era_oblique` (e_max
+  1.07e6) while clearing `apfsds_vs_nera` (1.00e7, 9.4× larger).
+- **A negative `e` is a TRACER, not a cause.** It was universal and born at roundoff
+  in every deck long before anything went wrong, and clamping it did **not** fix the
+  ERA divergence (§1.1.1 — that was a dead boundary condition).
+
+---
+
 ## 4. Timestep & why we bake offline
 
 The cost driver is the **CFL timestep, not particle count**. Steel's sound
