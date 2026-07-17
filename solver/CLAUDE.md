@@ -226,11 +226,17 @@ Grow the reference MLS-MPM incrementally, validating visually with
    - **~~Known limit, the honest one:~~ fixed in milestone 8** (PHYSICS §3.5). This
      used to read "the volumetric response has no EOS, so jet-tip pressure is the
      least trustworthy quantity in the model." It was true and it is now closed:
-     the volumetric response is a **Murnaghan EOS**, monotone and stiffening,
+     the volumetric response got a **Murnaghan EOS**, monotone and stiffening,
      tangent-matched at `J=1` so KE decks barely move. Measured: the jet tip goes
      `J` 0.0706 → **~0.43** (two figures, not four — it is dt-dependent; see below).
      SPH would not have fixed it either — the §1 SPH hedge stays retired on
      evidence (PHYSICS §1).
+     **⚠️ Milestone 13 SUPERSEDED the law and the number: the EOS is now
+     Mie-Grüneisen** (Murnaghan survives only as the pole guard's fallback branch),
+     and the jet tip reads **0.5226**. M8's limit — "a *cold* curve with no shock
+     heating", 0.68× copper's Hugoniot at 7 km/s — is what M13 closed. The `~0.43`
+     is the Murnaghan-era value; the "don't quote it to four decimals" posture was
+     right and this move is the fourth demonstration of it.
    - **Retracted while fixing it:** an interim diagnosis called the old law a
      "softening branch the jet crushes through". That was a **Kirchhoff-vs-Cauchy
      units error** — `½ρv²` is Cauchy, the turnover is Kirchhoff, and the Cauchy
@@ -376,8 +382,20 @@ Grow the reference MLS-MPM incrementally, validating visually with
 
 9. **Milestone 11 — artificial (shock) viscosity (PHYSICS §3.9).** Built the fix
    milestone 8 asked for, measured it, and **retired milestone 8's diagnosis**.
-   `SolverParams.av_c_q` / `av_c_l`, **default 0.0 = OFF**. Read §3.9 before
-   touching any of it; the four things to know:
+   `SolverParams.av_c_q` / `av_c_l`.
+   > **⚠️ SUPERSEDED BY MILESTONE 13 — AV IS NOW ON BY DEFAULT** (`av_c_q=1.5`,
+   > `av_c_l=0.6`). M11 weighed +57 % substeps against damping a ~0.9 % ring and
+   > correctly called it a bad trade — but **that was the wrong question**. AV's real
+   > job is carrying shock heating into `e`; without it MG lands on the *isentrope*,
+   > not the Hugoniot (`p/p_H` 1.000 → 0.923). M11's own closing note said exactly
+   > this would happen ("the moment a thermal term lands, AV heating SHOULD raise
+   > thermal pressure"). **The bullets below are M11's reasoning, kept because it was
+   > right at the time — do not act on the "off" parts.** Two are stale twice: AV
+   > shipped for **all 30** decks, not just the jet; and the "≤0.20 % on KE decks"
+   > inertness figure was measured under **Murnaghan at matched dt**, while M13's
+   > `apfsds_vs_rha` spall moved 18.2 → 25.1 % (MG + AV-on + the boundary fix — three
+   > variables, so it does NOT isolate AV, but the old figure is not evidence about
+   > today).
    - **Default off is a measured decision, not laziness.** AV costs **+57 %
      substeps** (240 → 377 on the jet: it raises the signal speed the CFL bound is
      sized from) to damp a ring that is **~0.9 % peak-to-peak**. With the

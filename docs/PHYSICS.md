@@ -685,6 +685,17 @@ current 30 µs window only. The prediction is still met to well under a percent 
 the agreement is simply no longer suspiciously perfect. "Immune by construction"
 was a reason to check it, not a reason to skip checking.
 
+> **Milestone 13 — checked, not skipped, and the distinction is the point.** MG
+> (§3.10) and the §1.1.1 boundary fix moved most figures in this document, and this
+> one is expected to be immune for **two independent reasons**: the markers are in
+> **free flight** (no grid coupling to lean on), and the jet's **nearest approach to
+> any wall is 32.2 mm** — measured on the M13 cache, not assumed — so a boundary
+> change cannot reach it. Both were verified rather than argued. The figures above
+> stand as the pre-M13 measurement; the *reasons* they should not move are what was
+> re-checked. This is the same posture as the sentence above it: a claim that ought
+> to be immune is a claim worth confirming, and "checked and unaffected" is a
+> different statement from "not re-measured".
+
 *(The pre-EOS table quoted `−0.064 mm/µs`, `50.0 → 45.3`, `117.5 → 77.5` for the
 control plus two development tungsten rows. The graded row reproduces exactly under
 this probe — 2.085 and 50.0 → 101.7 at the old 25 µs window — so the method matches
@@ -882,12 +893,22 @@ trap and it is easy to fall into twice.
   dominant tip defect.~~ RETIRED ON EVIDENCE by milestone 11 (§3.9).** The ring is
   real but it is **~0.9 % peak-to-peak** on `J`, carrying ~8 % of an already tiny
   residual — it cannot explain a ~30 % discrepancy, and §3.5 above explains what
-  did. Artificial viscosity is now implemented (von Neumann–Richtmyer) and ships
-  **default off**, because damping ~1 % is not worth +57 % substeps. It is kept as
-  a prerequisite for Mie-Grüneisen, not as a fix.
+  did. Artificial viscosity is now implemented (von Neumann–Richtmyer) and, **as of
+  milestone 13, ships default ON** — not to damp the ring (that trade never made
+  sense) but because **AV work is what carries shock heating into `e`** (§3.9's
+  banner, §3.10). It was kept as a prerequisite for Mie-Grüneisen, and it was
+  needed as one.
 - For reference: copper's Hugoniot poles at `J = 1 − 1/s = 0.328`, i.e. real copper
   essentially cannot be compressed past that. The measured tip at ~0.43 sits above
   it — severe, but inside physics, where the old law's 0.0706 was not.
+  **⚠️ Re-measured under milestone 13: the jet's worst live `J` is 0.5226**, not
+  ~0.43 — MG resists the tip harder, so it clears copper's pole by 59 % rather than
+  31 %, and clears its own `J_sw`=0.396 by 32 % (the pole guard does **not** engage
+  on the jet). The `~0.43` figures throughout this section are the Murnaghan-era
+  measurement and are kept for the comparison the section is making. §3.5's posture
+  is unchanged and was right: **do not quote tip-`J` to four decimals** — it is
+  dt-dependent, and the number moving again under a new EOS is the fourth
+  demonstration of that.
 
 **Cost, and why the substep had to be re-derived.** The EOS *stiffens* under
 compression, so the rest-state sound speed is no longer the CFL bound:
@@ -1417,9 +1438,36 @@ cells-across is dominant but not the only term.
 
 Milestone 8 left a named, documented defect: *"no artificial viscosity, so the
 front rings — and this is now the dominant tip defect."* Milestone 11 built the
-standard fix, measured it, and **retired the diagnosis on evidence**. The feature
-ships **default off**. The deliverable is the measurement, not the feature — the
-same shape as §3.4 (the SPH hedge retired) and §3.8 (the headline is the limit).
+standard fix, measured it, and **retired the diagnosis on evidence**. The
+deliverable is the measurement, not the feature — the same shape as §3.4 (the SPH
+hedge retired) and §3.8 (the headline is the limit).
+
+> **⚠️ SUPERSEDED BY MILESTONE 13: AV IS NOW ON BY DEFAULT** (`av_c_q = 1.5`,
+> `av_c_l = 0.6` in `config.py`). **Everything below that argues "default off" is
+> milestone 11's reasoning and is kept because the reasoning was correct at the
+> time — but do not act on it.**
+>
+> M11 weighed AV's cost (+57 % substeps) against damping a **~0.9 %** ring and
+> concluded, correctly, that this was a bad trade. **It was the wrong question.**
+> §3.10 shows AV's real job was never the ring: **AV work is the mechanism that
+> feeds shock heating into `e`**, and without it Mie-Grüneisen's energy equation
+> lands on the *isentrope* instead of the Hugoniot (`p/p_H` 1.000 → 0.923). The
+> velocity-error spread across the piston goes 0.223 → 0.003 with it on.
+>
+> So M11's own closing sentence — *"AV is the prerequisite for Mie-Grüneisen: its
+> work is currently dissipated to NOTHING, and the moment a thermal term lands, AV
+> heating SHOULD raise thermal pressure"* — is exactly what happened. **The reason
+> AV was off no longer exists**, and the +57 % substeps is now the price of a
+> correct energy balance rather than of a 0.9 % cosmetic gain.
+>
+> **Stale twice:** M11 anticipated switching AV on *"for the jet without re-tuning
+> the KE decks"*. M13 ships it on for **all 30**, so that hedge is spent. And M11's
+> *"AV is inert below hypervelocity — `apfsds_vs_rha` moves ≤0.20 % at matched dt"*
+> was measured **under Murnaghan at matched dt**; M13's `apfsds_vs_rha` spall moved
+> **18.2 % → 25.1 %** under MG + AV-on + the §1.1.1 boundary fix. That is three
+> variables at once and **does not isolate AV** — but it does mean the ≤0.20 %
+> figure must not be quoted as evidence that AV is inert on KE decks *today*. It
+> was true of the thing it measured.
 
 **The law.** von Neumann–Richtmyer: a bulk pressure resisting compression *rate*,
 
