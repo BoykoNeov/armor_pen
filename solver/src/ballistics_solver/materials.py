@@ -42,7 +42,54 @@ from dataclasses import dataclass
 # day a material genuinely needs its own (soft polymer fillers are the plausible
 # case at ~7-12, but they ignite at J=0.98 and never reach compressions where K'
 # is distinguishable).
+#
+# MILESTONE 13 KEPT THIS, in a smaller role. Murnaghan is no longer the EOS: it is
+# the POLE GUARD's fallback branch, used only below `mpm.MG_F_SWITCH` of the way to
+# the Hugoniot's pole (see mpm._mg_pressure). K'=4 still sets that branch's shape.
 EOS_KP: float = 4.0
+
+# --- Mie-Grueneisen shock EOS (milestone 13, PHYSICS §3.10) -----------------
+# The volumetric law is now
+#
+#     p(J,e) = p_H(eta)*(1 - Gamma0*eta/2)  +  Gamma0*rho0*e        eta = 1 - J
+#     p_H(eta) = rho0*c0^2*eta / (1 - s*eta)^2                      (shock Hugoniot)
+#
+# GAMMA CLOSURE, chosen on purpose: Gamma/V = Gamma0/V0, i.e. Gamma*rho = Gamma0*rho0
+# (equivalently Gamma = Gamma0*J). This is NOT a free choice made alongside the
+# formula — it is the assumption that DERIVES the formula, so the cold factor
+# (1 - Gamma0*eta/2) and the thermal term (Gamma0*rho0*e) must share it. Constant-Gamma
+# would be a different law. Note the standard identity `p(J, e_H) = p_H` holds for
+# EITHER closure and will therefore NOT catch a mistake here.
+#
+# `c0` IS NOT A FIELD, DELIBERATELY: it is derived as c0 = sqrt(K0/rho0) with
+# K0 = lam+mu, the same K0 milestone 8 used. Two reasons, and the second is the
+# important one:
+#   * It costs zero new constants, and
+#   * it keeps the EOS TANGENT-MATCHED AT REST: K(1) = rho0*c0^2 = K0 exactly, which
+#     is what makes milestone 13 a LARGE-STRAIN-ONLY change (a 1600 m/s KE deck barely
+#     moves; a 7 km/s jet tip moves a lot). Reading c0 from a shock table instead would
+#     silently break that and move every deck.
+# It is corroborated, not assumed: the derived c0 lands at 0.99x copper's public bulk
+# sound speed (3902 vs 3940 m/s), 1.06x RHA's, 1.10x tungsten's. Nothing was tuned.
+#
+# So Mie-Grueneisen costs TWO new per-material constants, not three. Both are public,
+# textbook, order-of-magnitude values (root §10) and neither is tuned to an outcome:
+#
+#   shock_s          slope of the linear u_s = c0 + s*u_p fit. Clusters ~1.2-1.5 for
+#                    metals, ~1.5-2.5 for polymers. It also fixes the Hugoniot's POLE
+#                    at J = 1 - 1/s, which is why it is the constant that decides
+#                    where the guard lives (mpm.MG_F_SWITCH).
+#   gruneisen_gamma  Gamma0, the Grueneisen coefficient at the reference state. ~2 for
+#                    most metals; it scales the thermal pressure Gamma0*rho0*e, i.e.
+#                    how strongly shock heating stiffens the material.
+
+
+@dataclass(frozen=True)
+class ShockEOS:
+    """Public Hugoniot fit constants for a material. See the block above."""
+
+    s: float  # u_s = c0 + s*u_p slope; pole at J = 1 - 1/s
+    gamma0: float  # Grueneisen coefficient at the reference state
 
 
 @dataclass(frozen=True)
@@ -57,6 +104,9 @@ class Material:
     yield_strength: float  # MPa (von Mises); also the fracture strength if brittle
     damage_threshold: float  # ductile spall: equiv. plastic strain at detachment
     #                          (ignored for brittle materials — they use a stress trigger)
+    # Mie-Grueneisen shock constants (milestone 13). REQUIRED — no default, on purpose:
+    # a new material must state its Hugoniot rather than silently inherit copper's.
+    shock: ShockEOS
     brittle: bool = False  # ceramics/composites: shatter on stress, ~zero plastic flow
 
     # --- Reactive block (ERA/NERA, milestone 5) -----------------------------
@@ -78,15 +128,23 @@ class Material:
 
 # Representative library. Numbers are public-literature order-of-magnitude.
 LIBRARY: dict[str, Material] = {
+    # shock=: tungsten's public Hugoniot fit. s~1.24 / Gamma0~1.54 are pure-W values;
+    # this rod is a 17.6 g/mm^3 heavy alloy rather than pure W (19.3), so they are
+    # representative rather than exact — which is the standard this repo works to
+    # (root §10). Pole at J = 1 - 1/1.24 = 0.194, the deepest of any material here.
     "tungsten_rod": Material(
         name="tungsten_rod", material_id=0,
         density=17.6e-3, youngs_modulus=3.9e5, poisson_ratio=0.28,
         yield_strength=1.5e3, damage_threshold=2.0,
+        shock=ShockEOS(s=1.24, gamma0=1.54),
     ),
+    # shock=: representative steel. Public fits scatter (iron ~1.92, 4340 ~1.33), so
+    # 1.49 is a mid-range steel value, not a spec-sheet number for any alloy.
     "rha": Material(
         name="rha", material_id=1,
         density=7.85e-3, youngs_modulus=2.0e5, poisson_ratio=0.29,
         yield_strength=1.0e3, damage_threshold=0.8,
+        shock=ShockEOS(s=1.49, gamma0=1.93),
     ),
     # Shaped-charge jet material (milestone 7). Representative COPPER — the
     # classic liner metal — as an ALREADY-FORMED jet: we seed the jet, never the
@@ -121,20 +179,33 @@ LIBRARY: dict[str, Material] = {
     # particulation knob: a stretching jet accumulates plastic strain, and when it
     # crosses this the jet breaks into a fragment train. Set from copper's large
     # ductility rather than tuned to force particulation on cue (root §10).
+    # shock=: copper is the best-characterised Hugoniot in the public literature and
+    # the one this repo measures against (PHYSICS §3.5/§3.10). s=1.489, Gamma0=1.99.
+    # Pole at J = 1 - 1/1.489 = 0.328 — real copper essentially cannot be compressed
+    # past that, and the jet tip runs closest to its own pole of anything here.
     "copper_jet": Material(
         name="copper_jet", material_id=6,
         density=8.96e-3, youngs_modulus=1.17e5, poisson_ratio=0.34,
         yield_strength=2.0e2, damage_threshold=1.5,
+        shock=ShockEOS(s=1.489, gamma0=1.99),
     ),
+    # shock=: representative alumina-like ceramic (s~1.0, Gamma0~1.3). s=1.0 puts the
+    # pole at J=0, i.e. this material has NO pole in the physical range — the guard is
+    # unreachable for it by construction. That is a real property of low-s materials,
+    # not a special case. Ceramics are poorly described by a linear u_s-u_p fit
+    # anyway; it does not matter here, because §3.5 predicted a priori (and measured)
+    # that ceramic fails at J~0.98, where every monotone volumetric law agrees to <1 %.
     "ceramic": Material(
         name="ceramic", material_id=2,
         density=3.9e-3, youngs_modulus=3.7e5, poisson_ratio=0.22,
         yield_strength=3.0e3, damage_threshold=0.05, brittle=True,
+        shock=ShockEOS(s=1.0, gamma0=1.30),
     ),
     "era_filler": Material(
         name="era_filler", material_id=3,
         density=1.6e-3, youngs_modulus=5.0e3, poisson_ratio=0.40,
         yield_strength=0.05e3, damage_threshold=0.02,
+        shock=ShockEOS(s=2.0, gamma0=1.0),
         # Reactive: ignites at ~2% shock compression and releases a ~4 GPa pulse
         # for ~5 us. Illustrative order-of-magnitude (root §10): real detonation
         # pressures are ~10x higher, but this is tuned to fling a few-mm steel
@@ -150,6 +221,7 @@ LIBRARY: dict[str, Material] = {
         name="era_filler_inert", material_id=4,
         density=1.6e-3, youngs_modulus=5.0e3, poisson_ratio=0.40,
         yield_strength=0.05e3, damage_threshold=0.02,
+        shock=ShockEOS(s=2.0, gamma0=1.0),
         reactive=False,
     ),
     # NERA (non-explosive reactive armor) interlayer: a soft filler that carries no
@@ -217,6 +289,7 @@ LIBRARY: dict[str, Material] = {
         name="nera_filler", material_id=5,
         density=1.6e-3, youngs_modulus=5.0e3, poisson_ratio=0.40,
         yield_strength=0.05e3, damage_threshold=3.0,  # both LIVE — see above
+        shock=ShockEOS(s=2.0, gamma0=1.0),
         reactive=False,
     ),
 }

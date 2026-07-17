@@ -23,8 +23,9 @@ import math
 import struct
 from pathlib import Path
 
-SCHEMA_VERSION = 1
-ATTRIBUTES = ["pos_x", "pos_y", "vel_mag", "stress", "damage", "material_id"]
+SCHEMA_VERSION = 2
+ATTRIBUTES = ["pos_x", "pos_y", "vel_mag", "stress", "damage", "material_id",
+              "internal_energy"]
 FRAME_COUNT = 3
 DOMAIN = {"xmin": 0.0, "xmax": 200.0, "ymin": 0.0, "ymax": 100.0}
 MATERIALS = {"0": "tungsten_rod", "1": "rha"}
@@ -49,6 +50,10 @@ def _particle(p: int, frame: int) -> list[float]:
         stress = 200.0 * frame
         damage = 0.0
         mat = 0
+        # Specific internal energy, J/kg (schema v2). 0 at t=0 = the reference
+        # state, warming as the toy rod works — illustrative, like every other
+        # number here, but the right ORDER (a real shocked metal reads ~1e5).
+        energy = 4.0e4 * frame
     else:  # RHA plate column at x=120, taking a little damage over frames
         q = p - ROD
         x = 120.0
@@ -57,7 +62,8 @@ def _particle(p: int, frame: int) -> list[float]:
         stress = 50.0 * frame + 5.0 * q
         damage = min(1.0, 0.15 * frame * math.exp(-abs(q - 6) / 3.0))
         mat = 1
-    return [x, y, vel, stress, damage, float(mat)]
+        energy = 2.5e4 * frame * math.exp(-abs(q - 6) / 3.0)
+    return [x, y, vel, stress, damage, float(mat), energy]
 
 
 def main() -> None:

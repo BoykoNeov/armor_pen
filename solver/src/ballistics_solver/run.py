@@ -51,7 +51,8 @@ def main(argv: list[str] | None = None) -> int:
         args.out,
         scenario=scenario.name,
         particle_count=0,  # set by mpm.bake once particles are seeded (§ below)
-        attributes=["pos_x", "pos_y", "vel_mag", "stress", "damage", "material_id"],
+        attributes=["pos_x", "pos_y", "vel_mag", "stress", "damage", "material_id",
+                    "internal_energy"],
         frame_dt=scenario.solver.total_time / scenario.solver.frame_count,
         domain={
             "xmin": scenario.domain.xmin, "xmax": scenario.domain.xmax,

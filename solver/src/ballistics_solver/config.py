@@ -121,17 +121,40 @@ class SolverParams:
     # an edited module constant — the pattern milestone 10's `standoff_conv_*`
     # decks established.
     #
-    # DEFAULT OFF, deliberately. Zero means q is identically zero AND the CFL
-    # bound is untouched, so every existing deck is bit-for-effect the pre-AV
-    # solver and nothing rebakes differently. Turning AV on is not free: it costs
-    # ~57% more substeps on the jet deck (240 -> 377, because AV raises the signal
-    # speed the CFL bound is sized from) and it would silently re-time and
-    # re-measure all 30 baked decks. A default is a claim that the benefit is
-    # worth that; it is not defaulted on until the benefit is demonstrated on a
-    # measurement that can actually SEE the shock ring (frame-cadence metrics
-    # alias it — see the AV block in mpm.py). Set them per-deck to opt in.
-    av_c_q: float = 0.0  # quadratic: spreads strong shocks over a few cells
-    av_c_l: float = 0.0  # linear: damps the post-shock elastic RING
+    # DEFAULT ON as of milestone 13, and the reversal is a MEASUREMENT, not taste.
+    #
+    # Milestone 11 defaulted these to 0.0 and set the bar for changing it: "a
+    # default is a claim that the benefit is worth [the cost]; it is not defaulted
+    # on until the benefit is demonstrated on a measurement." At the time the only
+    # known benefit was damping a ~0.9 % shock ring, which did not clear that bar.
+    #
+    # Mie-Grueneisen cleared it. AV work is the mechanism that carries shock heating
+    # into `e`, and without it the post-shock state is the ISENTROPE by construction.
+    # Measured at the jet's stagnation (heat_vs_composite, live copper clear of the
+    # guard, one knob changed):
+    #
+    #   AV off:  p/p_H = 0.9302   (cold curve 0.7606) <- the isentrope
+    #   AV on:   p/p_H = 1.0528   (cold curve 0.7703)
+    #
+    # 11.6 % apart. AV-OFF DOES NOT GET WHAT MILESTONE 13 IS FOR — it reads a
+    # reversible compression, and `e` gives it all back on unloading (live p99 decays
+    # to 2.4 % of its peak). Neither config is exact (off reads 7.0 % low, on reads
+    # 5.3 % high) and the coefficients below are NOT tuned to close that gap (root
+    # §10); the case for `on` is that a shock is irreversible and AV is the term that
+    # produces the entropy. `off` is right at weak shock for the wrong reason: the
+    # Hugoniot and isentrope osculate to 2nd order at the reference state, so at a KE
+    # deck's J~0.92 they agree to 0.24 % (0.9935 vs 0.9959) — measuring there proves
+    # nothing about the jet. Do not re-derive this from a KE deck.
+    #
+    # Cost, accepted: ~57 % more substeps (AV raises the signal speed the CFL bound
+    # is sized from — the bound DOES account for it, see the audit's c_max). Milestone
+    # 11's "every deck is bit-for-effect the pre-AV solver" property is retired by
+    # this, deliberately.
+    #
+    # 1.5 / 0.6 are the classical von Neumann-Richtmyer values the AV block in mpm.py
+    # documents. They are a public default, not a fit to any result here.
+    av_c_q: float = 1.5  # quadratic: spreads strong shocks over a few cells
+    av_c_l: float = 0.6  # linear: damps the post-shock elastic RING
 
 
 @dataclass

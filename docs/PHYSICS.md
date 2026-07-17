@@ -75,8 +75,85 @@ Both transfer kernels index the grid at `floor(Xp − 0.5) + {0,1,2}` with no bo
 check, so a particle within half a cell of a low edge would scatter **out of
 bounds**. The old 10 % margin hid this; with slabs now at the wall for the whole
 bake, `_seed` insets them two cells and `_g2p` clamps particle positions one cell
-inside the domain. The clamp is memory safety, not physics — the slip wall
-already removes wall-normal velocity, so it almost never binds.
+inside the domain.
+
+#### 1.1.1 The high walls never fired (found in milestone 13)
+
+> This section used to end: *"The clamp is memory safety, not physics — the slip
+> wall already removes wall-normal velocity, so it almost never binds."* Every
+> clause of that was false on two of the four walls, and the sentence is kept here
+> because **the document asserted exactly the invariant the code was violating.**
+> A stated invariant is not a tested one.
+
+`_grid_op` tested the far walls as `i > nx - bound`. `nx` is the **allocated**
+width, and the grid carries **3 pad nodes past the domain** so that a particle
+sitting on the position clamp has somewhere for its 3×3 stencil to land. So the
+high band lay entirely in the pad — outside the material, in a region the clamp
+guarantees is empty. Measured across four deck shapes: **8 of 8 high walls
+unreachable**. Since milestone 1.
+
+The low walls worked the whole time, because grid indices count from `0` and
+`i < bound` is genuinely inside the domain. That asymmetry is why it survived so
+long: every bake ran a **working mirror on its low edges and no wall at all on its
+high ones**, and a half-correct boundary looks like a boundary.
+
+**What replaced the missing wall is worse than no wall.** With nothing to zero the
+inbound normal velocity, `_g2p`'s position clamp becomes the boundary condition by
+default — and it is a *vice*, not a mirror: infinitely rigid, and it arrests
+**displacement** while leaving **velocity** untouched. Material piles onto the clamp
+plane still carrying its full inbound speed and is crushed there by everything
+behind it. In `apfsds_vs_era`, 2342 particles sat welded to `y = 119.61` (the clamp
+plane exactly) reading 1699 m/s, for 130 frames.
+
+The asymmetry is visible in any bake that reaches a wall, and this is the cheapest
+way to check it — the deck is symmetric about `y = 60` by construction, so the
+material must be too:
+
+| | dead high wall | walls live |
+|---|---|---|
+| `rha` `pos_y` | 0.88 … **119.61** (on the clamp) | 0.88 … 119.12 |
+| mirrored about 60 | 0.39 vs 0.88 — **asymmetric** | **0.88 vs 0.88 — exact** |
+| particles on a clamp plane | 2342 | **0** |
+
+**Milestone 13 did not cause this; it made it visible**, by giving the solver an
+energy equation. `era_filler` reads `e` in its EOS stress branch, and `e` on the
+pinned set jumped **24 → 7.1e5 J/kg in exactly the frames the particle reached the
+clamp** — 30× the rest of the filler, while the *median* was unchanged (2945 vs
+2815). The pinned **surface**, never the bulk: §3.6.1's rule again, an extremum is
+not a state. The bake then diverged at frame 190. `apfsds_vs_nera` stayed clean
+throughout, and the reason names the mechanism: **an inert filler is never
+detonated into the ceiling.**
+
+The fix tests against the **domain's far corner in grid coordinates**, as a float —
+`(xmax − xmin)/dx` is not an integer in `y` for a typical deck (307.2 for the ERA
+deck), and rounding it up is what created the pad in the first place.
+`tests/test_boundary_walls.py` pins reachability *derived from the position clamp*
+rather than from `_grid_op`, so it cannot be satisfied by copying the kernel's own
+mistake.
+
+Fixing it cleared every symptom at once, which is what makes it causal rather than
+correlated — one kernel change, and two counters go to **exactly zero**:
+
+| | dead walls | walls live |
+|---|---|---|
+| `v`/`F`/`e` non-finite | substep 197637 | **never** |
+| J floor fired | 269 509 | **0** |
+| resolution guard fired | 217 829 | **0** |
+| worst clamped `e` | **−inf** | −0.087 J/kg (roundoff) |
+| CFL audit | *** DIVERGED *** | OK, worst live J = 0.7166 |
+
+Neither the J floor nor the resolution guard was ever an EOS problem. Both were
+firing on material being crushed against the clamp.
+
+**The armor still touches the walls, and it should** — `_seed` lays slabs across the
+full domain height *precisely so* the mirror makes them a plate that continues
+beyond the frame. Material at the wall is not the defect; a wall that isn't there
+is. The per-deck sizing duty above is unchanged and still about the **rod** and its
+spray (which stays at `y = 45.9…74.1` here, nowhere near a boundary).
+
+**⚠️ Every figure in this document measured near a boundary is affected**, and every
+deck has armor at the walls. Re-measure; do not translate. The ERA/NERA numbers are
+the most exposed, since the detonation drives filler straight into the ceiling.
 
 ### 1.2 The penetrator is pointed, not flat-faced
 
@@ -247,13 +324,18 @@ source would otherwise accelerate unconfined light debris to a CFL-breaking
 filler detonates and the sandwich plates fly apart at a few hundred m/s. But at
 **0° (normal incidence) the reactive layer does not degrade the penetrator** —
 measured against an *equal-areal-mass inert twin* (`era_filler_inert`: identical
-density/stiffness/thickness, reactivity off), the rod is untouched: penetration
-past the main-plate face differs by **+0.3 %** (69.2 vs 69.0 mm — both decks
-perforate and the residual flies clear), rod damage by +2.3 %, residual velocity
-by +2.2 %. If anything the reactive rod is marginally *faster* and *deeper* — the
-opposite of protection, and coherent: the detonation clears filler off-axis, so
-the reactive rod pushes through slightly less on-path material than the inert rod
-that keeps its filler in the channel.
+density/stiffness/thickness, reactivity off), the rod is untouched: rod damage
+differs by **−0.9 %** and residual velocity by **+0.9 %** (1022.7 vs 1013.8 m/s),
+with the rod tip **+0.3 %** downrange — both decks perforate and the residual flies
+clear, so that last one is a free-flight position, not resistance. If anything the
+reactive rod is marginally *faster* — the opposite of protection, and coherent: the
+detonation clears filler off-axis, so the reactive rod pushes through slightly less
+on-path material than the inert rod that keeps its filler in the channel.
+*(Re-measured 2026-07-17 under M13 by `tools/measure_reactive_ab.py`. The rod null
+is the most robust claim in §3.1/§3.2: it has now read +2.2 % and +0.9 % across
+three physics changes and stayed inside the noise every time. The old
+"penetration 69.2 vs 69.0 mm" figures came from M5's uncommitted probe and are
+**not reproducible** — do not quote them.)*
 
 This is **correct physics, not a bug**: at 0° the detonation flings the plates
 *laterally, symmetric about the rod axis*, so the debris sweeps sideways and
@@ -261,10 +343,12 @@ never crosses the rod path to cut it. Real reactive armor gets its effectiveness
 from **obliquity** (§3.2).
 
 **The backing plate is a separate question from the rod, and the answer differs.**
-At 0° the main plate does spall **~13 % less** in the reactive deck (**0.246 vs
-0.282**, re-measured post-EOS; it was 0.220 vs 0.242, ~9 %, under the pre-EOS law —
-the *conclusion* survived milestone 8, the *magnitude* moved and both arms'
-absolute damage rose),
+At 0° the main plate does spall **~17 % less** in the reactive deck (**0.2732 vs
+0.3297**, re-measured 2026-07-17 by `tools/measure_reactive_ab.py` under M13 —
+Mie-Grüneisen (§3.10) plus the §1.1.1 boundary fix; it read 0.246 vs 0.282 (~13 %)
+post-EOS and 0.220 vs 0.242 (~9 %) under the pre-EOS law — **the conclusion has now
+survived three physics changes and the magnitude has moved on every one of them**,
+9 → 13 → 17 %, with both arms' absolute damage rising each time),
 driven by the same forward-shove mechanism §3.2 documents at 55°: the detonation
 pushes the plate body **1.58 mm** further downrange than the inert twin's
 (re-measured post-EOS; +1.44 mm under the pre-EOS law, same probe). That margin
@@ -310,31 +394,62 @@ buy headroom the rod never uses.
 
 **Verified result — protection, but not rod-cutting.** Measured against the
 equal-areal-mass inert twin (both decks seed at **286 355** particles), at 55° the
-reactive layer **measurably protects the backing plate**:
+reactive layer **measurably protects the backing plate**.
 
-- **Main-plate spall ≈ 16 % lower** for the reactive deck (0.137 vs 0.163 at the
-  final frame) — roughly **double the ~8 % the same mechanism buys at 0°** (§3.1).
+> **⚠️ RE-MEASURED 2026-07-17 (milestone 13). Every conclusion below survived;
+> every NUMBER moved.** The figures are now from `tools/measure_reactive_ab.py` — a
+> **committed** tool, which this A/B did not have before: M5/M6 used an ad-hoc probe
+> that was never checked in, so its numbers could only be quoted, never re-derived
+> (the same defect §3.3 records for the plate-separation figures). Two changes
+> invalidated the old values: Mie-Grüneisen (§3.10) and the boundary-condition fix
+> (§1.1.1), which hits *these* decks hardest — the detonation drives filler straight
+> into a ceiling that, until now, was not there.
+>
+> | | reactive | inert | delta | M6 quoted |
+> |---|---|---|---|---|
+> | 0° main-plate spall | 0.2732 | 0.3297 | **−17.1 %** | ~−8 % |
+> | 0° rod residual v | 1022.7 | 1013.8 | +0.9 % (null) | +2.2 % (null) |
+> | 55° main-plate spall | 0.1033 | 0.1741 | **−40.7 %** | −16 % |
+> | 55° rod residual v | 540.5 | 579.0 | **−6.7 %** | −8.5 % |
+> | 55° rod damage | 0.7267 | 0.7172 | +1.3 % (not cut) | −0.5 % (not cut) |
+>
+> **Absolute values are NOT comparable to M6's** (540/579 m/s vs 679/741): its probe
+> is gone, so its metric definitions are unknown. Quote the tool, not M6.
+>
+> This is the "model sensitivity" error bar below doing exactly what it warns of —
+> 40.7 % is back inside the 40/21/16 % range this same A/B has already read. The
+> *structure* is what is robust: protection at both angles, roughly doubling with
+> obliquity (17 → 41 %, where M6 had 8 → 16 % — both ~2.4×), rod not cut at either,
+> 0° a rod null and 55° a real modest slowing.
+
+- **Main-plate spall ≈ 41 % lower** for the reactive deck (0.1033 vs 0.1741 at the
+  final frame) — roughly **double the ~17 % the same mechanism buys at 0°** (§3.1).
 - **The rod is not cut or deflected — but it *is* slowed. Do not conflate those.**
-  Rod damage differs by −0.5 % (no effect) and the rod is not severed or turned:
+  Rod damage differs by +1.3 % (no effect) and the rod is not severed or turned:
   thin few-hundred-m/s flyers cannot cut a tough long rod, and the *a priori*
   "flyer sweep erodes the rod" expectation is what failed here — reported as it
-  came out. But residual velocity **is 8.5 % lower** (679 vs 741 m/s), ~75× the
+  came out. But residual velocity **is 6.7 % lower** (540.5 vs 579.0 m/s), ~60× the
   numerical floor below: that is a real, modest degradation. "Not cut" ≠ "not
   affected"; only the first is a null.
-  *(Penetration past the plate face reads +0.8 % — reactive marginally deeper — but
-  do not lean on it: both rods fully perforate, so at the final frame that number is
-  a free-flight **position**, not penetration resistance. A rod 8.5 % slower sitting
-  at the same position is diverging, and given more window would fall short.
-  Velocity is the leading rod-degradation indicator; the position is a snapshot.)*
+  *(Rod tip position reads −2.2 % — but do not lean on it in either direction: both
+  rods fully perforate, so at the final frame that number is a free-flight
+  **position**, not penetration resistance. Velocity is the leading rod-degradation
+  indicator; the position is a snapshot.)*
 - **Mechanism — and it scales with angle, which is the real evidence.** The
   detonation **shoves the main plate forward**: the plate body ends 7.7 mm further
   downrange than the inert twin's, and its front face 18.2 mm further (the inert
   plate's face travels *backward*, cratering and throwing lips upstream). A plate
   moving *with* the rod reduces effective (rod-relative) penetration — the textbook
   "moving / standoff plate defeats less penetrator." The shove grows 1.6 mm → 7.7 mm
-  from 0° to 55°, and the spall protection tracks it 8 % → 16 %. **One mechanism,
+  from 0° to 55°, and the spall protection tracks it 17 % → 41 %. **One mechanism,
   monotone in obliquity, consistent across both decks** — a far stronger argument
   than any single number.
+  *(**The two plate-shove distances — 1.6 mm and 7.7 mm — are NOT re-measured** and
+  predate both M13 and the §1.1.1 boundary fix; `measure_reactive_ab.py` does not
+  compute them. Stated, not buried: the protection ratio they are paired with was
+  re-measured and moved 8→17 % and 16→41 %, so assume these moved too. What survives
+  is that the shove grows with obliquity and the protection tracks it — the
+  *monotone relationship*, not the millimetres.)*
 
 Honesty caveats (root §1/§10): a steeper angle was **not** chased (it only moves
 `sin θ` 0.82→0.91 and worsens domain fit), and `detonation_pressure` was **not**
@@ -345,19 +460,30 @@ defeating a system — off-limits per §10).
 
 1. **Numerical (run-to-run) scatter: ≤ 0.11 %.** Measured directly, by re-baking
    identical decks and re-measuring: every aggregate metric above reproduces to
-   ≤0.11 % (the 55 % protection figure lands on 15.8 % both times). MPM grid
-   `atomic_add` ordering is non-deterministic, but at this level it is negligible.
-   The ~16 % protection is therefore **~150× the numerical noise floor** — this is
-   signal, full stop. (This measurement replaces an earlier, weaker argument from
+   ≤0.11 % (the 55° protection figure landed on 15.8 % both times when it *was*
+   ~16 %; the repeat bake has not been redone since M13 moved it to 40.7 %, and the
+   scatter is a property of the solver's `atomic_add` ordering rather than of the
+   value, so it carries — but it is an inherited measurement, not a fresh one). MPM
+   grid `atomic_add` ordering is non-deterministic, but at this level it is
+   negligible. The ~41 % protection is therefore **hundreds of times the numerical
+   noise floor** — this is signal, full stop. (This measurement replaces an earlier, weaker argument from
    "the A/B gap grows monotonically over the event". That trend held for the
    blunt rod, +0.023 → +0.032 → +0.035 at the 50/75/100 % marks, but does **not**
    survive the pointed nose: +0.021 → +0.027 → +0.026. The conclusion is unchanged
    and now rests on the repeat bake, which is what should have carried it.)
 2. **Model sensitivity: large, and the honest limit on all of this.** The *same*
-   A/B has read ≈ 40 % (old floating-block geometry), ≈ 21 % (plate geometry,
-   blunt rod) and ≈ 16 % (plate geometry, pointed rod). The **sign is robust across
-   every condition tried; the magnitude is not portable.** Quote it as "roughly
-   10–20 %, sign-stable", never as a figure. At 0° the margin's sign has actually
+   A/B has now read ≈ 40 % (old floating-block geometry), ≈ 21 % (plate geometry,
+   blunt rod), ≈ 16 % (plate geometry, pointed rod) and **≈ 41 %** (M13: MG + the
+   §1.1.1 boundary fix). The **sign is robust across every condition tried; the
+   magnitude is not portable** — and the M13 value landing back on the *first*
+   figure in that list, after four intervening changes, is the sharpest available
+   demonstration that the magnitude carries no information. Quote it as **"tens of
+   percent, sign-stable"**, never as a figure.
+   *(This entry used to advise quoting "roughly 10–20 %". That was itself a
+   magnitude claim dressed as a range, and M13 walked straight out of it. The
+   lesson is not to widen the band each time — it is that the band is not the
+   result.)*
+   At 0° the margin's sign has actually
    flipped across a geometry change (§3.1) — which is why 55° earns confidence and
    0° does not, despite both clearing the numerical floor.
 
@@ -559,6 +685,17 @@ current 30 µs window only. The prediction is still met to well under a percent 
 the agreement is simply no longer suspiciously perfect. "Immune by construction"
 was a reason to check it, not a reason to skip checking.
 
+> **Milestone 13 — checked, not skipped, and the distinction is the point.** MG
+> (§3.10) and the §1.1.1 boundary fix moved most figures in this document, and this
+> one is expected to be immune for **two independent reasons**: the markers are in
+> **free flight** (no grid coupling to lean on), and the jet's **nearest approach to
+> any wall is 32.2 mm** — measured on the M13 cache, not assumed — so a boundary
+> change cannot reach it. Both were verified rather than argued. The figures above
+> stand as the pre-M13 measurement; the *reasons* they should not move are what was
+> re-checked. This is the same posture as the sentence above it: a claim that ought
+> to be immune is a claim worth confirming, and "checked and unaffected" is a
+> different statement from "not re-measured".
+
 *(The pre-EOS table quoted `−0.064 mm/µs`, `50.0 → 45.3`, `117.5 → 77.5` for the
 control plus two development tungsten rows. The graded row reproduces exactly under
 this probe — 2.085 and 50.0 → 101.7 at the old 25 µs window — so the method matches
@@ -756,12 +893,22 @@ trap and it is easy to fall into twice.
   dominant tip defect.~~ RETIRED ON EVIDENCE by milestone 11 (§3.9).** The ring is
   real but it is **~0.9 % peak-to-peak** on `J`, carrying ~8 % of an already tiny
   residual — it cannot explain a ~30 % discrepancy, and §3.5 above explains what
-  did. Artificial viscosity is now implemented (von Neumann–Richtmyer) and ships
-  **default off**, because damping ~1 % is not worth +57 % substeps. It is kept as
-  a prerequisite for Mie-Grüneisen, not as a fix.
+  did. Artificial viscosity is now implemented (von Neumann–Richtmyer) and, **as of
+  milestone 13, ships default ON** — not to damp the ring (that trade never made
+  sense) but because **AV work is what carries shock heating into `e`** (§3.9's
+  banner, §3.10). It was kept as a prerequisite for Mie-Grüneisen, and it was
+  needed as one.
 - For reference: copper's Hugoniot poles at `J = 1 − 1/s = 0.328`, i.e. real copper
   essentially cannot be compressed past that. The measured tip at ~0.43 sits above
   it — severe, but inside physics, where the old law's 0.0706 was not.
+  **⚠️ Re-measured under milestone 13: the jet's worst live `J` is 0.5226**, not
+  ~0.43 — MG resists the tip harder, so it clears copper's pole by 59 % rather than
+  31 %, and clears its own `J_sw`=0.396 by 32 % (the pole guard does **not** engage
+  on the jet). The `~0.43` figures throughout this section are the Murnaghan-era
+  measurement and are kept for the comparison the section is making. §3.5's posture
+  is unchanged and was right: **do not quote tip-`J` to four decimals** — it is
+  dt-dependent, and the number moving again under a new EOS is the fourth
+  demonstration of that.
 
 **Cost, and why the substep had to be re-derived.** The EOS *stiffens* under
 compression, so the rest-state sound speed is no longer the CFL bound:
@@ -1017,6 +1164,29 @@ computed beforehand from density could not. And the bound has a direction: stren
 can only hold `u` **below** the ideal limit, never past it — so exceeding the
 asymptote is not "inaccurate", it is impossible.
 
+> **⚠️ RE-MEASURED 2026-07-17 (milestone 13). The claim survived and got BETTER —
+> the tables below are the Murnaghan-era measurement, kept for the comparison.**
+> Under Mie-Grüneisen (§3.10) + the §1.1.1 boundary fix, at v=7000:
+>
+> | | M9 (Murnaghan) | **M13 (MG)** |
+> |---|---|---|
+> | tungsten, fraction of its own asymptote | 0.937× | **0.9609×** |
+> | copper, fraction of its own asymptote | 0.937× | **0.9622×** |
+> | measured ratio vs the 1.1608 density prediction | 1.1614 (+0.04 %) | **1.1593 (−0.13 %)** |
+>
+> **MG moved BOTH arms closer to the hydrodynamic asymptote** (0.937 → 0.961),
+> which is exactly the direction a stiffer, Hugoniot-calibrated EOS should move
+> them — strength holds `u` below the ideal limit, and a better-resisting EOS
+> approaches it. The two arms still land within **0.14 %** of *each other*, so the
+> shortfall is still the model's rather than the material's, and still cancels in
+> the ratio. The ratio agreement loosened 0.04 % → 0.13 %; **do not read that as a
+> regression** — 0.04 % was always finer than the metric deserves (`u/v` is not
+> dt-converged; see the caveats below), and both figures are far inside it.
+>
+> `sweep_tungsten_v1500` still reads **R²=0.9855, steady=False** — the deck M9
+> excluded, reproducing its 0.985 exactly. That is Tate deceleration, i.e. physics,
+> and it is still correctly refused rather than re-tuned.
+
 **Measured** (`tools/measure_penetration.py`, which identifies the penetrator as
 whatever is moving at t=0, measures `v` from frame 0 rather than being told it, and
 derives its fit window from the erosion curve):
@@ -1107,14 +1277,27 @@ decimal**.)
 
 ### 3.8 Standoff — the jet's energy-neutral depth experiment (milestone 10)
 
-**Read this first: the shipped decks under-read the effect they measure, by ~2.3×
+**Read this first: the shipped decks under-read the effect they measure, by ~1.7×
 on the excess, and they are not grid-converged.** `standoff_s00/s30/s60/s90` measure
-a depth ratio of **1.23** between S=90 and S=0 where the a-priori prediction is
+a depth ratio of **1.31** between S=90 and S=0 where the a-priori prediction is
 **1.536**. The cause is resolution, not physics: the jet is 3 mm across = **8 cells**
 at the shipped `dx=0.375`, and it *thins as it stretches* to ~1.1 mm ≈ **3 cells** by
 the end of the window. The quantitative claim below rests on the six
 `standoff_conv_*` decks, **not** on the four shipped ones. Same posture as §3.5's
 tip-`J`: quote the trend, never the value.
+
+> **⚠️ RE-MEASURED 2026-07-17 (milestone 13); the tables below are the
+> Murnaghan-era measurement.** Under Mie-Grüneisen (§3.10) + the §1.1.1 boundary
+> fix the shipped family reads **S90/S0 = 1.312** (was 1.229) against the unchanged
+> a-priori **1.536** — so the under-read on the *excess* improved from **~2.3× to
+> ~1.7×** (0.536 predicted vs 0.312 measured). MG resists the jet tip harder, which
+> is the same direction §3.7's sweep moved.
+> **This does not rescue the shipped decks and must not be read as convergence:**
+> the deficit is `cells across the jet`, and no EOS can add resolution. The
+> `standoff_conv_*` decks still carry the quantitative claim. The matched-fraction
+> trend (17.5 → 23.1 mm at f=0.15, 37.6 → 48.9 at f=0.30) and the lab-time trap
+> below (94.2 → 72.5 mm, *falling* with standoff) both reproduce unchanged in
+> shape.
 
 **Why this experiment exists.** §3.4 built the jet but deliberately **refused to
 compare its penetration depth** to anything, because every comparison available was
@@ -1255,9 +1438,36 @@ cells-across is dominant but not the only term.
 
 Milestone 8 left a named, documented defect: *"no artificial viscosity, so the
 front rings — and this is now the dominant tip defect."* Milestone 11 built the
-standard fix, measured it, and **retired the diagnosis on evidence**. The feature
-ships **default off**. The deliverable is the measurement, not the feature — the
-same shape as §3.4 (the SPH hedge retired) and §3.8 (the headline is the limit).
+standard fix, measured it, and **retired the diagnosis on evidence**. The
+deliverable is the measurement, not the feature — the same shape as §3.4 (the SPH
+hedge retired) and §3.8 (the headline is the limit).
+
+> **⚠️ SUPERSEDED BY MILESTONE 13: AV IS NOW ON BY DEFAULT** (`av_c_q = 1.5`,
+> `av_c_l = 0.6` in `config.py`). **Everything below that argues "default off" is
+> milestone 11's reasoning and is kept because the reasoning was correct at the
+> time — but do not act on it.**
+>
+> M11 weighed AV's cost (+57 % substeps) against damping a **~0.9 %** ring and
+> concluded, correctly, that this was a bad trade. **It was the wrong question.**
+> §3.10 shows AV's real job was never the ring: **AV work is the mechanism that
+> feeds shock heating into `e`**, and without it Mie-Grüneisen's energy equation
+> lands on the *isentrope* instead of the Hugoniot (`p/p_H` 1.000 → 0.923). The
+> velocity-error spread across the piston goes 0.223 → 0.003 with it on.
+>
+> So M11's own closing sentence — *"AV is the prerequisite for Mie-Grüneisen: its
+> work is currently dissipated to NOTHING, and the moment a thermal term lands, AV
+> heating SHOULD raise thermal pressure"* — is exactly what happened. **The reason
+> AV was off no longer exists**, and the +57 % substeps is now the price of a
+> correct energy balance rather than of a 0.9 % cosmetic gain.
+>
+> **Stale twice:** M11 anticipated switching AV on *"for the jet without re-tuning
+> the KE decks"*. M13 ships it on for **all 30**, so that hedge is spent. And M11's
+> *"AV is inert below hypervelocity — `apfsds_vs_rha` moves ≤0.20 % at matched dt"*
+> was measured **under Murnaghan at matched dt**; M13's `apfsds_vs_rha` spall moved
+> **18.2 % → 25.1 %** under MG + AV-on + the §1.1.1 boundary fix. That is three
+> variables at once and **does not isolate AV** — but it does mean the ≤0.20 %
+> figure must not be quoted as evidence that AV is inert on KE decks *today*. It
+> was true of the thing it measured.
 
 **The law.** von Neumann–Richtmyer: a bulk pressure resisting compression *rate*,
 
@@ -1346,6 +1556,140 @@ which is precisely what "impact transient, not steady stagnation" predicts.
 published *"there is no ring"*. That band is ~20× too fast to contain a
 159-substep ring. **A null in the wrong band rules out nothing:** compute the
 predicted period *first*, then choose the band.
+
+---
+
+### 3.10 Mie-Grüneisen — the EOS gets an energy equation (milestone 13)
+
+§3.5 shipped Murnaghan and named its own limit precisely: *"a **cold** curve with
+no shock heating"*, reading 0.93× copper's Hugoniot at `J=0.9` but **0.68×** at a
+7 km/s equilibrium. Milestone 13 closes that, and the closure is **the energy
+equation, not the pressure formula**:
+
+    p(J, e) = p_cold(J) + Γ₀ρ₀e          Γ = Γ₀·J   (i.e. Γρ = Γ₀ρ₀)
+    p_H(η)  = K₀η / (1 − sη)²             η = 1 − J
+
+**There is no cheap Mie-Grüneisen. Shipping the reference curve alone is a
+REGRESSION** — the `(1 − Γη/2)` factor *subtracts* pressure, so the cold part lands
+*below* Murnaghan. Measured against copper's Hugoniot, the yardstick §3.5 already
+uses:
+
+| J | Murnaghan (M8) | MG cold only | MG + energy eq |
+|---|---|---|---|
+| 0.90 (KE deck) | 0.95 | 0.90 | **1.00** |
+| 0.63 (jet stagnation) | 0.73 | **0.63** | **1.00** |
+
+The Murnaghan column reproduces §3.5's published 0.93× / ~0.68×, which is how we
+know the script measures the right thing. **The whole benefit of M13 lives in the
+energy equation** — and that vindicates §3.9's ordering: AV work is the shock-heating
+mechanism that *feeds* `e`. AV's real job was never damping the ~0.9 % ring; it was
+carrying shock heating (velocity-error spread 0.223 → 0.003). **AV is therefore ON
+by default from M13**, reversing §3.9's measured "off" — the reason it was off (its
+work dissipated to nothing) no longer exists.
+
+**Two per-material constants, not three.** `c₀` needs no new constant: `c₀ = √(K₀/ρ₀)`
+with the existing `K₀ = λ+µ` lands within 1–10 % of public shock data (copper
+**0.99×**, RHA 1.06×, tungsten 1.10×) and preserves M8's tangent-match at `J=1`, so
+MG stays a **large-strain-only** change. Only `s` and `Γ₀` are new.
+
+**Solved in CLOSED FORM — no iteration.** MG is linear in `e`, so the implicit
+coupling (p depends on e, e depends on p) resolves algebraically:
+
+    ρ₀e¹(1 + Γ₀·ΔJ/2) = ρ₀e⁰ − [(p_cold(J¹) + p⁰)/2 + q]·ΔJ
+
+`q` is AV's, and it must be **the same q the momentum scatter uses** — a different one
+would silently violate the jump conditions. **The deviatoric elastic work is NOT fed
+to `e`**: it already lives in `F` (we are hyperelastic, unlike a hypoelastic
+hydrocode where all work feeds `e`). Feed `e` the volumetric + dissipative work only.
+
+#### What earns the milestone: a 1-D Lagrangian piston
+
+`p(J, e_H) = p_H` is a **TAUTOLOGY** — it is built into the MG algebra and holds for
+any Γ. It validates the algebra, not the scheme. The test that earns the milestone is
+a 1-D piston (no MPM, so no transfer confound):
+
+| u_p (m/s) | p/p_H | p_cold/p_H | u_s measured vs c₀+s·u_p |
+|---|---|---|---|
+| 300 | **1.000** | 0.931 | +1.6 % |
+| 1000 | **1.000** | 0.814 | +0.7 % |
+| 2000 | **0.999** | 0.709 | +0.4 % |
+
+The energy integration **lands on the Hugoniot**, and `u_s = c₀ + s·u_p` matches to
+<2 % having been **fitted to nothing**. **The falsifier matters as much as the
+result:** with AV work not fed to `e`, `p/p_H` drops to **0.923** (the isentrope);
+with `e` never fed, **0.755** (the cold curve). Three states from one knob — so the
+test is sensitive to the accounting, and a broken energy scheme is **worse than
+shipping nothing**.
+
+Confirmed in the kernel too, with AV on: live shocked RHA reads `p/p_H` = **0.9959**
+against `p_cold/p_H` = 0.9208.
+
+#### The pole is a hard singularity and the guard is LOAD-BEARING
+
+`p_H` poles at `J = 1 − 1/s`, and **past the pole it SOFTENS** (the squared
+denominator keeps growing) — losing exactly the monotone-and-stiffening property
+§3.5 chose Murnaghan *for*. Below `J_sw = 1 − MG_F_SWITCH/s` the law hands over to
+Murnaghan, matched in value and tangent. The fallback region then behaves like the
+pre-M13 shipped law, which is the point: **the `u_s`–`c₀`–`s` fit has no meaning past
+its own pole.**
+
+| material | J_pole | J_sw | worst live J (M13) | |
+|---|---|---|---|---|
+| copper_jet | 0.328 | 0.396 | **0.5226** | 32 % clear — guard does not engage |
+| nera_filler | ~0.50 | 0.55 | **0.5434** | **inside the fallback; 2 live particles** |
+
+**§3.6.2 predicted this a priori and it held.** M12 warned "the MG pole guard stays
+load-bearing on this deck and must be designed, not assumed." It is, and it was. An
+interim AV-off bake showed only 1 particle and was briefly read as "a backstop, not
+load-bearing" — that reading did not survive the shipped configuration. **Do not
+silence it by lowering `MG_F_SWITCH`.** The guard naming `copper_jet` or `rha` would
+mean M13 is quietly not in effect where it is supposed to matter.
+
+#### MG relieved the NERA crush that M12 could not
+
+| | worst live J |
+|---|---|
+| Murnaghan (M12) | **0.2421** |
+| Mie-Grüneisen (M13) | **0.5434** |
+
+§3.6.2 concluded that relief "needs a **VOLUMETRIC** (compaction) criterion, not a
+deviatoric one", because plastic flow is isochoric and cannot relieve volumetric
+confinement however hard it engages. **MG's thermal pressure `Γρ₀e` IS that
+volumetric mechanism:** compression feeds `e`, `e` pushes back, and the crush arrests
+at the pole instead of driving 2.3× past it. M12 was right about the *kind* of thing
+required and wrong that MG would not supply it. Not a `dt` artifact — M12's own
+0.2159@110 vs 0.2120@336 shows `dt` cannot move it, and the 2.26× shift is ~200× the
+~1 % extremum wobble. **Do not quote the 4th decimal**: it is a min over every
+particle over every frame (§3.6.1).
+
+This is *not* a CFL saving in M13. `EOS_CFL_J_MARGIN` **stays at 0.35** — the decks
+now use only 18 % (nera) and 7 % (jet) of their budget, so 0.35 is conservative,
+which makes a rebake at it *correct, merely slow* (root §1: bake cost is
+irrelevant). Recalibrating a **global** stability constant inside the same change as
+a new EOS **and** a boundary-condition fix would be three variables at once. Those
+percentages are the evidence base for doing it later, as its own A/B.
+
+#### Honest limits, stated rather than discovered later
+
+- **`e` drops plastic dissipation.** The update is volumetric + AV work only, so
+  strongly-shearing regions — the crater walls, not the jet stagnation point — are
+  missing a real heat source and `e` **under-reads** there. Fine for the
+  near-hydrostatic jet tip; a real omission elsewhere. This is also why the cache
+  column is `internal_energy` and **not** `temperature` (CACHE_FORMAT §2): a
+  temperature would need a per-material `c_v` *and* would under-read exactly in the
+  zones a viewer most wants to look at.
+- **`e ≥ 0` is a theorem here that float32 violates.** Both compression and tension
+  give `ρ₀de = −p·dJ > 0` from rest, and `q ≥ 0` only adds — yet cancellation drives
+  `e` slightly negative at *birth*, in every deck. Left alone that seeds a runaway
+  (negative `e` ⇒ negative thermal pressure ⇒ spurious tension ⇒ more negative `e`).
+  The clamp is one-sided, so it injects a bounded trickle rather than removing any.
+  **Judge it RELATIVE to `e`, never in absolute J/kg**: the shipped decks clamp at
+  0–9 float32 eps of their own `e_max`, and an absolute 1.0 J/kg verdict is
+  *anti-correlated* with the risk — it condemned `apfsds_vs_era_oblique` (e_max
+  1.07e6) while clearing `apfsds_vs_nera` (1.00e7, 9.4× larger).
+- **A negative `e` is a TRACER, not a cause.** It was universal and born at roundoff
+  in every deck long before anything went wrong, and clamping it did **not** fix the
+  ERA divergence (§1.1.1 — that was a dead boundary condition).
 
 ---
 

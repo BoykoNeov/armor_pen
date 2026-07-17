@@ -29,6 +29,26 @@ def _warp_cpu():
     wp.init()
 
 
+def _mg_of(mat, n=1):
+    """Host-side MG constants for a material, broadcast to n particles.
+
+    Milestone 13: the constitutive law takes specific internal energy `e` and the
+    per-particle Mie-Grueneisen constants. Both paths must be handed the SAME
+    numbers — that is the property this file exists to pin — so both get them from
+    `mpm._mg_params`, which is the single derivation.
+    """
+    d = mpm._mg_params(mat)
+    return {k: np.full(n, d[k]) for k in ("s", "g0", "grho", "A", "C", "J_sw")}
+
+
+def _mg_warp(mat, n=1):
+    """`_mg_of` as a Warp MGParams array — same `mpm._mg_params` derivation."""
+    d = mpm._mg_params(mat)
+    arr = np.zeros(n, dtype=mpm.MGParams().numpy_dtype())
+    for k in ("s", "g0", "grho", "A", "C", "J_sw"):
+        arr[k] = d[k]
+    return wp.array(arr, dtype=mpm.MGParams, device="cpu")
+
 # A spread that exercises every branch: rest, mild/heavy compression, expansion,
 # pure shear, rotation (must be stress-free), and a rotated compression (the case
 # that catches a botched polar decomposition).
@@ -62,15 +82,18 @@ def _vm_kernel(
     F: wp.array(dtype=wp.mat22),
     mu: wp.array(dtype=float),
     lam: wp.array(dtype=float),
+    e: wp.array(dtype=float),
+    mgp: wp.array(dtype=mpm.MGParams),
     out: wp.array(dtype=float),
 ):
     i = wp.tid()
-    out[i] = _stress_invariants_vm(F[i], mu[i], lam[i])
+    out[i] = _stress_invariants_vm(F[i], mu[i], lam[i], e[i], mgp[i])
 
 
 @wp.func
-def _stress_invariants_vm(F: wp.mat22, mu: float, lam: float):
-    return mpm._stress_invariants(F, mu, lam)[0]
+def _stress_invariants_vm(F: wp.mat22, mu: float, lam: float, e: float,
+                          mg: mpm.MGParams):
+    return mpm._stress_invariants(F, mu, lam, e, mg)[0]
 
 
 @pytest.mark.parametrize("mat_name", ["copper_jet", "rha", "ceramic", "tungsten_rod"])
@@ -97,11 +120,14 @@ def test_warp_and_numpy_stress_paths_agree(mat_name):
         dim=n,
         device="cpu",
         inputs=[F_wp, wp.array(mu, dtype=float, device="cpu"),
-                wp.array(lam, dtype=float, device="cpu"), out],
+                wp.array(lam, dtype=float, device="cpu"),
+                wp.zeros(n, dtype=float, device="cpu"),
+                _mg_warp(mat, n), out],
     )
     got_warp = out.numpy()
     got_numpy = mpm._von_mises(Fs.astype(np.float64), mu.astype(np.float64),
-                               lam.astype(np.float64))
+                               lam.astype(np.float64),
+                               np.zeros(n), _mg_of(mat, n))
 
     # Absolute floor for the near-zero cases, scaled to the material's own
     # stiffness: a rigid rotation stored in float32 is not exactly orthogonal, so
@@ -156,24 +182,35 @@ def test_eos_tangent_matches_the_law_it_replaced(mat_name):
     # And the p-wave speed used by the CFL bound must equal the pre-EOS
     # sqrt((lam+2mu)/rho) at rest — the old bound was correct AT REST; milestone 8
     # only changed what happens under compression.
-    c_eos = mpm._eos_sound_speed(1.0, K0, mu_s, mat.density)
+    c_eos = float(mpm._eos_sound_speed(1.0, K0, mu_s, mat.density,
+                                       mpm._mg_params(mat), 0.0))
     c_old = np.sqrt((lam_s + 2.0 * mu_s) / mat.density)
     assert c_eos == pytest.approx(c_old, rel=1e-9)
 
 
 def test_eos_equilibrium_j_inverts_the_pressure_law():
-    """``_eos_equilibrium_j`` is the closed-form inverse used to size the substep.
+    """``_eos_equilibrium_j`` predicts where a stagnation pressure equilibrates.
 
-    If it drifts from ``_eos_pressure``, dt gets sized for the wrong compression
-    and the failure mode is a NaN mid-bake rather than a wrong number.
+    If it drifts from the pressure law, dt gets sized for the wrong compression and
+    the failure mode is a NaN mid-bake rather than a wrong number.
+
+    Milestone 13 changed WHAT this inverts and HOW. Murnaghan had a closed-form
+    inverse and this test asserted that formula; Mie-Grueneisen has none, so the
+    function bisects. Asserting the round trip through ``_mg_p_cold_host`` is
+    strictly stronger anyway: it pins the inverse to the law that is actually
+    evaluated, rather than to a second hand-derived formula that could drift.
+
+    It inverts the COLD curve on purpose — the substep must be sized for a state
+    reachable without assuming the shock heating a given trajectory may not deposit.
     """
     mat = materials.get("copper_jet")
     mu_s, lam_s = mpm._lame(mat.youngs_modulus, mat.poisson_ratio)
     K0 = lam_s + mu_s
+    mg = mpm._mg_params(mat)
     for p_target in (1.0e3, 2.0e4, 7.2e4, 2.2e5):  # MPa, up to a 7 km/s tip
-        J = mpm._eos_equilibrium_j(p_target, K0)
-        p_back = (K0 / materials.EOS_KP) * (J ** (-materials.EOS_KP) - 1.0)
-        assert p_back == pytest.approx(p_target, rel=1e-9)
+        J = mpm._eos_equilibrium_j(p_target, K0, mg)
+        p_back = float(mpm._mg_p_cold_host(J, K0, mg))
+        assert p_back == pytest.approx(p_target, rel=1e-4)
 
 
 def test_jet_tip_equilibrium_is_physical():
@@ -186,7 +223,7 @@ def test_jet_tip_equilibrium_is_physical():
     mat = materials.get("copper_jet")
     mu_s, lam_s = mpm._lame(mat.youngs_modulus, mat.poisson_ratio)
     p_stag = 0.5 * mat.density * 7000.0**2
-    J = mpm._eos_equilibrium_j(p_stag, lam_s + mu_s)
+    J = mpm._eos_equilibrium_j(p_stag, lam_s + mu_s, mpm._mg_params(mat))
     assert 0.55 < J < 0.65, f"jet-tip equilibrium J={J:.4f} is outside the physical band"
 
 
@@ -196,5 +233,6 @@ def test_rotation_is_stress_free():
     mu_s, lam_s = mpm._lame(mat.youngs_modulus, mat.poisson_ratio)
     th = 0.9
     R = np.array([[[np.cos(th), -np.sin(th)], [np.sin(th), np.cos(th)]]])
-    vm = mpm._von_mises(R, np.array([mu_s]), np.array([lam_s]))
+    vm = mpm._von_mises(R, np.array([mu_s]), np.array([lam_s]),
+                        np.zeros(1), _mg_of(mat, 1))
     assert vm[0] == pytest.approx(0.0, abs=1e-3)

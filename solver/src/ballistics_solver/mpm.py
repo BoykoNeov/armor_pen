@@ -194,6 +194,51 @@ EOS_CFL_J_MARGIN: float = 0.35
 # mean the saturation had become load-bearing.
 J_FLOOR: float = 0.05
 
+# --- Mie-Grueneisen energy-equation resolution guard (milestone 13) ---------
+# Smallest value of the closed-form solve's denominator FACTOR, (1 + Gamma0*dJ/2),
+# at which that solve is still trusted. See the energy block in ``_g2p``.
+#
+# A RESOLUTION TEST, NOT A PHYSICAL LIMIT — the J_FLOOR posture again. The factor
+# is 1 for dJ=0 and falls as a substep compresses; it vanishes at dJ = -2/Gamma0
+# (~-1.04 for rha, i.e. a >100 % volume change in ONE substep) and goes negative
+# past it, which flips the sign of e and is how the ERA deck reached e = -1.7e6
+# and then NaN. In band the factor sits at ~0.97, so 0.1 is ~30x clear of any
+# resolved substep and inert on every deck that is behaving.
+#
+# It is deliberately NOT tiny. A threshold of, say, 1e-6 would technically avoid
+# the division blowing up while still letting e through amplified ~1e6x — passing
+# the "no NaN" test and failing the only test that matters. The point is not to
+# dodge an inf; it is to refuse a number the linearization cannot support.
+MG_E_FACTOR_MIN: float = 0.1
+
+# --- Mie-Grueneisen pole guard (milestone 13, PHYSICS §3.10) ----------------
+# Fraction of the way to the Hugoniot's pole at which the EOS hands over to its
+# Murnaghan fallback branch: handover at eta = MG_F_SWITCH/s, i.e. J_sw = 1 -
+# MG_F_SWITCH/s. See ``_mg_p_cold`` for the law and why the guard exists at all.
+#
+# THIS IS A DEGENERACY BACKSTOP, NOT A PHYSICAL LIMIT — the same posture as J_FLOOR
+# above, and the distinction matters the same way. The linear u_s = c0 + s*u_p fit is
+# an empirical fit over the range shock experiments actually cover; extrapolating it
+# INTO its own pole is not physics, it is arithmetic running out. So the guard is not
+# "approximating MG badly near the pole", it is declining to trust a fit past where it
+# means anything, and handing over to the monotone law this repo already shipped.
+#
+# 0.9 is chosen to sit as close to the pole as the fit plausibly reaches while leaving
+# the production decks on the MG branch. Measured margins at 0.9:
+#
+#   material       pole    J_sw    worst live J    guard active?
+#   copper_jet     0.328   0.396   0.4315          no  — but only 9% clear
+#   rha            0.329   0.396   0.50            no
+#   ceramic        0.000   0.100   0.9910          no  — s=1 means it HAS no pole
+#   nera_filler    0.500   0.550   0.2421          YES — load-bearing (PHYSICS §3.6.2)
+#
+# Copper's 9% is the number to watch: the jet tip is the deck this repo cares most
+# about, and a silent slide onto the fallback branch would quietly restore the pre-M13
+# law exactly where M13 is supposed to matter. Hence ``bake`` WARNS when LIVE material
+# crosses J_sw — do not remove that warning, and do not "fix" a warning by lowering
+# this constant, which would hide the slide rather than address it.
+MG_F_SWITCH: float = 0.9
+
 # --- Artificial (shock) viscosity: what it is and why it is allowed ---------
 #
 # DEFAULT OFF (`SolverParams.av_c_q/av_c_l` = 0). Read this before enabling it.
@@ -332,37 +377,162 @@ def _polar_r(F: wp.mat22):
 # only the JIT-visible mirror of it. Same for the J floor defined above.
 EOS_KP = wp.constant(materials.EOS_KP)
 _J_FLOOR = wp.constant(J_FLOOR)
+_MG_F_SWITCH = wp.constant(MG_F_SWITCH)
+_MG_E_FACTOR_MIN = wp.constant(MG_E_FACTOR_MIN)
+
+
+@wp.struct
+class MGParams:
+    """Per-particle Mie-Grueneisen constants, PRECOMPUTED on the host (``_mg_params``).
+
+    Bundled as a struct rather than six parallel arrays for one reason beyond tidy
+    signatures: ``A``/``C``/``J_sw`` are a *derivation* (matching the guard's Murnaghan
+    branch to the MG branch in value and tangent), and the Warp path and the NumPy
+    mirror ``_von_mises`` MUST agree. Deriving them once on the host and handing both
+    paths the same numbers makes drift impossible; recomputing the formula inline in
+    each path invites exactly the divergence ``tests/test_stress_paths.py`` exists to
+    catch.
+    """
+
+    s: float  # Hugoniot slope; pole at J = 1 - 1/s
+    g0: float  # Grueneisen Gamma0
+    grho: float  # Gamma0*rho0 — the thermal-pressure coefficient (== Gamma/V, the closure)
+    A: float  # guard: Murnaghan branch scale, matched in TANGENT at J_sw
+    C: float  # guard: Murnaghan branch offset, matched in VALUE at J_sw
+    J_sw: float  # guard handover: J below which the Murnaghan branch takes over
 
 
 @wp.func
-def _eos_pressure(J: float, K0: float):
-    """Murnaghan EOS — Cauchy pressure in MPa, positive in compression.
+def _mg_p_cold(J: float, K0: float, mg: MGParams):
+    """Reference (cold) curve of the Mie-Grueneisen EOS, WITH the pole guard.
 
-        p(J) = (K0/K') (J^-K' - 1)
+        p_cold(J) = p_H(eta) * (1 - Gamma0*eta/2)          for J >= J_sw
+                  = (A/K')(J^-K' - 1) + C                   for J <  J_sw
+        p_H(eta)  = K0 * eta / (1 - s*eta)^2                eta = 1 - J
 
-    **Monotone** decreasing in J, and p → +∞ as J → 0, so compression always
-    finds an equilibrium: there is no ceiling to crush through. Tangent bulk
-    modulus K(J) = -J dp/dJ = K0 · J^-K', hence K(1) = K0 = λ+µ *exactly* — the
-    same rest stiffness as the fixed-corotated volumetric term this replaces, so
-    the law is first-order identical at small strain and the KE decks barely move
-    (~1 %, measured — not zero). It is the large-strain branch that changes, by
-    up to ~2x at a 7 km/s jet tip. See PHYSICS §3.5.
+    Note ``rho0*c0^2 == K0`` exactly, by construction (c0 is DERIVED as sqrt(K0/rho0),
+    materials.py), so the Hugoniot needs neither c0 nor rho0 — only K0 = lam+mu, the
+    number milestone 8 already used. That identity is also what keeps the law
+    tangent-matched at rest: K(1) = rho0*c0^2 = K0.
 
-    Honest limit (root §1, §10): Murnaghan is a *cold* curve — no shock heating, so
-    no thermal pressure. Against copper's public shock Hugoniot it reads 0.93x at
-    J=0.9 (a KE deck — negligible), 0.68x at a 7 km/s equilibrium, and 0.28x at the
-    measured ~0.43 tip excursion. So the pressure error is **smaller but still
-    velocity-dependent**: milestone 8 shrank it, it did not abolish it, and
-    anything that sweeps velocity or reads absolute pressure still inherits it.
-    The thermal term needs Mie-Grüneisen and per-material c0/s/Γ — real new
-    physical data. Plausible, not predictive.
+    WHY THE GUARD IS NOT OPTIONAL. p_H poles at eta = 1/s, and PAST the pole it
+    *softens* — the squared denominator keeps growing while eta rises — so pressure
+    FALLS as compression rises and material can crush straight through. That destroys
+    the one property §3.5 chose Murnaghan for ("monotone and stiffening ... compression
+    always finds an equilibrium"), and it is not hypothetical: nera_filler sits at
+    J~0.24 against a pole at ~0.50 (PHYSICS §3.6.2), so this branch is LOAD-BEARING on
+    a shipped deck, not a formality.
 
-    J is floored before the fractional power: an element that momentarily inverts
-    (J≤0) under a violent shock substep would otherwise raise a negative base to a
-    fractional power and NaN everything downstream.
+    The fallback is Murnaghan itself — monotone, stiffening, divergent as J->0, and the
+    law this repo shipped for five milestones — matched to the MG branch in value AND
+    tangent at ``J_sw`` (host-side, see ``_mg_params``). So the guarded region behaves
+    exactly like the pre-M13 solver, which is the most defensible thing it could do.
     """
     Jc = wp.max(J, _J_FLOOR)
-    return (K0 / EOS_KP) * (wp.pow(Jc, -EOS_KP) - 1.0)
+    if Jc >= mg.J_sw:
+        eta = 1.0 - Jc
+        d = 1.0 - mg.s * eta
+        return K0 * eta / (d * d) * (1.0 - mg.g0 * eta * 0.5)
+    return (mg.A / EOS_KP) * (wp.pow(Jc, -EOS_KP) - 1.0) + mg.C
+
+
+@wp.func
+def _mg_pressure(J: float, e: float, K0: float, mg: MGParams):
+    """Mie-Grueneisen Cauchy pressure (MPa, positive in compression).
+
+        p(J,e) = p_cold(J) + Gamma0*rho0*e
+
+    The thermal term is the whole milestone. Without it (``e`` never fed) this is a
+    COLD curve that reads ~0.71x of copper's Hugoniot at a 2 km/s shock — WORSE than
+    the Murnaghan it replaces (~0.82x). Measured, 1-D piston: with the energy equation
+    the post-shock state lands ON the Hugoniot (p/p_H = 1.000 from 300 to 3000 m/s);
+    without shock heating fed to ``e`` it lands on the ISENTROPE (0.92 at 1.5 km/s).
+    See PHYSICS §3.10 — a broken energy accounting here is worse than shipping nothing.
+    """
+    return _mg_p_cold(J, K0, mg) + mg.grho * e
+
+
+# ``_eos_pressure`` (the Murnaghan kernel func) was REMOVED by milestone 13. Its
+# form survives inside ``_mg_p_cold``'s guard branch, which is the only place a
+# Murnaghan pressure is still evaluated; keeping a second copy callable invited a
+# caller that silently bypassed the thermal term. PHYSICS §3.5 remains the record
+# of what it was and why it was right for milestone 8.
+
+
+@wp.func
+def _mg_sound(J: float, e: float, K0: float, mu: float, rho0: float, mg: MGParams):
+    """Mie-Grueneisen sound speed (mm/ms). Includes the GRUENEISEN term.
+
+        c^2 = (K_cold(J) + Gamma0*J*p(J,e) + mu) / rho0
+
+    The second term is not optional and is easy to omit. c^2 = dp/drho|_S, and
+    (dp/dV)_S = (dp/dV)_e + (dp/de)_V*(de/dV)_S with (dp/de)_V = Gamma0*rho0 and
+    (de/dV)_S = -p — so the isentropic stiffness picks up a p*Gamma contribution the
+    COLD tangent alone misses. Dropping it under-reports c exactly where p is largest,
+    i.e. AT THE SHOCK FRONT, and the CFL audit would then print "OK" on a bound sized
+    too coarse: precisely the failure milestone 8's audit exists to catch.
+
+    K_cold is taken analytically per branch rather than by finite difference (the host
+    mirror does the same, so the two cannot drift):
+      MG branch:  d/deta [ K0*eta/d^2 * (1 - g0*eta/2) ],  d = 1 - s*eta,  K = J*dp/deta
+      guard:      K = A * J^-K'   (Murnaghan, by construction of the match)
+    rho0 is the REST density, matching the convention ``_av_tau`` and the audit use.
+    """
+    Jc = wp.max(J, _J_FLOOR)
+    K_cold = float(0.0)
+    if Jc >= mg.J_sw:
+        eta = 1.0 - Jc
+        d = 1.0 - mg.s * eta
+        g = 1.0 - mg.g0 * eta * 0.5
+        # dp/deta = f'(eta)*g(eta) + f(eta)*g'(eta), f = K0*eta/d^2
+        df = K0 * (d + 2.0 * mg.s * eta) / (d * d * d)
+        f = K0 * eta / (d * d)
+        K_cold = Jc * (df * g + f * (-mg.g0 * 0.5))
+    else:
+        K_cold = mg.A * wp.pow(Jc, -EOS_KP)
+    p = _mg_pressure(Jc, e, K0, mg)
+    return wp.sqrt(wp.max((K_cold + mg.g0 * Jc * p + mu) / rho0, 0.0))
+
+
+@wp.func
+def _av_q(
+    F: wp.mat22,
+    C: wp.mat22,
+    mu: float,
+    lam: float,
+    e: float,
+    mg: MGParams,
+    rho0: float,
+    l: float,
+    c_q: float,
+    c_l: float,
+):
+    """Scalar von Neumann-Richtmyer artificial pressure q (MPa, >=0).
+
+    Split out of ``_av_tau`` by milestone 13 because q is now needed in TWO places and
+    they must be the same number: the momentum scatter (``_p2g``, via ``_av_tau``) and
+    the ENERGY equation (``_g2p``), where q's work is what carries shock heating into
+    ``e``. Feeding a different q to the energy equation than the momentum equation
+    would silently violate the jump conditions — the post-shock state would drift off
+    the Hugoniot, which is exactly the bug PHYSICS §3.10's piston test exists to catch.
+
+    Milestone 11 noted AV's work was "dissipated to NOTHING — there is no energy
+    equation and Murnaghan is a cold curve, so there is no thermal pressure for the
+    dissipated energy to feed." That is no longer true, and it is why AV stopped being
+    a ~1 % ring-damping nicety and became the mechanism that removes the
+    velocity-dependent pressure error (0.223 -> 0.003 spread; PHYSICS §3.10).
+    """
+    div_v = C[0, 0] + C[1, 1]
+    # Compression only. In expansion an artificial viscosity would resist material
+    # coming APART — it would glue open a spall crack, which is precisely the
+    # physics this repo exists to show.
+    if div_v >= 0.0:
+        return float(0.0)
+    Jc = wp.max(wp.determinant(F), _J_FLOOR)
+    c = _mg_sound(Jc, e, lam + mu, mu, rho0, mg)
+    # div_v < 0 here, so BOTH terms are positive: the quadratic by squaring, the
+    # linear by the explicit minus sign.
+    return rho0 * l * (c_q * l * div_v * div_v - c_l * c * div_v)
 
 
 @wp.func
@@ -371,6 +541,8 @@ def _av_tau(
     C: wp.mat22,
     mu: float,
     lam: float,
+    e: float,
+    mg: MGParams,
     rho0: float,
     l: float,
     c_q: float,
@@ -396,22 +568,15 @@ def _av_tau(
     difference from current density is absorbed by the coefficients, which the
     sensitivity sweep varies anyway.
     """
-    div_v = C[0, 0] + C[1, 1]
-    # Compression only. In expansion an artificial viscosity would resist material
-    # coming APART — it would glue open a spall crack, which is precisely the
-    # physics this repo exists to show.
-    if div_v >= 0.0:
+    q = _av_q(F, C, mu, lam, e, mg, rho0, l, c_q, c_l)
+    if q == 0.0:
         return wp.mat22(0.0, 0.0, 0.0, 0.0)
     Jc = wp.max(wp.determinant(F), _J_FLOOR)
-    c = wp.sqrt(((lam + mu) * wp.pow(Jc, -EOS_KP) + mu) / rho0)
-    # div_v < 0 here, so BOTH terms are positive: the quadratic by squaring, the
-    # linear by the explicit minus sign.
-    q = rho0 * l * (c_q * l * div_v * div_v - c_l * c * div_v)
     return wp.mat22(-q * Jc, 0.0, 0.0, -q * Jc)
 
 
 @wp.func
-def _fixed_corotated_pft(F: wp.mat22, mu: float, lam: float):
+def _fixed_corotated_pft(F: wp.mat22, mu: float, lam: float, e: float, mg: MGParams):
     """Kirchhoff stress τ = P(F) Fᵀ — corotated DEVIATOR + EOS pressure.
 
     The elastic stress that drives the P2G momentum scatter. Factored out so the
@@ -423,7 +588,16 @@ def _fixed_corotated_pft(F: wp.mat22, mu: float, lam: float):
     Milestone 8 split the two branches apart. The volumetric half used to be
     ``lam*(J-1)*J``, which has **no equation of state** and *under*-resists at
     extreme compression — a 7 km/s stagnation point equilibrated at J≈0.15 where
-    real copper gives ≈0.61. The EOS owns the pressure now (``_eos_pressure``).
+    real copper gives ≈0.61. Milestone 13 replaced the EOS itself: the pressure is
+    Mie-Grueneisen (``_mg_pressure``), so this now takes the particle's specific
+    internal energy ``e``. That is the ONLY signature change — the deviatoric branch
+    below is untouched, and at ``e=0`` and small strain the law is still
+    tangent-matched to both predecessors (K(1) = λ+µ exactly).
+
+    NOTE this stays RATE-FREE. ``e`` is a state variable, not a rate: artificial
+    viscosity remains outside this function, in ``_p2g``, for the reasons the AV block
+    gives (this is the constitutive law; it feeds the brittle triggers and is mirrored
+    on the host by ``_von_mises``, which cannot see ``div v``). A test pins that.
     """
     J = wp.determinant(F)
     R = _polar_r(F)
@@ -436,13 +610,13 @@ def _fixed_corotated_pft(F: wp.mat22, mu: float, lam: float):
     # ``_p2g`` scatters.
     dev = 2.0 * mu * (F - R) * wp.transpose(F)
     tr_half = 0.5 * (dev[0, 0] + dev[1, 1])
-    # Volumetric branch: Cauchy σ_vol = -p·I, and τ = J·σ, so τ_vol = -p(J)·J·I.
+    # Volumetric branch: Cauchy σ_vol = -p·I, and τ = J·σ, so τ_vol = -p(J,e)·J·I.
     # K0 = λ+µ reproduces the rest stiffness of the term being replaced exactly.
     # Both factors use the FLOORED J (see J_FLOOR): with a raw negative J from an
     # inverted element, -p·J flips sign and reports enormous tension instead of
     # the compression that would push it back out.
     Jc = wp.max(J, _J_FLOOR)
-    lp = -_eos_pressure(Jc, lam + mu) * Jc - tr_half
+    lp = -_mg_pressure(Jc, e, lam + mu, mg) * Jc - tr_half
     return dev + wp.mat22(lp, 0.0, 0.0, lp)
 
 
@@ -619,7 +793,7 @@ def _return_mapping(
 
 
 @wp.func
-def _stress_invariants(F: wp.mat22, mu: float, lam: float):
+def _stress_invariants(F: wp.mat22, mu: float, lam: float, e: float, mg: MGParams):
     """Von Mises and max tensile principal of the Cauchy stress.
 
     Cauchy sigma = (1/J) P(F) F^T, sharing ``_fixed_corotated_pft`` outright with
@@ -634,7 +808,7 @@ def _stress_invariants(F: wp.mat22, mu: float, lam: float):
     spurious tensile reading.
     """
     J = wp.determinant(F)
-    PFt = _fixed_corotated_pft(F, mu, lam)
+    PFt = _fixed_corotated_pft(F, mu, lam, e, mg)
     invJ = 1.0 / wp.max(J, _J_FLOOR)
     sxx = PFt[0, 0] * invJ
     syy = PFt[1, 1] * invJ
@@ -659,6 +833,8 @@ def _update_damage(
     alpha: wp.array(dtype=float),
     dthr: wp.array(dtype=float),
     damage: wp.array(dtype=float),
+    e: wp.array(dtype=float),
+    mgp: wp.array(dtype=MGParams),
 ):
     """Latch a particle as spalled once it fails — ductile or brittle path.
 
@@ -688,7 +864,7 @@ def _update_damage(
     if brittle[p] > 0.5:
         ys = yield_k[p]
         if ys > 0.0:
-            inv = _stress_invariants(F[p], mu[p], lam[p])
+            inv = _stress_invariants(F[p], mu[p], lam[p], e[p], mgp[p])
             if inv[0] >= ys or inv[1] >= BRITTLE_TENSILE_FRAC * ys:
                 damage[p] = 1.0
     else:
@@ -821,6 +997,8 @@ def _p2g(
     reactive: wp.array(dtype=float),
     det_pressure: wp.array(dtype=float),
     burn: wp.array(dtype=float),
+    e: wp.array(dtype=float),
+    mgp: wp.array(dtype=MGParams),
     grid_v: wp.array2d(dtype=wp.vec2),
     grid_m: wp.array2d(dtype=float),
     origin: wp.vec2,
@@ -846,7 +1024,8 @@ def _p2g(
     # particle that carries no stress (spalled fragment, burning or spent filler)
     # carries no q either. A free fragment has no shock to damp — it is debris —
     # and damping burning filler would fight the detonation source term.
-    av = _av_tau(F[p], C[p], mu[p], lam[p], mass[p] / vol0[p], dx, av_c_q, av_c_l)
+    av = _av_tau(F[p], C[p], mu[p], lam[p], e[p], mgp[p], mass[p] / vol0[p], dx,
+                 av_c_q, av_c_l)
     if reactive[p] > 0.5:
         # Reactive filler runs its OWN state machine, keyed off burn/damage and
         # never the ductile-spall gate (see the reactive note above):
@@ -861,7 +1040,8 @@ def _p2g(
             pd = det_pressure[p]
             affine = coeff * wp.mat22(-pd, 0.0, 0.0, -pd) + affine
         elif damage[p] < 0.5:
-            affine = coeff * (_fixed_corotated_pft(F[p], mu[p], lam[p]) + av) + affine
+            affine = coeff * (_fixed_corotated_pft(F[p], mu[p], lam[p], e[p], mgp[p])
+                              + av) + affine
         # else spent: no stress term
     elif damage[p] < 0.5:
         # A spalled particle (damage>=0.5) is a free fragment: it drops its
@@ -869,7 +1049,8 @@ def _p2g(
         # perforation channel / back-face spall spray opens up. It KEEPS its mass
         # and APIC momentum so grid momentum is conserved and it still collides
         # (grid-shared contact) instead of ghosting through the rod.
-        affine = coeff * (_fixed_corotated_pft(F[p], mu[p], lam[p]) + av) + affine
+        affine = coeff * (_fixed_corotated_pft(F[p], mu[p], lam[p], e[p], mgp[p])
+                          + av) + affine
 
     for i in range(3):
         for j in range(3):
@@ -885,8 +1066,7 @@ def _p2g(
 def _grid_op(
     grid_v: wp.array2d(dtype=wp.vec2),
     grid_m: wp.array2d(dtype=float),
-    nx: int,
-    ny: int,
+    edge: wp.vec2,
 ):
     i, j = wp.tid()
     m = grid_m[i, j]
@@ -906,20 +1086,143 @@ def _grid_op(
         # the event finishes before the rod or its spray nears a wall; that is a
         # per-deck sizing duty, not something this kernel can enforce.
         #
+        # `edge` IS THE DOMAIN'S FAR CORNER IN GRID COORDINATES, and it is NOT the
+        # array's shape — that distinction is the whole bug fixed here. The grid is
+        # allocated with 3 PAD nodes past the domain so a clamped particle's 3x3
+        # stencil has somewhere to land, so `nx` sits ~3 cells OUTSIDE the material
+        # and testing `i > nx - bound` put the high walls entirely in the pad, where
+        # `_g2p`'s position clamp guarantees nothing ever goes. The high walls could
+        # not fire. Ever. In any deck.
+        #
+        # The low walls worked the whole time — indices count from 0, so `i < bound`
+        # is genuinely inside — which is exactly why nobody noticed: every deck ran a
+        # working mirror on its low edges and a rigid clamp on its high ones, and the
+        # asymmetry is visible in any bake that reaches a wall (RHA stands off the
+        # bottom at y=0.88, held by the mirror, and is jammed ONTO the top clamp
+        # plane at y=119.61). With no wall to zero the inbound normal velocity, the
+        # position clamp becomes the wall instead: infinitely rigid, and it stops
+        # DISPLACEMENT while leaving velocity untouched, so material piles onto the
+        # clamp plane still carrying its full inbound speed and is crushed against it
+        # by everything behind. That is not a boundary condition, it is a vice.
+        # A float edge (not an int index) is what makes the two sides symmetric:
+        # the domain's low corner is 0.0 and its high corner is (xmax-xmin)/dx, which
+        # is NOT an integer in y for a typical deck — the pad rounds it up.
+        #
         # No gravity: over a ~0.1 ms window it is utterly negligible next to
         # impact stresses.
-        bound = 3
+        bound = 3.0
+        fi = float(i)
+        fj = float(j)
         vx = vel[0]
         vy = vel[1]
-        if i < bound and vx < 0.0:
+        if fi < bound and vx < 0.0:
             vx = 0.0
-        if i > nx - bound and vx > 0.0:
+        if fi > edge[0] - bound and vx > 0.0:
             vx = 0.0
-        if j < bound and vy < 0.0:
+        if fj < bound and vy < 0.0:
             vy = 0.0
-        if j > ny - bound and vy > 0.0:
+        if fj > edge[1] - bound and vy > 0.0:
             vy = 0.0
         grid_v[i, j] = wp.vec2(vx, vy)
+
+
+@wp.func
+def _is_bad(a: float):
+    """1 if `a` is NaN or effectively infinite, else 0.
+
+    `a != a` is the NaN test (NaN compares unequal to everything, itself
+    included). The magnitude arm catches an inf AND the finite-but-doomed values
+    just below it — a float32 at 1e30 is one multiply from overflow, and catching
+    it there names the substep the physics broke rather than the substep the
+    format gave up.
+    """
+    if a != a:
+        return 1
+    if wp.abs(a) > 1.0e30:
+        return 1
+    return 0
+
+
+@wp.kernel
+def _nan_watch(
+    v: wp.array(dtype=wp.vec2),
+    F: wp.array(dtype=wp.mat22),
+    e: wp.array(dtype=float),
+    step: int,
+    out: wp.array(dtype=wp.int64),
+):
+    """Debug tripwire: the FIRST substep at which any particle goes non-finite.
+
+    WHY THIS EXISTS, AND WHY A CACHE CANNOT REPLACE IT. A frame is 400-1600
+    substeps, and this class of failure is instantaneous: apfsds_vs_era reads
+    perfectly healthy at frame 189 (live vel_mag max 1679 m/s) and is 98 % NaN at
+    frame 190, with the count then FROZEN — one poisoned grid node reaches every
+    particle within a few substeps. Frame cadence cannot see inside that, which is
+    exactly the blind spot milestone 11 documented for the AV ring and for the CFL
+    audit. A cache says the day it died; this says the instant, and on what.
+
+    Records min(step*1e6 + particle) per quantity, so one atomic gives BOTH the
+    earliest substep and (among ties) a concrete particle index to go look at.
+    Separate slots for v / F / e because WHICH goes first is the diagnosis: the
+    cache says momentum leads and energy trails it, and this is what confirms the
+    ordering at substep resolution rather than inferring it 1047 substeps late.
+
+    Off unless `nan_trace=True`; one extra launch per substep, no allocation.
+    """
+    p = wp.tid()
+    key = wp.int64(step) * wp.int64(1000000) + wp.int64(p)
+    vp = v[p]
+    if _is_bad(vp[0]) == 1 or _is_bad(vp[1]) == 1:
+        wp.atomic_min(out, 0, key)
+    Fp = F[p]
+    if (_is_bad(Fp[0, 0]) == 1 or _is_bad(Fp[0, 1]) == 1
+            or _is_bad(Fp[1, 0]) == 1 or _is_bad(Fp[1, 1]) == 1):
+        wp.atomic_min(out, 1, key)
+    if _is_bad(e[p]) == 1:
+        wp.atomic_min(out, 2, key)
+
+
+@wp.kernel
+def _grid_watch(
+    grid_v: wp.array2d(dtype=wp.vec2),
+    grid_m: wp.array2d(dtype=float),
+    ny: int,
+    step: int,
+    slot: int,
+    out: wp.array(dtype=wp.int64),
+    mass_out: wp.array(dtype=float),
+):
+    """Debug tripwire: the first GRID node to go non-finite, on each side of `_grid_op`.
+
+    `_nan_watch` says the particles broke; it cannot say who broke them. Both
+    candidate mechanisms poison ``grid_v`` and reach the particles through the same
+    G2P, so `v` and `F` go together either way and the ORDER discriminates nothing.
+    Sampling ``grid_v`` on both sides of the divide does discriminate, because the
+    two mechanisms sit on opposite sides of it:
+
+      * ``slot=0``, after `_p2g` — ``grid_v`` is MOMENTUM. Bad here ⇒ a particle
+        scattered a non-finite stress: the fix is at the particle.
+      * ``slot=1``, after `_grid_op` — ``grid_v`` is VELOCITY (momentum/mass). Bad
+        here but fine at slot 0 ⇒ the division made it, and then ``grid_m`` is tiny
+        *by arithmetic*, not by hypothesis: finite/m is only non-finite for small m.
+        The fix is the guard, which tests ``m > 0.0`` — divide-by-zero, not small
+        mass, so it cannot fire on the case that bites.
+
+    ``mass_out`` is the mass at the seed node, captured via the value `atomic_min`
+    returns: a thread writes only if it just lowered the minimum, so later substeps
+    (larger keys) never overwrite it. Within one substep two simultaneously-bad
+    nodes can race, and the loser's mass may land — a near-tie between two nodes of
+    the same event, which does not change the reading.
+
+    Off unless ``nan_trace=True``; two extra launches per substep, no allocation.
+    """
+    i, j = wp.tid()
+    gv = grid_v[i, j]
+    if _is_bad(gv[0]) == 1 or _is_bad(gv[1]) == 1:
+        key = wp.int64(step) * wp.int64(1000000) + wp.int64(i * ny + j)
+        old = wp.atomic_min(out, slot, key)
+        if key < old:
+            mass_out[slot] = grid_m[i, j]
 
 
 @wp.kernel
@@ -928,14 +1231,45 @@ def _g2p(
     v: wp.array(dtype=wp.vec2),
     C: wp.array(dtype=wp.mat22),
     F: wp.array(dtype=wp.mat22),
+    e: wp.array(dtype=float),
+    damage: wp.array(dtype=float),
+    mu: wp.array(dtype=float),
+    lam: wp.array(dtype=float),
+    mgp: wp.array(dtype=MGParams),
+    rho0: wp.array(dtype=float),
+    # Energy-equation diagnostics, atomically accumulated over the whole bake:
+    #   [0] resolution guard fired (substep too coarse for this particle's dJ)
+    #   [1] e was clamped up to 0 from a negative value
+    #   [2] J floor engaged (raw det F left the EOS's range)
+    # Counted, never silently swallowed: these say WHICH mechanism a bad bake hit,
+    # and a zero here is the evidence that the guards are inert on a good one.
+    #
+    # int64, and that is not fussiness. These were float32 for one bake and the
+    # negative-e slot came back reading exactly 16777216 = 2^24 — the value where
+    # float32 stops being able to count, since 2^24 + 1 == 2^24 in that format. It
+    # was not a measurement, it was a saturated register, and it silently passed
+    # for one. A bake here is ~1e11 particle-substeps; nothing narrower than int64
+    # can count events over that.
+    ediag: wp.array(dtype=wp.int64),
+    # Worst (most negative) e ever clamped, over the whole bake. THE load-bearing
+    # number: the count says how often the clamp fired, but only the magnitude
+    # says whether it is filtering roundoff or hiding a real negative drive.
+    ediag_min: wp.array(dtype=float),
     grid_v: wp.array2d(dtype=wp.vec2),
     origin: wp.vec2,
     inv_dx: float,
+    dx: float,
     dt: float,
     lo: wp.vec2,
     hi: wp.vec2,
+    av_c_q: float,
+    av_c_l: float,
 ):
     p = wp.tid()
+    # Old state, read BEFORE anything below overwrites it: the energy update at the
+    # end needs the same (F, C) pair `_p2g` scattered with this substep.
+    F_old = F[p]
+    C_old = C[p]
     Xp = (x[p] - origin) * inv_dx
     base = wp.vec2i(int(wp.floor(Xp[0] - 0.5)), int(wp.floor(Xp[1] - 0.5)))
     fx = Xp - wp.vec2(float(base[0]), float(base[1]))
@@ -967,7 +1301,175 @@ def _g2p(
         wp.clamp(x[p][0] + dt * new_v[0], lo[0], hi[0]),
         wp.clamp(x[p][1] + dt * new_v[1], lo[1], hi[1]),
     )
-    F[p] = (wp.mat22(1.0, 0.0, 0.0, 1.0) + dt * new_C) * F[p]
+    F_new = (wp.mat22(1.0, 0.0, 0.0, 1.0) + dt * new_C) * F_old
+    F[p] = F_new
+
+    # --- energy equation (milestone 13, PHYSICS §3.10) -----------------------
+    # `e` is SPECIFIC internal energy — per unit MASS. `rho0*e` is the corresponding
+    # energy per unit REFERENCE volume, which is the quantity this balance is written
+    # in (and the one `dJ`, a reference-volume ratio, is conjugate to):
+    #
+    #     rho0 * de = -(p + q) * dJ
+    #
+    # i.e. compression work plus the artificial viscosity's dissipation. `q` is the
+    # SAME scalar `_p2g` scattered as momentum this substep (same F_old/C_old), which
+    # is what makes the scheme conserve: feeding the energy equation a different q
+    # than the momentum equation drifts the post-shock state off the Hugoniot.
+    #
+    # IMPLICIT, AND SOLVED IN CLOSED FORM. p^{n+1} depends on e^{n+1} which depends on
+    # p^{n+1}. Mie-Grueneisen is LINEAR in e, so no iteration is needed — substitute
+    # p^{n+1} = p_cold(J^{n+1}) + Gamma0*rho0*e^{n+1} into the trapezoidal update and
+    # solve:
+    #
+    #     rho0*e1*(1 + Gamma0*dJ/2) = rho0*e0 - [ (p_cold(J1) + p0)/2 + q ] * dJ
+    #
+    # VERIFIED IN THE KERNEL, not just in the scheme. PHYSICS §3.10's 1-D piston is a
+    # separate numpy implementation: it validates the ALGEBRA and cannot catch a bug in
+    # this threading, in the F_old/C_old timing, or in whether the `q` fed here is the
+    # one `_p2g` actually scattered. And every AV-OFF bake exercises only the reversible
+    # -p*dJ term, so it cannot exercise this path at all. Measured on apfsds_vs_rha with
+    # AV ON (c_q=1.5, c_l=0.6), live shocked rha well clear of the guard:
+    #
+    #   median J = 0.918,  median e = 9.8e4  (nonzero: e IS fed)
+    #   median p(J,e)/p_H = 0.9959           <- lands on the Hugoniot
+    #   median p_cold/p_H = 0.9208           <- where it would sit if e were dead
+    #   thermal share of p = 7.6%
+    #
+    # 0.9959 vs 0.9208 is the whole milestone, in the kernel. If a future change makes
+    # these two converge, `e` has stopped being fed; if p/p_H lands BETWEEN them, `q` has
+    # stopped reaching the energy equation (the isentrope — the falsifier's exact shape).
+    #
+    # HONEST LIMIT (root §10): this is the VOLUMETRIC work plus AV only. Plastic
+    # dissipation is NOT fed to e, so strongly-shearing regions are missing a real
+    # heat source. Deliberate and stated: it is negligible at the near-hydrostatic jet
+    # stagnation point this milestone is about, and `_return_mapping` runs in a
+    # separate kernel on log-strain, where the dissipated work is not on hand.
+    # GATED ON COHESION, and the gate is load-bearing. A particle that carries no
+    # stress does no compression work, so its internal energy LATCHES at the moment
+    # it broke: a fragment keeps the heat it took on and stops accumulating. This
+    # inherits `_p2g`'s stress gating exactly — the same principle the AV term above
+    # already follows.
+    #
+    # MEASURED, because the first cut of this column omitted the gate: a spalled
+    # particle's F keeps evolving with no stress feedback (see J_FLOOR), so
+    # `-(p+q)*dJ` integrates against a garbage pressure forever. On apfsds_vs_rha
+    # that put the SPALLED median at 1.4e8 J/kg and its max at 4.8e11 — against a
+    # live max of 8.1e3, and a physical shocked metal's ~1e5. Not a tail: 25 % of
+    # the cache, median-garbage, enough to flatten every live particle to zero on
+    # any linear colormap.
+    #
+    # It never reached the physics — `_p2g` drops a spalled particle's stress term
+    # and the CFL audit reads live particles only — so it was a readout/contract
+    # defect, not a solver one. Which is exactly why it had to be caught on purpose:
+    # nothing blows up, and the cache is just quietly wrong.
+    if damage[p] >= 0.5:
+        return
+
+    # J IS FLOORED HERE, and that is a CORRECTNESS FIX, not defensive padding.
+    # Every pressure path floors J at J_FLOOR internally (`_mg_p_cold`), so `p` is
+    # the pressure of the FLOORED state. Taking `dJ` from the RAW determinant then
+    # charges the work -p*dJ at a pressure the model never had: below the floor the
+    # cold curve saturates while dJ keeps counting real volume change, and the two
+    # are no longer conjugate. The justification is CONJUGACY, not a blowup it
+    # prevents — an unresolved substep is wrong here with or without the floor, and
+    # a resolved sub-floor excursion is fully reversible either way.
+    #
+    # e < 0 is the falsifier, and it is a theorem rather than a judgement call. From
+    # rest, compression gives dJ<0 with p_cold>0, and tension gives dJ>0 with
+    # p_cold<0 — both make rho0*de = -p*dJ POSITIVE — and q >= 0 only ever adds
+    # (`_av_q` returns 0 in expansion). It holds on the guard's Murnaghan branch
+    # too: J < J_sw means compression, so p_cold > 0 there as well. So e >= 0
+    # always, and any negative e is discretization error.
+    #
+    # HONEST SCOPE, because this floor reads like the fix and is not: measured, it
+    # engages TWICE in a 550-frame ERA bake (1e11 particle-substeps), and the guard
+    # below fires 8 times. Neither is what broke that deck — see the clamp at the
+    # bottom of this block, which is. Both stay because they are correct and free:
+    # each closes a mode that is unreachable on a resolved bake and catastrophic on
+    # an unresolved one, and the counts are the evidence they are inert.
+    J_old_raw = wp.determinant(F_old)
+    J_new_raw = wp.determinant(F_new)
+    J_old = wp.max(J_old_raw, _J_FLOOR)
+    J_new = wp.max(J_new_raw, _J_FLOOR)
+    if J_old_raw < _J_FLOOR or J_new_raw < _J_FLOOR:
+        wp.atomic_add(ediag, 2, wp.int64(1))  # floor engaged: raw J left EOS range
+    dJ = J_new - J_old
+    K0 = lam[p] + mu[p]
+    mg = mgp[p]
+    q = _av_q(F_old, C_old, mu[p], lam[p], e[p], mg, rho0[p], dx, av_c_q, av_c_l)
+    p0 = _mg_pressure(J_old, e[p], K0, mg)
+    pc1 = _mg_p_cold(J_new, K0, mg)
+    # GUARD THE FACTOR, NOT THE rho0-SCALED PRODUCT. The previous form tested
+    # `|rho0*(1 + Gamma0*dJ/2)| > 1e-12`; with rho0 = 7.85e-3 for steel that only
+    # fires once the FACTOR is below 1.27e-10, so it could not catch the sign flip
+    # it was written for. Driven down nine pathological substeps it fired ZERO
+    # times and returned e = -6.0e13 — it emitted garbage where its own comment
+    # promised it would prevent an inf, which is strictly worse, because an inf
+    # would have been caught downstream.
+    #
+    # The factor vanishes at dJ = -2/Gamma0 (~-1.04 for rha) and goes NEGATIVE past
+    # it, flipping e's sign. Flooring J above bounds J_new but does NOT close this:
+    # a particle at J_old=2.0 crushed to the floor still gives dJ=-1.95, factor
+    # -0.88. The floor bounds one side; this catches the rest.
+    #
+    # MG_E_FACTOR_MIN is a resolution test, not a physical limit (the J_FLOOR
+    # posture). In band the factor sits at ~0.97 — an in-band substep is dJ~-0.036
+    # — so this is inert on a resolved bake and the 1-D piston is untouched. When it
+    # fires, the substep is too coarse for this particle's volume change and the
+    # closed-form solve cannot be trusted; e is left UNCHANGED rather than updated
+    # with a number the linearization does not support. That drops the substep's
+    # compression work, so it is not conservative — which is why it is COUNTED and
+    # reported at the end of the bake rather than silently swallowed. A guard that
+    # fires often is a bake to distrust, and the count is how you find out.
+    factor = 1.0 + mg.g0 * dJ * 0.5
+    if factor > _MG_E_FACTOR_MIN:
+        e[p] = (rho0[p] * e[p] - ((pc1 + p0) * 0.5 + q) * dJ) / (rho0[p] * factor)
+    else:
+        wp.atomic_add(ediag, 0, wp.int64(1))  # guard fired: unresolved dJ
+    # --- e >= 0: a ROUNDOFF FILTER, and this is the fix the ERA deck needed ------
+    # Restoring the theorem above. What makes this a filter rather than a mask is
+    # the MAGNITUDE it removes, which is why the worst value is recorded and
+    # reported rather than just counted: the violation is BORN AT ROUNDOFF.
+    #
+    # WHERE THE ROUNDOFF COMES FROM. `e` is float32, and this solve divides by
+    # rho0*factor with rho0 ~ 7.85e-3 — so it AMPLIFIES any numerator error ~127x.
+    # For a particle near rest the numerator `rho0*e0 - work` is a cancellation of
+    # near-equal floats, so e lands at ~+-1e-4 where the exact answer is 0.
+    #
+    # WHY 1e-4 KILLS A BAKE. Below zero the thermal term Gamma0*rho0*e makes p
+    # NEGATIVE — tension on a particle that is not stretched. Spurious tension
+    # pulls its neighbours in, so it compresses, so dJ < 0, so -(p+q)*dJ =
+    # -(neg)(neg) < 0 and e goes MORE negative. A closed feedback loop, and the
+    # thermal term is the only thing that closes it: Murnaghan had no `e`, so this
+    # mode did not exist before milestone 13.
+    #
+    # MEASURED, and the deck pattern is the evidence it is a compounding leak and
+    # not an ERA quirk. First negative e:
+    #   apfsds_vs_rha   frame 4, tungsten_rod, -0.37     -> stays bounded, 400 fr
+    #   heat_vs_composite frame 50, ceramic,   -9.0e-6   -> stays bounded, 150 fr
+    #   apfsds_vs_era   frame 4, rha,          -3.7e-4   -> -9.6 -> -1075 -> NaN
+    # Universal, born at roundoff in every deck. ERA is not special except that it
+    # drives hard for 550 frames, which is long enough for the loop to compound.
+    #
+    # Clamping at BIRTH is what makes this cheap: the -1075 never happens, because
+    # the -1e-4 that seeds it never does. That is the whole argument for the clamp,
+    # and it is falsifiable — if `worst clamped` ever reports a magnitude that is
+    # not roundoff, this is masking a real negative drive and the diagnosis above
+    # is wrong. Read that number, not the count (root §10).
+    #
+    # IT IS A RATCHET, and the cost is stated rather than hidden. Roundoff scatters
+    # e both ways but only the negative half is corrected, so the clamp INJECTS a
+    # little energy — it never removes any. The bake report prints both the count
+    # and the worst value precisely so the injection can be bounded: it cannot
+    # exceed count x |worst| for any one particle, i.e. ~1e-4 J/kg per firing
+    # against a physical ~1e5, and a particle at rest with no work done on it stays
+    # at 0 and never fires again. Root §1 licenses this trade — stability over
+    # rigor, noted — but the honest reading of `internal_energy` is that its zero
+    # point carries a small positive bias, not that it is exact.
+    if e[p] < 0.0:
+        wp.atomic_add(ediag, 1, wp.int64(1))
+        wp.atomic_min(ediag_min, 0, e[p])
+        e[p] = 0.0
 
 
 @wp.kernel
@@ -1007,14 +1509,81 @@ def _lame(E: float, nu: float) -> tuple[float, float]:
     return mu, lam
 
 
-def _eos_equilibrium_j(p: float, K0: float) -> float:
-    """Volume ratio at which the Murnaghan EOS balances pressure ``p`` (MPa).
+def _mg_params(mat: "materials.Material") -> dict:
+    """Derive a material's Mie-Grueneisen constants, INCLUDING the guard's match.
 
-    Closed-form inverse of ``_eos_pressure``: J = (1 + K' p/K0)^(-1/K'). Host-side
-    only — used to size the substep a priori (see ``EOS_CFL_J_MARGIN``), never in
-    the kernels.
+    The single source of both the Warp path (``MGParams``) and the NumPy mirror
+    (``_von_mises``), so the two cannot drift — see ``MGParams``.
+
+    The guard hands over to a Murnaghan branch at ``J_sw``, matched there in VALUE and
+    TANGENT (C1), so the solver feels no kink:
+
+        K_m(J) = A·J^-K'          =>  A = K(J_sw)·J_sw^K'          (tangent)
+        p_m(J) = (A/K')(J^-K' - 1) + C
+                                  =>  C = p(J_sw) - (A/K')(J_sw^-K' - 1)   (value)
+
+    Returns plain floats in mm-ms-g. ``rho0*c0^2 == K0`` by construction (c0 is
+    DERIVED, materials.py), so nothing here needs c0 explicitly.
     """
-    return (1.0 + materials.EOS_KP * p / K0) ** (-1.0 / materials.EOS_KP)
+    mu, lam = _lame(mat.youngs_modulus, mat.poisson_ratio)
+    K0 = lam + mu
+    s, g0 = mat.shock.s, mat.shock.gamma0
+    J_sw = 1.0 - MG_F_SWITCH / s
+
+    def p_cold_mg(J):
+        eta = 1.0 - J
+        d = 1.0 - s * eta
+        return K0 * eta / (d * d) * (1.0 - g0 * eta * 0.5)
+
+    def K_cold_mg(J):
+        eta = 1.0 - J
+        d = 1.0 - s * eta
+        f = K0 * eta / (d * d)
+        df = K0 * (d + 2.0 * s * eta) / (d * d * d)
+        return J * (df * (1.0 - g0 * eta * 0.5) + f * (-g0 * 0.5))
+
+    A = K_cold_mg(J_sw) * J_sw**materials.EOS_KP
+    C = p_cold_mg(J_sw) - (A / materials.EOS_KP) * (J_sw ** (-materials.EOS_KP) - 1.0)
+    return {"s": s, "g0": g0, "grho": g0 * mat.density, "A": A, "C": C, "J_sw": J_sw,
+            "K0": K0, "mu": mu}
+
+
+def _mg_p_cold_host(J, K0, mg: dict):
+    """Host mirror of ``_mg_p_cold``. Vectorised; same branch, same constants."""
+    J = np.maximum(np.asarray(J, dtype=float), J_FLOOR)
+    eta = 1.0 - J
+    d = 1.0 - mg["s"] * eta
+    # Evaluate BOTH branches and select: np.where is not lazy, and past the pole the
+    # MG expression divides by ~0, so clamp d away from zero purely to keep the unused
+    # branch finite. The select is what decides; this only stops a warning/NaN in the
+    # arm that is thrown away.
+    d_safe = np.where(np.abs(d) < 1e-9, 1e-9, d)
+    p_mg = K0 * eta / (d_safe * d_safe) * (1.0 - mg["g0"] * eta * 0.5)
+    p_guard = (mg["A"] / materials.EOS_KP) * (J ** (-materials.EOS_KP) - 1.0) + mg["C"]
+    return np.where(J >= mg["J_sw"], p_mg, p_guard)
+
+
+def _eos_equilibrium_j(p: float, K0: float, mg: dict) -> float:
+    """Volume ratio at which the EOS balances pressure ``p`` (MPa).
+
+    Host-side only — used to size the substep a priori (see ``EOS_CFL_J_MARGIN``),
+    never in the kernels.
+
+    Milestone 8's version was a closed-form inverse of Murnaghan. Mie-Grueneisen has
+    no convenient inverse, and more importantly the right target is the COLD curve:
+    this predicts where a stagnation pressure equilibrates so the substep can be sized
+    for it, and it must not assume the shock heating that a real trajectory may or may
+    not deposit. Solved by bisection on the monotone (guaranteed by the guard) cold
+    curve — host-side, once per material per bake, so cost is irrelevant.
+    """
+    lo, hi = J_FLOOR, 1.0
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if float(_mg_p_cold_host(mid, K0, mg)) < p:
+            hi = mid  # not compressed enough
+        else:
+            lo = mid
+    return 0.5 * (lo + hi)
 
 
 def _av_signal_speed(c: float, div_v: float, l: float, c_q: float, c_l: float) -> float:
@@ -1039,15 +1608,30 @@ def _av_signal_speed(c: float, div_v: float, l: float, c_q: float, c_l: float) -
     return c * (1.0 + c_l) + c_q * l * abs(min(div_v, 0.0))
 
 
-def _eos_sound_speed(J: float, K0: float, mu: float, rho: float) -> float:
-    """P-wave speed (mm/ms) under the EOS at volume ratio ``J``.
+def _eos_sound_speed(J, K0, mu, rho, mg: dict, e=0.0):
+    """P-wave speed (mm/ms) under the EOS at volume ratio ``J``. Host mirror of
+    ``_mg_sound``, plus the shear term.
 
-    M(J) = K(J) + mu with the EOS tangent K(J) = K0·J^-K'. At J=1 this is exactly
-    ``lam + 2*mu`` — i.e. identical to the pre-EOS rest-state bound — because
-    K0 = lam+mu. Below J=1 it climbs like J^(-K'/2): the reason the substep had to
-    be re-derived in milestone 8 rather than inherited.
+    M(J) = K_cold(J) + Gamma0·J·p(J,e) + mu. At J=1, e=0 this is exactly ``lam + 2*mu``
+    — identical to both the pre-EOS and the Murnaghan rest-state bound — because
+    K0 = lam+mu and the thermal term vanishes. That is what keeps milestone 13 a
+    large-strain-only change.
+
+    THE GRUENEISEN TERM IS NOT OPTIONAL (see ``_mg_sound``): c^2 = dp/drho|_S picks up
+    a p·Gamma contribution that the cold tangent alone misses, and it is largest
+    exactly at the shock front. Omitting it prints "OK" on a bound sized too coarse.
     """
-    return math.sqrt((K0 * J ** (-materials.EOS_KP) + mu) / rho)
+    J = np.maximum(np.asarray(J, dtype=float), J_FLOOR)
+    eta = 1.0 - J
+    d = 1.0 - mg["s"] * eta
+    d_safe = np.where(np.abs(d) < 1e-9, 1e-9, d)
+    f = K0 * eta / (d_safe * d_safe)
+    df = K0 * (d_safe + 2.0 * mg["s"] * eta) / (d_safe**3)
+    K_mg = J * (df * (1.0 - mg["g0"] * eta * 0.5) + f * (-mg["g0"] * 0.5))
+    K_guard = mg["A"] * J ** (-materials.EOS_KP)
+    K_cold = np.where(J >= mg["J_sw"], K_mg, K_guard)
+    p = _mg_p_cold_host(J, K0, mg) + mg["grho"] * e
+    return np.sqrt(np.maximum((K_cold + mg["g0"] * J * p + mu) / rho, 0.0))
 
 
 def _fill_rect(x0: float, x1: float, y0: float, y1: float, spacing: float):
@@ -1125,6 +1709,11 @@ def _seed(scenario, dx: float, spacing: float):
      mass_list, vol_list, mid_list) = (
         [], [], [], [], [], [], [], [], [], [], [], [], [], [],
     )
+    # Mie-Grueneisen per-particle constants (milestone 13). Derived once per material
+    # by `_mg_params` — including the guard's value+tangent match — and broadcast, so
+    # the Warp path (MGParams) and the NumPy mirror (_von_mises) consume the SAME
+    # numbers and cannot drift.
+    mg_lists = {k: [] for k in ("s", "g0", "grho", "A", "C", "J_sw")}
     p_vol = spacing * spacing  # 2D "volume" (area) per particle
 
     def add_region(pts, mat, vel):
@@ -1147,6 +1736,9 @@ def _seed(scenario, dx: float, spacing: float):
         mass_list.append(np.full(n, mat.density * p_vol))
         vol_list.append(np.full(n, p_vol))
         mid_list.append(np.full(n, float(mat.material_id)))
+        mgp = _mg_params(mat)
+        for k in mg_lists:
+            mg_lists[k].append(np.full(n, mgp[k]))
 
     # Projectile: leading (+x) tip a small gap before the armor front. At
     # obliquity the rod RECTANGLE is rotated so its long axis stays parallel to
@@ -1221,6 +1813,7 @@ def _seed(scenario, dx: float, spacing: float):
         x_cursor += layer.thickness
 
     return {
+        **{f"mg_{k}": np.concatenate(v).astype(np.float64) for k, v in mg_lists.items()},
         "pos": np.concatenate(pos_list).astype(np.float32),
         "vel": np.concatenate(vel_list).astype(np.float32),
         "mu": np.concatenate(mu_list).astype(np.float32),
@@ -1238,7 +1831,8 @@ def _seed(scenario, dx: float, spacing: float):
     }
 
 
-def _von_mises(F: np.ndarray, mu: np.ndarray, lam: np.ndarray) -> np.ndarray:
+def _von_mises(F: np.ndarray, mu: np.ndarray, lam: np.ndarray,
+               e: np.ndarray, mg_arr: dict) -> np.ndarray:
     """Von Mises equivalent of the Cauchy stress (MPa), for the `stress` column.
 
     Cauchy sigma = (1/J) P(F) F^T. **A hand-kept NumPy mirror of the Warp
@@ -1266,19 +1860,36 @@ def _von_mises(F: np.ndarray, mu: np.ndarray, lam: np.ndarray) -> np.ndarray:
     xx = a + d
     yy = c - b
     den = np.sqrt(xx * xx + yy * yy)
-    den = np.where(den < 1e-9, 1.0, den)
-    cs, sn = xx / den, yy / den
+    # Degenerate polar decomposition (xx=yy=0 — e.g. F = diag(k, -k), which a violent
+    # shock front genuinely produces): fall back to R = IDENTITY, exactly as the Warp
+    # path's `_polar_r` does.
+    #
+    # THIS WAS A REAL DRIFT, and it predates milestone 13. The old guard was
+    # `den = where(den < 1e-9, 1.0, den)`, which leaves cs = xx/1 = 0 and sn = 0 — i.e.
+    # R = the ZERO matrix, where the kernel returns the IDENTITY. So (F-R)F^T differed
+    # between the two paths on exactly the degenerate states this file exists to pin.
+    # It went unnoticed because it was MASKED: under Murnaghan a floored ceramic
+    # particle carried ~1.08e10 MPa of pressure, 129x the deviator, so a wrong deviator
+    # vanished inside a 2e-3 relative tolerance. Milestone 13's guard branch is ~129x
+    # softer there, which unmasked it. A test that passes because one term is enormous
+    # is not passing for the reason it claims.
+    degen = den < 1e-9
+    cs = np.where(degen, 1.0, xx / np.where(degen, 1.0, den))
+    sn = np.where(degen, 0.0, yy / np.where(degen, 1.0, den))
     # (F - R) F^T
     fr00, fr01, fr10, fr11 = a - cs, b + sn, c - sn, d - cs
     m00 = fr00 * a + fr01 * b
     m01 = fr00 * c + fr01 * d
     m10 = fr10 * a + fr11 * b
     m11 = fr10 * c + fr11 * d
-    # Mirror of _fixed_corotated_pft: corotated deviator + Murnaghan EOS pressure.
+    # Mirror of _fixed_corotated_pft: corotated deviator + Mie-Grueneisen pressure.
+    # `mg_arr` carries the SAME host-derived constants handed to the Warp path as
+    # MGParams (see _mg_params), so the two cannot drift — which is the property
+    # tests/test_stress_paths.py pins.
     dev00 = 2.0 * mu * m00
     dev11 = 2.0 * mu * m11
     Jc = np.maximum(J, J_FLOOR)  # floors identically to the Warp path (see J_FLOOR)
-    p = ((lam + mu) / materials.EOS_KP) * (Jc ** (-materials.EOS_KP) - 1.0)
+    p = _mg_p_cold_host(Jc, lam + mu, mg_arr) + mg_arr["grho"] * e
     lp = -p * Jc - 0.5 * (dev00 + dev11)
     pft00 = dev00 + lp
     pft01 = 2.0 * mu * m01
@@ -1299,7 +1910,8 @@ def _von_mises(F: np.ndarray, mu: np.ndarray, lam: np.ndarray) -> np.ndarray:
 # ===========================================================================
 
 
-def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
+def bake(scenario, writer, device: str = "cuda:0", j_trace=None,
+         nan_trace: bool = False) -> None:
     """Run the elastic MLS-MPM substep loop and dump render frames.
 
     ``j_trace`` is an optional DEBUG hook, ``(frame_lo, frame_hi, material, path)``:
@@ -1360,14 +1972,19 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
         # steady-state estimate said the RHA plate would sit at J=0.75 and the
         # measured value was 0.17 — so this is not a place to shave. An offline
         # bake can afford the substeps (root §1); a NaN at frame 300 cannot.
-        Jd = EOS_CFL_J_MARGIN * _eos_equilibrium_j(p_stag, K0)
+        mgp_d = _mg_params(mat)
+        Jd = EOS_CFL_J_MARGIN * _eos_equilibrium_j(p_stag, K0, mgp_d)
         j_design = min(j_design, Jd)
         # Artificial viscosity raises the signal speed, so the bound has to carry
         # it too. A priori the worst compression rate is a shock resolved across
         # ~one cell, |div v| ~ v_tip/dx — which makes the quadratic contribution
         # c_q*dx*(v_tip/dx) = c_q*v_tip, independent of dx. Like the J estimate
         # above this is a PREDICTION; the frame loop measures whether it held.
-        c_eos = _eos_sound_speed(Jd, K0, mu, mat.density)
+        # `e` is left at 0 here ON PURPOSE: the design J comes from the COLD curve
+        # (`_eos_equilibrium_j`), so pairing it with a heated sound speed would mix
+        # two different states. Shock heating RAISES c, so the audit below measures
+        # the real thing every frame and warns — predict cold, verify hot.
+        c_eos = float(_eos_sound_speed(Jd, K0, mu, mat.density, mgp_d, 0.0))
         div_v_design = -scenario.projectile.velocity / dx
         c_max = max(
             c_max, _av_signal_speed(c_eos, div_v_design, dx, av_c_q, av_c_l)
@@ -1409,12 +2026,39 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
     det_pressure = wp.array(seed["det_pressure"], dtype=float, device=device)  # MPa pulse
     burn_time = wp.array(seed["burn_time"], dtype=float, device=device)  # ms pulse duration
     ign_comp = wp.array(seed["ign_comp"], dtype=float, device=device)  # det(F) ignition thresh
+    # Mie-Grueneisen state + constants (milestone 13). `e` is specific internal
+    # energy, evolved in `_g2p`; it starts at 0 = the reference state, so a deck at
+    # rest is exactly the pre-M13 solver. It IS a cache column as of schema v2
+    # (`internal_energy`; CACHE_FORMAT §2 states what a reader may assume of it).
+    e = wp.zeros(n, dtype=float, device=device)
+    # Energy-equation diagnostic counters — see `_g2p`'s `ediag` and the report at
+    # the end of this function. int64: a bake is ~1e11 particle-substeps, and a
+    # float32 counter saturates (silently) at 2^24.
+    ediag = wp.zeros(3, dtype=wp.int64, device=device)
+    # Worst e ever clamped. Starts at 0.0 = "never fired", which is also the
+    # correct no-op reading: the clamp only ever lowers this via atomic_min, and
+    # every value it sees is < 0.
+    ediag_min = wp.zeros(1, dtype=float, device=device)
+    rho0_a = wp.array(seed["mass"] / np.maximum(seed["vol0"], 1e-30),
+                      dtype=float, device=device)
+    _mgp_h = MGParams()
+    mgp_np = np.zeros(n, dtype=_mgp_h.numpy_dtype())
+    for k in ("s", "g0", "grho", "A", "C", "J_sw"):
+        mgp_np[k] = seed[f"mg_{k}"]
+    mgp = wp.array(mgp_np, dtype=MGParams, device=device)
     alpha = wp.zeros(n, dtype=float, device=device)  # equiv. plastic strain
     damage = wp.zeros(n, dtype=float, device=device)  # 0 intact, 1 spalled/reacting (latched)
     burn = wp.zeros(n, dtype=float, device=device)  # ms of detonation pulse remaining
 
+    # THE PAD IS NOT THE DOMAIN. `+3` buys the 3x3 stencil of a particle sitting on
+    # the position clamp somewhere to land; those nodes are OUTSIDE the material and
+    # nothing may be measured against them. `_grid_op`'s far wall takes `edge` — the
+    # domain's far corner in grid coords — precisely because `nx`/`ny` are ~3 cells
+    # further out, and using them there silently disabled the high walls entirely.
     nx = grid_res + 3
     ny = int(math.ceil((dom.ymax - dom.ymin) * inv_dx)) + 3
+    edge = wp.vec2(float((dom.xmax - dom.xmin) * inv_dx),
+                   float((dom.ymax - dom.ymin) * inv_dx))
     grid_v = wp.zeros((nx, ny), dtype=wp.vec2, device=device)
     grid_m = wp.zeros((nx, ny), dtype=float, device=device)
     origin = wp.vec2(float(dom.xmin), float(dom.ymin))
@@ -1424,16 +2068,37 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
 
     mat_id = seed["mat_id"]
 
+    # Debug tripwire (see `_nan_watch`). Slots: [0] v, [1] F, [2] e; each holds
+    # min(substep*1e6 + particle), so a slot still at SENTINEL means "never".
+    NAN_SENTINEL = (1 << 62)
+    nan_out = wp.array(np.full(3, NAN_SENTINEL, dtype=np.int64), dtype=wp.int64,
+                       device=device) if nan_trace else None
+    # Grid tripwire (see `_grid_watch`). Slots: [0] momentum after _p2g, [1]
+    # velocity after _grid_op; each holds min(substep*1e6 + i*ny + j).
+    gnan_out = wp.array(np.full(2, NAN_SENTINEL, dtype=np.int64), dtype=wp.int64,
+                        device=device) if nan_trace else None
+    gnan_mass = wp.zeros(2, dtype=float, device=device) if nan_trace else None
+    nan_step = [0]
+
     def substep():
         grid_v.zero_()
         grid_m.zero_()
         wp.launch(_p2g, dim=n, device=device, inputs=[
             x, v, C, F, mass, vol0, mu, lam, damage, reactive, det_pressure, burn,
-            grid_v, grid_m, origin, inv_dx, dx, dt, av_c_q, av_c_l])
+            e, mgp, grid_v, grid_m, origin, inv_dx, dx, dt, av_c_q, av_c_l])
+        # Grid tripwire, BOTH sides of the divide: which side breaks is the whole
+        # diagnosis, and `_nan_watch` (particles only) structurally cannot say.
+        if gnan_out is not None:
+            wp.launch(_grid_watch, dim=(nx, ny), device=device, inputs=[
+                grid_v, grid_m, ny, nan_step[0], 0, gnan_out, gnan_mass])
         wp.launch(_grid_op, dim=(nx, ny), device=device, inputs=[
-            grid_v, grid_m, nx, ny])
+            grid_v, grid_m, edge])
+        if gnan_out is not None:
+            wp.launch(_grid_watch, dim=(nx, ny), device=device, inputs=[
+                grid_v, grid_m, ny, nan_step[0], 1, gnan_out, gnan_mass])
         wp.launch(_g2p, dim=n, device=device, inputs=[
-            x, v, C, F, grid_v, origin, inv_dx, dt, clamp_lo, clamp_hi])
+            x, v, C, F, e, damage, mu, lam, mgp, rho0_a, ediag, ediag_min, grid_v,
+            origin, inv_dx, dx, dt, clamp_lo, clamp_hi, av_c_q, av_c_l])
         # Bound the reactive filler's post-transfer speed so the F-independent
         # detonation source can't accelerate unconfined debris to a CFL-breaking
         # ~14 km/s (reactive particles only; see REACTIVE_VMAX / _clamp_reactive_v).
@@ -1451,12 +2116,17 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
         # (von Mises or tensile principal). _p2g then treats failed particles as
         # free fragments (spall / shatter). Reactive filler is skipped here.
         wp.launch(_update_damage, dim=n, device=device, inputs=[
-            F, mu, lam, yield_k, brittle, reactive, alpha, dthr, damage])
+            F, mu, lam, yield_k, brittle, reactive, alpha, dthr, damage, e, mgp])
         # Reactive impulse (ERA/NERA): ignite filler on shock arrival, age the
         # detonation pulse. Writes `burn` (read by next substep's _p2g) and the
         # reactive `damage` latch. No-op for non-reactive particles.
         wp.launch(_update_reactive, dim=n, device=device, inputs=[
             F, reactive, ign_comp, burn_time, burn, damage, dt])
+        # Tripwire LAST, so it sees the state this substep actually produced.
+        if nan_out is not None:
+            wp.launch(_nan_watch, dim=n, device=device,
+                      inputs=[v, F, e, nan_step[0], nan_out])
+            nan_step[0] += 1
 
     # --- CFL audit state (see EOS_CFL_J_MARGIN) -----------------------------
     # `dt` was sized for c_max, derived from a *predicted* compression. F comes
@@ -1466,7 +2136,17 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
     # frame boundaries, so a shorter-than-a-frame excursion stays invisible.
     K0_h = seed["lam"] + seed["mu"]
     rho_h = seed["mass"] / np.maximum(seed["vol0"], 1e-30)
-    audit = {"c": 0.0, "J": 1.0, "div_v": 0.0}
+    # `nan_frame` = the first frame at which any LIVE particle went non-finite, or
+    # -1 for never. Tracked explicitly because none of the other accumulators can
+    # see it (see the finiteness note in `dump_frame`).
+    # `e_max` is the SCALE the clamp's worst violation has to be judged against —
+    # float32 cancellation in the energy solve is relative to `e`, so an absolute
+    # J/kg threshold is a threshold on the UNITS as much as on the number (the exact
+    # defect `test_energy_equation.py` pins for the old `|rho0*factor| > 1e-12`
+    # guard). Not live-only: `e` is real for a spalled fragment (CACHE_FORMAT §2 —
+    # its heat is carried state, unlike its stress).
+    audit = {"c": 0.0, "J": 1.0, "div_v": 0.0, "guard_n": 0, "guard_mats": [],
+             "frames": 0, "nan_frame": -1, "nan_n": 0, "e_max": 0.0}
 
     # --- per-substep J trace (debug hook; see `_trace_j` and the AV block) ----
     tr = None
@@ -1502,8 +2182,14 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
         # it is not a cache column.
         Cn = C.numpy().reshape(n, 2, 2)
         dmg = damage.numpy()
+        e_h = e.numpy()
+        if np.isfinite(e_h).any():
+            audit["e_max"] = max(audit["e_max"], float(np.nanmax(e_h)))
         vel_mag = np.linalg.norm(vel, axis=1)
-        stress = _von_mises(Fn, seed["mu"], seed["lam"])
+        stress = _von_mises(
+            Fn, seed["mu"], seed["lam"], e_h,
+            {k: seed[f"mg_{k}"] for k in ("s", "g0", "grho", "A", "C", "J_sw")},
+        )
 
         # CFL audit over LIVE particles only: _p2g drops a damaged particle's
         # stress term, so its (still-evolving) F drives nothing and its J is
@@ -1511,11 +2197,46 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
         live = dmg < 0.5
         if live.any():
             J_raw = np.linalg.det(Fn[live])
+            # NON-FINITE FIRST, because every accumulator below is BLIND to it and
+            # would otherwise report a healthy bake on a diverged one. `min` and
+            # `max` silently DROP NaN — `nan < x` and `nan > x` are both False, so
+            # `min(0.7167, nan)` is 0.7167 — which freezes each accumulator at its
+            # last pre-divergence value forever. That is not hypothetical: this
+            # audit printed "OK: worst live J=0.7167, 2% of the c_max budget" on an
+            # ERA bake whose cache was 98 % NaN from frame 190 on. It was reading
+            # frame 189 and reporting it as a verdict on all 550.
+            #
+            # Same defect, same shape, as CACHE_FORMAT §6.8: the structure survives
+            # a divergence untouched, so only an explicit finiteness test sees it.
+            # There it let a broken cache validate; here it let a broken bake
+            # certify itself. Record the FIRST bad frame — in a divergence, "when"
+            # is the whole diagnostic.
+            n_bad = int((~np.isfinite(J_raw)).sum()) + int(
+                (~np.isfinite(vel_mag[live])).sum())
+            if n_bad and audit["nan_frame"] < 0:
+                audit["nan_frame"] = audit["frames"]
+                audit["nan_n"] = n_bad
             audit["J"] = min(audit["J"], float(J_raw.min()))  # raw: J_FLOOR must be visible
             Jl = np.maximum(J_raw, J_FLOOR)
-            c_live = np.sqrt(
-                (K0_h[live] * Jl ** (-materials.EOS_KP) + seed["mu"][live]) / rho_h[live]
+            # Measure the sound speed the MG law ACTUALLY reached, heating included
+            # (`e_h`, not 0). The design bound was sized on the cold curve; shock
+            # heating stiffens, so this is the arm that can breach — measuring it cold
+            # would under-report exactly where the bound is tightest.
+            c_live = _eos_sound_speed(
+                Jl, K0_h[live], seed["mu"][live], rho_h[live],
+                {k: seed[f"mg_{k}"][live] for k in ("s", "g0", "grho", "A", "C", "J_sw")},
+                e_h[live],
             )
+            # Did any LIVE material slide onto the guard's Murnaghan branch? That is
+            # not a crash, it is a QUIET LOSS OF THE MILESTONE: below J_sw the law is
+            # the pre-M13 one. Copper's jet tip runs only ~9 % clear of its switch, so
+            # this is a real risk on the deck that matters most (see MG_F_SWITCH).
+            n_guard = int((Jl < seed["mg_J_sw"][live]).sum())
+            if n_guard > audit["guard_n"]:
+                audit["guard_n"] = n_guard
+                audit["guard_mats"] = sorted(
+                    set(mat_id[live][Jl < seed["mg_J_sw"][live]].astype(int).tolist())
+                )
             # The bound `dt` was sized against is the AV-augmented signal speed, so
             # the audit has to measure THAT, not the bare EOS one — otherwise it
             # under-reports exactly where AV is strongest (the shock front) and
@@ -1534,8 +2255,16 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
             pos[:, 0], pos[:, 1], vel_mag, stress,
             dmg,  # 0 intact, 1 spalled (latched past damage_threshold)
             mat_id,
+            # `internal_energy` (schema v2, milestone 13). SPECIFIC — per unit
+            # mass, J/kg. Written raw, and unlike `stress` above it needs no
+            # zeroing on spall: `_g2p` latches it when the particle breaks, so a
+            # fragment already reads the heat it carried in, not an integral
+            # against a stale F. Zeroing here would be the wrong fix for that —
+            # it would throw away a real state instead of stopping a fake one.
+            e_h,
         ]).astype(np.float32)
         writer.write_frame(frame)
+        audit["frames"] += 1
 
     # Frame 0 is the seeded state at t=0; then step and dump for the rest.
     dump_frame()
@@ -1576,6 +2305,140 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
         print(f"[mpm] J-trace written: {tr['path']}")
 
     # --- did the a-priori substep sizing actually hold? ---------------------
+    # DIVERGENCE FIRST. Everything below reads an accumulator that cannot see a
+    # NaN, so on a diverged bake they all describe the last healthy frame — and
+    # the `else` branch at the bottom would sign it off as "OK". Report the
+    # divergence and say plainly that the rest of the numbers are stale.
+    ed = ediag.numpy()
+    e_worst = float(ediag_min.numpy()[0])
+    if nan_out is not None:
+        nt = nan_out.numpy()
+        print("[mpm] NaN tripwire — first non-finite, per quantity:")
+        rows = []
+        for slot, name in ((0, "v (momentum)"), (1, "F (deformation)"),
+                           (2, "e (energy)")):
+            if int(nt[slot]) >= NAN_SENTINEL:
+                print(f"[mpm]   {name:<16} never")
+                continue
+            st, pid = divmod(int(nt[slot]), 1000000)
+            rows.append((st, name, pid))
+            print(f"[mpm]   {name:<16} substep {st} (frame {st // substeps}, "
+                  f"t={st * dt * 1e3:.4f} us), particle #{pid}, "
+                  f"material {materials.id_to_name().get(str(int(mat_id[pid])), '?')}")
+        if rows:
+            rows.sort()
+            st0 = rows[0][0]
+            tied = [r for r in rows if r[0] == st0]
+            if len(tied) > 1:
+                # A TIE IS A RESULT, not something to break with a sort key. v and
+                # F both come out of G2P off the same grid_v, so a poisoned node
+                # hits them in the SAME substep — and reporting one as "first"
+                # because its name sorts earlier would invent a causal order and
+                # send the next hour after the wrong half.
+                print(
+                    f"[mpm]   -> {' and '.join(t[1] for t in tied)} went "
+                    f"non-finite in the SAME substep ({st0}) — no ordering between "
+                    f"them, so the origin is UPSTREAM of both: they are written by "
+                    f"the same G2P read of grid_v. See the grid tripwire below."
+                )
+            else:
+                print(
+                    f"[mpm]   -> {rows[0][1]} went first, at substep {st0}, on "
+                    f"particle #{rows[0][2]}. THAT is the origin; everything "
+                    f"reaching non-finite later is downstream of it, and a "
+                    f"frame-cadence read cannot tell the two apart."
+                )
+    if gnan_out is not None:
+        gt = gnan_out.numpy()
+        gm = gnan_mass.numpy()
+        print("[mpm] grid tripwire — first non-finite GRID node, per side of _grid_op:")
+        for slot, name in ((0, "momentum (after _p2g)"),
+                           (1, "velocity (after _grid_op)")):
+            if int(gt[slot]) >= NAN_SENTINEL:
+                print(f"[mpm]   {name:<27} never")
+                continue
+            st, node = divmod(int(gt[slot]), 1000000)
+            gi, gj = divmod(node, ny)
+            wall = " *** WITHIN THE 3-CELL WALL BAND ***" if (
+                gi < 3 or gi > nx - 3 or gj < 3 or gj > ny - 3) else ""
+            print(f"[mpm]   {name:<27} substep {st} (frame {st // substeps}), "
+                  f"node ({gi},{gj}) = ({origin[0] + gi * dx:.1f}, "
+                  f"{origin[1] + gj * dx:.1f}) mm, grid_m={gm[slot]:.6g}{wall}")
+        if int(gt[0]) >= NAN_SENTINEL and int(gt[1]) < NAN_SENTINEL:
+            print("[mpm]   -> MOMENTUM STAYED FINITE and VELOCITY DID NOT: the "
+                  "division in _grid_op made it. finite/m is non-finite only for "
+                  "tiny m, so this is the SMALL-MASS NODE, by arithmetic rather "
+                  "than by hypothesis. `m > 0.0` guards divide-by-zero, not small "
+                  "mass, and cannot fire on it.")
+        elif int(gt[0]) < NAN_SENTINEL and int(gt[0]) <= int(gt[1]):
+            print("[mpm]   -> MOMENTUM WAS ALREADY BAD leaving _p2g: a particle "
+                  "scattered a non-finite stress. The fix is at that particle, "
+                  "NOT in _grid_op's guard — clamping mass there would mask this.")
+    if audit["nan_frame"] >= 0:
+        print(
+            f"[mpm] *** DIVERGED *** LIVE material went non-finite at frame "
+            f"{audit['nan_frame']} (t={audit['nan_frame'] * frame_dt_ms * 1e3:.2f} us), "
+            f"{audit['nan_n']} particle(s) at first sight. The cache is structurally "
+            f"perfect and physically meaningless — do not ship it "
+            f"(CACHE_FORMAT §6.8). Every figure below this line is from BEFORE that "
+            f"frame: min/max silently drop NaN, so the accumulators froze there."
+        )
+    # Energy-equation guards. A zero here is the evidence that they are inert on a
+    # resolved bake; a nonzero one names the mechanism rather than leaving "it blew
+    # up" as the whole diagnosis.
+    if ed[0] or ed[1] or ed[2]:
+        total = audit["frames"] * substeps * n
+        # WORST CLAMPED FIRST, because it is the number that decides whether the
+        # clamp is a roundoff filter or a mask. The count only says how often.
+        #
+        # JUDGE IT RELATIVE TO `e`, NEVER IN ABSOLUTE J/kg. The violation is float32
+        # cancellation in the energy solve, so it scales with `e` — and an absolute
+        # threshold is ANTI-CORRELATED with the risk it is meant to catch. Measured
+        # on the milestone-13 rebake, an earlier `abs(e_worst) < 1.0` here passed the
+        # jet (worst -0.034 against e_max 9.0e6, i.e. 0.03 eps) while failing
+        # apfsds_vs_era_oblique (-1.178 against e_max 1.1e6 — 9 eps, textbook
+        # cancellation) whose `e` is 8.5x SMALLER. It cried wolf on the safest arm.
+        #
+        # `worst` is also a min over every particle over every substep, so it grows
+        # with N by construction (the oblique deck runs 2.1e11 particle-substeps, 2x
+        # the flat one). §3.6.1's rule, again: an extremum is not a state. 1e-4 is
+        # ~840 eps — generous headroom for accumulation, and still 4+ orders of
+        # magnitude below any real negative drive (the pathological paths that
+        # exposed the old decorative guard returned e = -6e13, i.e. ~1e7 RELATIVE).
+        scale = audit["e_max"]
+        rel = abs(e_worst) / scale if scale > 0.0 else float("inf")
+        verdict = (
+            f"roundoff, as designed — {rel:.1e} of the bake's own e_max="
+            f"{scale:.3g} J/kg, i.e. {rel / 1.19e-7:.0f} float32 eps"
+            if rel < 1.0e-4
+            else f"NOT roundoff — {rel:.1e} of e_max={scale:.3g} J/kg is far past "
+                 f"float32 cancellation, so the clamp is HIDING a real negative "
+                 f"drive and the mechanism in `_g2p` is wrong. Do not ship this bake"
+        )
+        print(
+            f"[mpm] energy-equation guards: worst clamped e = {e_worst:.3e} J/kg "
+            f"({verdict}). Fired: e<0 clamp {int(ed[1])}, resolution guard "
+            f"{int(ed[0])}, J floor {int(ed[2])} — out of {total:.3g} "
+            f"particle-substeps ({audit['frames']} frames x {substeps} substeps x "
+            f"{n} particles). The clamp restores e >= 0, which is a theorem here "
+            f"(see `_g2p`); it is cheap only because it fires at BIRTH, while the "
+            f"violation is still ~1e-4. The resolution guard instead DROPS that "
+            f"substep's compression work, so a large count there means the bake is "
+            f"not conserving energy where it fired."
+        )
+    if audit["guard_n"] > 0:
+        names = materials.id_to_name()
+        who = ", ".join(names.get(str(m), f"id{m}") for m in audit["guard_mats"])
+        print(
+            f"[mpm] NOTE: the Mie-Grueneisen POLE GUARD engaged on LIVE material — up to "
+            f"{audit['guard_n']} particle(s) at once, in: {who}. Below J_sw the law is "
+            f"the MURNAGHAN fallback, i.e. the pre-milestone-13 cold curve with no "
+            f"thermal pressure. That is by design (the u_s-c0-s fit has no meaning past "
+            f"its own pole — see MG_F_SWITCH), and it is EXPECTED for nera_filler "
+            f"(PHYSICS §3.6.2). It is NOT expected for the jet or the plates: if this "
+            f"names copper_jet or rha, milestone 13 is quietly not in effect where it "
+            f"is supposed to matter. Do not silence this by lowering MG_F_SWITCH."
+        )
     if audit["J"] <= J_FLOOR:
         print(
             f"[mpm] WARNING: LIVE material reached J={audit['J']:.4f}, at or below "
@@ -1593,7 +2456,10 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
             f"The bake may be unstable past that point; lower EOS_CFL_J_MARGIN "
             f"(or av_c_q/av_c_l, if the AV term is what pushed it over) and rebake."
         )
-    else:
+    elif audit["nan_frame"] < 0:
+        # "OK" is only sayable when the bake stayed finite. Gating this on
+        # `nan_frame` is the point: the CFL arm cannot reach a diverged bake's
+        # numbers, so without the gate silence reads as a pass.
         print(
             f"[mpm] CFL audit OK: worst live J={audit['J']:.4f}, "
             f"div_v={audit['div_v']:.3e} /ms -> c_eff={audit['c']:.0f} mm/ms, "
