@@ -470,7 +470,7 @@ Grow the reference MLS-MPM incrementally, validating visually with
      in every deck, and clamping it did **not** fix the ERA divergence.
 
 12. **Milestone 14 — the CFL margin multiplied a volume RATIO (PHYSICS §3.11).**
-   The follow-up M13 deferred. `EOS_CFL_J_MARGIN` → **`EOS_CFL_P_MARGIN = 3.0`**;
+   The follow-up M13 deferred. `EOS_CFL_J_MARGIN` → **`EOS_CFL_P_MARGIN = 4.0`**;
    new host helper `_impact_pressure`; `SolverParams.cfl_p_margin` for per-deck
    override. Read §3.11 before touching the substep bound.
    - **`Jd = 0.35 * J_eq` scaled a volume RATIO.** `J` is in (0,1] with the EOS
@@ -514,8 +514,32 @@ Grow the reference MLS-MPM incrementally, validating visually with
      breaches nera 1.22× = Courant **0.37** against a limit near 1, and it bakes
      **finite** with cohesion moving **−0.06 %**. The override buys a warning-free bake
      at a real margin; it does **not** prevent an instability.
-   - **What moved:** all 30 rebaked. Nera cohesion holds to **0.10 %**; spall **+10 %**,
-     rod tip **+2.2 %**. Numbers move, conclusions hold — fifth demonstration.
+   - **P=3 SHIPPED FIRST AND WAS WRONG — P=4 ships (4395de2).** P=3 audited 29 of 30
+     clean and `heat_vs_composite_uniform` at **101 %**: the jet compresses past its own
+     design J, and overshoot is exactly what this constant is the allowance for. A
+     `CFL_AUDIT_TOLERANCE=0.98` shipped for one commit to hold it open, then was
+     **deleted** — a tolerance buys **no safety** (dt, physics and bake unchanged; only
+     the warning goes). Shipped tally: **12–76 %, ZERO breaches, 30/30**.
+   - **⚠️ P=4 IS NEAR A CEILING (~4.05) — do not raise it casually.** `era_filler`
+     designs to J=**0.5504** vs its guard switch **0.5500**; raising P 3→4 ate **97 %**
+     of that clearance and the crossing is between P=4.05 and P=4.10. Past it the four
+     ERA decks size from the guard's extrapolated backstop = **the M14 defect itself**
+     (verified red at P=5). More headroom = a **per-deck `cfl_p_margin`**, never a
+     bigger global P. The P-sweep table offering P=5/P=6 was computed for `copper_jet`
+     on ONE deck and could not see this: **a one-deck sweep cannot license a global
+     constant.**
+   - **Pin `c_eff ≤ c_max`, NEVER the diagnosis.** "Each material's design J bounds its
+     own live J" is **circular** — live J is read off a bake whose dt that design J set
+     — and `worst live J` is an extremum besides. That test first went red against a
+     **stale P=3 live J**, i.e. it compared a fresh prediction to another
+     configuration's data. Don't restate it as prose either.
+   - **What moved:** all 30 rebaked twice (P=3, then P=4). Nera is **untouched** — its
+     dt comes from its own override, so the global constant cannot reach it. `apfsds_vs_rha`
+     reads **spall 0.2085, rod tip 231.13 mm** at 135 557 particles (M13: 0.251 /
+     228.27), so that figure has now read 16 → 18.2 → 25.1 → **20.85 %** across four
+     configs. Numbers move, conclusions hold — sixth demonstration. **The interim P=3
+     deltas ("spall +10 %, tip +2.2 %") are RETRACTED, not carried forward:** P=4
+     overwrote those caches, so they are not re-derivable — don't quote them.
    - **The stale comment that hid it:** "0.55 let `apfsds_vs_nera` breach by 2.41×" was
      measured at nera's **pre-M13** worst live J of 0.2421. MG relieved that crush, so
      the breach stopped constraining the constant at M13 and nobody noticed. **M13 made
