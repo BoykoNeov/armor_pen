@@ -1117,11 +1117,22 @@ def _g2p(
     rho0: wp.array(dtype=float),
     # Energy-equation diagnostics, atomically accumulated over the whole bake:
     #   [0] resolution guard fired (substep too coarse for this particle's dJ)
-    #   [1] e came out NEGATIVE (should be unreachable — see the energy block)
+    #   [1] e was clamped up to 0 from a negative value
     #   [2] J floor engaged (raw det F left the EOS's range)
     # Counted, never silently swallowed: these say WHICH mechanism a bad bake hit,
     # and a zero here is the evidence that the guards are inert on a good one.
-    ediag: wp.array(dtype=float),
+    #
+    # int64, and that is not fussiness. These were float32 for one bake and the
+    # negative-e slot came back reading exactly 16777216 = 2^24 — the value where
+    # float32 stops being able to count, since 2^24 + 1 == 2^24 in that format. It
+    # was not a measurement, it was a saturated register, and it silently passed
+    # for one. A bake here is ~1e11 particle-substeps; nothing narrower than int64
+    # can count events over that.
+    ediag: wp.array(dtype=wp.int64),
+    # Worst (most negative) e ever clamped, over the whole bake. THE load-bearing
+    # number: the count says how often the clamp fired, but only the magnitude
+    # says whether it is filtering roundoff or hiding a real negative drive.
+    ediag_min: wp.array(dtype=float),
     grid_v: wp.array2d(dtype=wp.vec2),
     origin: wp.vec2,
     inv_dx: float,
@@ -1243,15 +1254,23 @@ def _g2p(
     #
     # e < 0 is the falsifier, and it is a theorem rather than a judgement call. From
     # rest, compression gives dJ<0 with p_cold>0, and tension gives dJ>0 with
-    # p_cold<0 — both make rho0*de = -p*dJ POSITIVE — and q >= 0 only ever adds. So
-    # e >= 0 always, and any negative e is discretization error. The ERA deck reached
-    # e = -1.7e6 and then NaN; that is what this floor and the guard below are for.
+    # p_cold<0 — both make rho0*de = -p*dJ POSITIVE — and q >= 0 only ever adds
+    # (`_av_q` returns 0 in expansion). It holds on the guard's Murnaghan branch
+    # too: J < J_sw means compression, so p_cold > 0 there as well. So e >= 0
+    # always, and any negative e is discretization error.
+    #
+    # HONEST SCOPE, because this floor reads like the fix and is not: measured, it
+    # engages TWICE in a 550-frame ERA bake (1e11 particle-substeps), and the guard
+    # below fires 8 times. Neither is what broke that deck — see the clamp at the
+    # bottom of this block, which is. Both stay because they are correct and free:
+    # each closes a mode that is unreachable on a resolved bake and catastrophic on
+    # an unresolved one, and the counts are the evidence they are inert.
     J_old_raw = wp.determinant(F_old)
     J_new_raw = wp.determinant(F_new)
     J_old = wp.max(J_old_raw, _J_FLOOR)
     J_new = wp.max(J_new_raw, _J_FLOOR)
     if J_old_raw < _J_FLOOR or J_new_raw < _J_FLOOR:
-        wp.atomic_add(ediag, 2, 1.0)  # floor engaged: raw J left the EOS's range
+        wp.atomic_add(ediag, 2, wp.int64(1))  # floor engaged: raw J left EOS range
     dJ = J_new - J_old
     K0 = lam[p] + mu[p]
     mg = mgp[p]
@@ -1284,14 +1303,41 @@ def _g2p(
     if factor > _MG_E_FACTOR_MIN:
         e[p] = (rho0[p] * e[p] - ((pc1 + p0) * 0.5 + q) * dJ) / (rho0[p] * factor)
     else:
-        wp.atomic_add(ediag, 0, 1.0)  # guard fired: unresolved dJ
+        wp.atomic_add(ediag, 0, wp.int64(1))  # guard fired: unresolved dJ
+    # --- e >= 0: a ROUNDOFF FILTER, and this is the fix the ERA deck needed ------
+    # Restoring the theorem above. What makes this a filter rather than a mask is
+    # the MAGNITUDE it removes, which is why the worst value is recorded and
+    # reported rather than just counted: the violation is BORN AT ROUNDOFF.
+    #
+    # WHERE THE ROUNDOFF COMES FROM. `e` is float32, and this solve divides by
+    # rho0*factor with rho0 ~ 7.85e-3 — so it AMPLIFIES any numerator error ~127x.
+    # For a particle near rest the numerator `rho0*e0 - work` is a cancellation of
+    # near-equal floats, so e lands at ~+-1e-4 where the exact answer is 0.
+    #
+    # WHY 1e-4 KILLS A BAKE. Below zero the thermal term Gamma0*rho0*e makes p
+    # NEGATIVE — tension on a particle that is not stretched. Spurious tension
+    # pulls its neighbours in, so it compresses, so dJ < 0, so -(p+q)*dJ =
+    # -(neg)(neg) < 0 and e goes MORE negative. A closed feedback loop, and the
+    # thermal term is the only thing that closes it: Murnaghan had no `e`, so this
+    # mode did not exist before milestone 13.
+    #
+    # MEASURED, and the deck pattern is the evidence it is a compounding leak and
+    # not an ERA quirk. First negative e:
+    #   apfsds_vs_rha   frame 4, tungsten_rod, -0.37     -> stays bounded, 400 fr
+    #   heat_vs_composite frame 50, ceramic,   -9.0e-6   -> stays bounded, 150 fr
+    #   apfsds_vs_era   frame 4, rha,          -3.7e-4   -> -9.6 -> -1075 -> NaN
+    # Universal, born at roundoff in every deck. ERA is not special except that it
+    # drives hard for 550 frames, which is long enough for the loop to compound.
+    #
+    # Clamping at BIRTH is what makes this cheap: the -1075 never happens, because
+    # the -1e-4 that seeds it never does. That is the whole argument for the clamp,
+    # and it is falsifiable — if `worst clamped` ever reports a magnitude that is
+    # not roundoff, this is masking a real negative drive and the diagnosis above
+    # is wrong. Read that number, not the count (root §10).
     if e[p] < 0.0:
-        # Residual negative energy. Should be unreachable once the two fixes above
-        # hold; counted rather than clamped so that "unreachable" stays a MEASURED
-        # claim. If this reads nonzero, the fixes are insufficient — do not reach
-        # for a clamp before finding out why (root §10: a clamp here would hide the
-        # mechanism, and the bake would look clean while being wrong).
-        wp.atomic_add(ediag, 1, 1.0)
+        wp.atomic_add(ediag, 1, wp.int64(1))
+        wp.atomic_min(ediag_min, 0, e[p])
+        e[p] = 0.0
 
 
 @wp.kernel
@@ -1853,8 +1899,13 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
     # (`internal_energy`; CACHE_FORMAT §2 states what a reader may assume of it).
     e = wp.zeros(n, dtype=float, device=device)
     # Energy-equation diagnostic counters — see `_g2p`'s `ediag` and the report at
-    # the end of this function. Three floats, atomically accumulated on the device.
-    ediag = wp.zeros(3, dtype=float, device=device)
+    # the end of this function. int64: a bake is ~1e11 particle-substeps, and a
+    # float32 counter saturates (silently) at 2^24.
+    ediag = wp.zeros(3, dtype=wp.int64, device=device)
+    # Worst e ever clamped. Starts at 0.0 = "never fired", which is also the
+    # correct no-op reading: the clamp only ever lowers this via atomic_min, and
+    # every value it sees is < 0.
+    ediag_min = wp.zeros(1, dtype=float, device=device)
     rho0_a = wp.array(seed["mass"] / np.maximum(seed["vol0"], 1e-30),
                       dtype=float, device=device)
     _mgp_h = MGParams()
@@ -1886,8 +1937,8 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
         wp.launch(_grid_op, dim=(nx, ny), device=device, inputs=[
             grid_v, grid_m, nx, ny])
         wp.launch(_g2p, dim=n, device=device, inputs=[
-            x, v, C, F, e, damage, mu, lam, mgp, rho0_a, ediag, grid_v, origin,
-            inv_dx, dx, dt, clamp_lo, clamp_hi, av_c_q, av_c_l])
+            x, v, C, F, e, damage, mu, lam, mgp, rho0_a, ediag, ediag_min, grid_v,
+            origin, inv_dx, dx, dt, clamp_lo, clamp_hi, av_c_q, av_c_l])
         # Bound the reactive filler's post-transfer speed so the F-independent
         # detonation source can't accelerate unconfined debris to a CFL-breaking
         # ~14 km/s (reactive particles only; see REACTIVE_VMAX / _clamp_reactive_v).
@@ -2086,6 +2137,7 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
     # the `else` branch at the bottom would sign it off as "OK". Report the
     # divergence and say plainly that the rest of the numbers are stale.
     ed = ediag.numpy()
+    e_worst = float(ediag_min.numpy()[0])
     if audit["nan_frame"] >= 0:
         print(
             f"[mpm] *** DIVERGED *** LIVE material went non-finite at frame "
@@ -2099,16 +2151,24 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
     # resolved bake; a nonzero one names the mechanism rather than leaving "it blew
     # up" as the whole diagnosis.
     if ed[0] or ed[1] or ed[2]:
+        total = audit["frames"] * substeps * n
+        # WORST CLAMPED FIRST, because it is the number that decides whether the
+        # clamp is a roundoff filter or a mask. The count only says how often.
+        verdict = (
+            "roundoff, as designed" if abs(e_worst) < 1.0
+            else "NOT roundoff — the clamp is HIDING a real negative drive, and "
+                 "the mechanism in `_g2p` is wrong. Do not ship this bake"
+        )
         print(
-            f"[mpm] NOTE: energy-equation guards fired — resolution guard "
-            f"{int(ed[0])}, negative e {int(ed[1])}, J floor {int(ed[2])} "
-            f"(particle-substeps, over {audit['frames']} frames x {substeps} "
-            f"substeps x {n} particles). The resolution guard DROPS that substep's "
-            f"compression work, so a large count means the bake is not conserving "
-            f"energy where it fired. A nonzero 'negative e' means the floor and the "
-            f"guard did NOT close the mode that broke the ERA deck — read it before "
-            f"trusting `internal_energy`, and do not reach for a clamp on e until "
-            f"you know why."
+            f"[mpm] energy-equation guards: worst clamped e = {e_worst:.3e} J/kg "
+            f"({verdict}). Fired: e<0 clamp {int(ed[1])}, resolution guard "
+            f"{int(ed[0])}, J floor {int(ed[2])} — out of {total:.3g} "
+            f"particle-substeps ({audit['frames']} frames x {substeps} substeps x "
+            f"{n} particles). The clamp restores e >= 0, which is a theorem here "
+            f"(see `_g2p`); it is cheap only because it fires at BIRTH, while the "
+            f"violation is still ~1e-4. The resolution guard instead DROPS that "
+            f"substep's compression work, so a large count there means the bake is "
+            f"not conserving energy where it fired."
         )
     if audit["guard_n"] > 0:
         names = materials.id_to_name()
