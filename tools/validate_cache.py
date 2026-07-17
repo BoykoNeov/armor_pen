@@ -11,7 +11,9 @@ Exit code 0 = valid, 1 = invalid, 2 = usage error. Implements the §6 checklist.
 
 from __future__ import annotations
 
+import array
 import json
+import math
 import struct
 import sys
 from pathlib import Path
@@ -125,6 +127,73 @@ def _check_material_ids(cache_dir: Path, manifest: dict) -> None:
         raise CacheInvalid(f"material_id(s) {sorted(missing)} have no materials entry")
 
 
+def _check_finite(cache_dir: Path, manifest: dict) -> None:
+    """CACHE_FORMAT §6.8 — no NaN, no +/-Inf, in any column, in any frame.
+
+    THE POINT, because it is not obvious: a diverged bake is STRUCTURALLY PERFECT.
+    Blowing up changes the values and never the layout, so every other check in
+    this file passes on it — the manifest is well-formed, the blob is exactly the
+    right size, and the material_id check samples frame 0, which is still clean.
+    A real 550-frame cache with 97 % of its particles carrying NaN velocity from
+    frame 276 on validated OK against rules 1-7. This is the rule that noticed.
+
+    Reports the FIRST bad frame and the column, because in a divergence "when"
+    is the diagnostic — the frame index times frame_dt is where to look.
+
+    Scans every frame rather than sampling: a full pass over the biggest cache
+    here is seconds against a bake measured in minutes, and sampling would trade
+    away the first-frame number for savings nobody needs.
+    """
+    if manifest.get("frame_layout", "single_blob") != "single_blob":
+        print("  note: non-single-blob frame_layout; finiteness check skipped")
+        return
+
+    attrs = manifest["attributes"]
+    stride = len(attrs)
+    pc = manifest["particle_count"]
+    frame_bytes = pc * stride * 4
+
+    with (cache_dir / "frames.bin").open("rb") as fh:
+        for f in range(manifest["frame_count"]):
+            buf = fh.read(frame_bytes)
+
+            # FAST PATH, and it is exact rather than heuristic. In IEEE-754
+            # binary32 every NaN and +/-Inf has an all-ones exponent, so its most
+            # significant byte (little-endian: index 3 of each word) is s|1111111
+            # = 0x7F or 0xFF. Contrapositive: if no MSB in the frame is 0x7F or
+            # 0xFF, NOTHING in it can be non-finite — proven, not sampled. Both
+            # `buf[3::4]` and `in` run at C speed, so the common case (a clean
+            # frame) costs one strided slice and two byte searches.
+            #
+            # The converse does not hold: a finite float with exponent 254
+            # (|v| ~ 1.7e38..3.4e38) also has MSB 0x7F. That is a false POSITIVE,
+            # which only costs a slow confirmation below — never a false negative.
+            msb = buf[3::4]
+            if 0x7F not in msb and 0xFF not in msb:
+                continue
+
+            values = array.array("f")
+            values.frombytes(buf)
+            if sys.byteorder == "big":
+                values.byteswap()  # the format is little-endian, always (§3)
+            bad: dict[str, int] = {}
+            for i, name in enumerate(attrs):
+                n = sum(1 for v in values[i::stride] if not math.isfinite(v))
+                if n:
+                    bad[name] = n
+            if not bad:
+                continue  # exponent-254 false positive: genuinely finite
+
+            t_us = f * manifest["frame_dt"] * 1e6
+            raise CacheInvalid(
+                f"non-finite values (NaN/Inf) first appear at frame {f} "
+                f"(t={t_us:.3f} us), in "
+                + ", ".join(f"{k}={v}/{pc}" for k, v in bad.items())
+                + " — the bake DIVERGED. The cache is structurally perfect and "
+                  "physically meaningless; do not ship it."
+            )
+
+
 def validate(cache_dir: Path) -> None:
     manifest_path = cache_dir / "manifest.json"
     if not manifest_path.is_file():
@@ -137,6 +206,7 @@ def validate(cache_dir: Path) -> None:
     _check_manifest(manifest)
     _check_binary(cache_dir, manifest)
     _check_material_ids(cache_dir, manifest)
+    _check_finite(cache_dir, manifest)
 
 
 def main(argv: list[str] | None = None) -> int:

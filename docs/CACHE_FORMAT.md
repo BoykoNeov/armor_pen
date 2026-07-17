@@ -200,7 +200,27 @@ These keep the two halves loosely coupled — do not violate them casually:
 6. `frames.bin` (single-blob) has **exactly**
    `frame_count * particle_count * len(attributes) * 4` bytes — no more, no less.
 7. Every distinct `material_id` in the data has a `materials` entry (best-effort;
-   may sample frames for very large caches).
+   samples the first frame only).
+8. **Every value is finite** — no `NaN`, no `±Inf`, in any column, in any frame.
+
+### Why finiteness is checked, and why it is not optional
+
+Rule 8 was added in v2 after a diverged bake — 97 % of particles carrying `NaN`
+velocity from frame 276 onward — validated **`OK`** against rules 1–7. Every
+structural rule passed, because they all did their job: the manifest was
+well-formed, the blob was exactly the right size, and rule 7 sampled frame 0,
+which was still clean.
+
+That is the shape of the hazard. A blown-up cache is **structurally perfect** —
+divergence changes the values, never the layout — so a size-and-schema validator
+cannot see it, and the failure reaches the viewer as particles that silently
+vanish (`NaN` positions fail every comparison) rather than as an error. Rules 1–7
+answer "is this a cache?". Rule 8 is the only one that asks "is it *data*?".
+
+`frame_count`-many frames are scanned, not sampled: a divergence has a first
+frame, and the tool reports it, because *when* it broke is the whole diagnostic.
+Sampling would trade the one number worth having for a cost that is already
+small next to the bake that produced the file.
 
 The golden fixture at `visualizer/fixtures/tiny_golden_cache/` is a canonical,
 committed cache that `validate_cache.py` passes. It lets the viewer be built and
