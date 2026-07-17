@@ -75,8 +75,85 @@ Both transfer kernels index the grid at `floor(Xp − 0.5) + {0,1,2}` with no bo
 check, so a particle within half a cell of a low edge would scatter **out of
 bounds**. The old 10 % margin hid this; with slabs now at the wall for the whole
 bake, `_seed` insets them two cells and `_g2p` clamps particle positions one cell
-inside the domain. The clamp is memory safety, not physics — the slip wall
-already removes wall-normal velocity, so it almost never binds.
+inside the domain.
+
+#### 1.1.1 The high walls never fired (found in milestone 13)
+
+> This section used to end: *"The clamp is memory safety, not physics — the slip
+> wall already removes wall-normal velocity, so it almost never binds."* Every
+> clause of that was false on two of the four walls, and the sentence is kept here
+> because **the document asserted exactly the invariant the code was violating.**
+> A stated invariant is not a tested one.
+
+`_grid_op` tested the far walls as `i > nx - bound`. `nx` is the **allocated**
+width, and the grid carries **3 pad nodes past the domain** so that a particle
+sitting on the position clamp has somewhere for its 3×3 stencil to land. So the
+high band lay entirely in the pad — outside the material, in a region the clamp
+guarantees is empty. Measured across four deck shapes: **8 of 8 high walls
+unreachable**. Since milestone 1.
+
+The low walls worked the whole time, because grid indices count from `0` and
+`i < bound` is genuinely inside the domain. That asymmetry is why it survived so
+long: every bake ran a **working mirror on its low edges and no wall at all on its
+high ones**, and a half-correct boundary looks like a boundary.
+
+**What replaced the missing wall is worse than no wall.** With nothing to zero the
+inbound normal velocity, `_g2p`'s position clamp becomes the boundary condition by
+default — and it is a *vice*, not a mirror: infinitely rigid, and it arrests
+**displacement** while leaving **velocity** untouched. Material piles onto the clamp
+plane still carrying its full inbound speed and is crushed there by everything
+behind it. In `apfsds_vs_era`, 2342 particles sat welded to `y = 119.61` (the clamp
+plane exactly) reading 1699 m/s, for 130 frames.
+
+The asymmetry is visible in any bake that reaches a wall, and this is the cheapest
+way to check it — the deck is symmetric about `y = 60` by construction, so the
+material must be too:
+
+| | dead high wall | walls live |
+|---|---|---|
+| `rha` `pos_y` | 0.88 … **119.61** (on the clamp) | 0.88 … 119.12 |
+| mirrored about 60 | 0.39 vs 0.88 — **asymmetric** | **0.88 vs 0.88 — exact** |
+| particles on a clamp plane | 2342 | **0** |
+
+**Milestone 13 did not cause this; it made it visible**, by giving the solver an
+energy equation. `era_filler` reads `e` in its EOS stress branch, and `e` on the
+pinned set jumped **24 → 7.1e5 J/kg in exactly the frames the particle reached the
+clamp** — 30× the rest of the filler, while the *median* was unchanged (2945 vs
+2815). The pinned **surface**, never the bulk: §3.6.1's rule again, an extremum is
+not a state. The bake then diverged at frame 190. `apfsds_vs_nera` stayed clean
+throughout, and the reason names the mechanism: **an inert filler is never
+detonated into the ceiling.**
+
+The fix tests against the **domain's far corner in grid coordinates**, as a float —
+`(xmax − xmin)/dx` is not an integer in `y` for a typical deck (307.2 for the ERA
+deck), and rounding it up is what created the pad in the first place.
+`tests/test_boundary_walls.py` pins reachability *derived from the position clamp*
+rather than from `_grid_op`, so it cannot be satisfied by copying the kernel's own
+mistake.
+
+Fixing it cleared every symptom at once, which is what makes it causal rather than
+correlated — one kernel change, and two counters go to **exactly zero**:
+
+| | dead walls | walls live |
+|---|---|---|
+| `v`/`F`/`e` non-finite | substep 197637 | **never** |
+| J floor fired | 269 509 | **0** |
+| resolution guard fired | 217 829 | **0** |
+| worst clamped `e` | **−inf** | −0.087 J/kg (roundoff) |
+| CFL audit | *** DIVERGED *** | OK, worst live J = 0.7166 |
+
+Neither the J floor nor the resolution guard was ever an EOS problem. Both were
+firing on material being crushed against the clamp.
+
+**The armor still touches the walls, and it should** — `_seed` lays slabs across the
+full domain height *precisely so* the mirror makes them a plate that continues
+beyond the frame. Material at the wall is not the defect; a wall that isn't there
+is. The per-deck sizing duty above is unchanged and still about the **rod** and its
+spray (which stays at `y = 45.9…74.1` here, nowhere near a boundary).
+
+**⚠️ Every figure in this document measured near a boundary is affected**, and every
+deck has armor at the walls. Re-measure; do not translate. The ERA/NERA numbers are
+the most exposed, since the detonation drives filler straight into the ceiling.
 
 ### 1.2 The penetrator is pointed, not flat-faced
 
