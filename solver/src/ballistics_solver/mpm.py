@@ -1248,9 +1248,9 @@ def _g2p(
     # the pressure of the FLOORED state. Taking `dJ` from the RAW determinant then
     # charges the work -p*dJ at a pressure the model never had: below the floor the
     # cold curve saturates while dJ keeps counting real volume change, and the two
-    # are no longer conjugate. Measured, driving this exact algebra by hand
-    # (temp/m13_nera/sandbox_energy.py): a raw-J excursion under the floor and back
-    # runs e to +4.5e11 J/kg and then FLIPS it to -5.1e11, against a physical ~1e5.
+    # are no longer conjugate. The justification is CONJUGACY, not a blowup it
+    # prevents — an unresolved substep is wrong here with or without the floor, and
+    # a resolved sub-floor excursion is fully reversible either way.
     #
     # e < 0 is the falsifier, and it is a theorem rather than a judgement call. From
     # rest, compression gives dJ<0 with p_cold>0, and tension gives dJ>0 with
@@ -1334,6 +1334,16 @@ def _g2p(
     # and it is falsifiable — if `worst clamped` ever reports a magnitude that is
     # not roundoff, this is masking a real negative drive and the diagnosis above
     # is wrong. Read that number, not the count (root §10).
+    #
+    # IT IS A RATCHET, and the cost is stated rather than hidden. Roundoff scatters
+    # e both ways but only the negative half is corrected, so the clamp INJECTS a
+    # little energy — it never removes any. The bake report prints both the count
+    # and the worst value precisely so the injection can be bounded: it cannot
+    # exceed count x |worst| for any one particle, i.e. ~1e-4 J/kg per firing
+    # against a physical ~1e5, and a particle at rest with no work done on it stays
+    # at 0 and never fires again. Root §1 licenses this trade — stability over
+    # rigor, noted — but the honest reading of `internal_energy` is that its zero
+    # point carries a small positive bias, not that it is exact.
     if e[p] < 0.0:
         wp.atomic_add(ediag, 1, wp.int64(1))
         wp.atomic_min(ediag_min, 0, e[p])

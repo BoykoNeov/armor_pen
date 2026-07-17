@@ -114,6 +114,13 @@ Conventional attribute semantics (all `float32`):
 - **It is not comparable across materials.** Different `ρ₀` and different baselines
   mean a shared color scale reads as "copper is cold" when it is not. Normalize
   per material when coloring; that is a viewer concern, not a format one.
+- **Its zero carries a small positive bias, and it is never negative.** The solver
+  clamps `e ≥ 0` — that is a theorem of the model, but float32 cancellation in the
+  energy solve violates it by ~1e-4 J/kg, and left alone that seeds a runaway
+  (negative `e` ⇒ negative thermal pressure ⇒ spurious tension ⇒ more negative
+  `e`). The clamp is one-sided, so it injects a bounded trickle of energy rather
+  than removing any. Against a physical ~1e5 J/kg the bias is noise. A viewer must
+  not infer from `min(e) == 0` that a region is exactly at the reference state.
 
 ---
 
