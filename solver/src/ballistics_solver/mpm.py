@@ -1066,8 +1066,7 @@ def _p2g(
 def _grid_op(
     grid_v: wp.array2d(dtype=wp.vec2),
     grid_m: wp.array2d(dtype=float),
-    nx: int,
-    ny: int,
+    edge: wp.vec2,
 ):
     i, j = wp.tid()
     m = grid_m[i, j]
@@ -1087,20 +1086,143 @@ def _grid_op(
         # the event finishes before the rod or its spray nears a wall; that is a
         # per-deck sizing duty, not something this kernel can enforce.
         #
+        # `edge` IS THE DOMAIN'S FAR CORNER IN GRID COORDINATES, and it is NOT the
+        # array's shape — that distinction is the whole bug fixed here. The grid is
+        # allocated with 3 PAD nodes past the domain so a clamped particle's 3x3
+        # stencil has somewhere to land, so `nx` sits ~3 cells OUTSIDE the material
+        # and testing `i > nx - bound` put the high walls entirely in the pad, where
+        # `_g2p`'s position clamp guarantees nothing ever goes. The high walls could
+        # not fire. Ever. In any deck.
+        #
+        # The low walls worked the whole time — indices count from 0, so `i < bound`
+        # is genuinely inside — which is exactly why nobody noticed: every deck ran a
+        # working mirror on its low edges and a rigid clamp on its high ones, and the
+        # asymmetry is visible in any bake that reaches a wall (RHA stands off the
+        # bottom at y=0.88, held by the mirror, and is jammed ONTO the top clamp
+        # plane at y=119.61). With no wall to zero the inbound normal velocity, the
+        # position clamp becomes the wall instead: infinitely rigid, and it stops
+        # DISPLACEMENT while leaving velocity untouched, so material piles onto the
+        # clamp plane still carrying its full inbound speed and is crushed against it
+        # by everything behind. That is not a boundary condition, it is a vice.
+        # A float edge (not an int index) is what makes the two sides symmetric:
+        # the domain's low corner is 0.0 and its high corner is (xmax-xmin)/dx, which
+        # is NOT an integer in y for a typical deck — the pad rounds it up.
+        #
         # No gravity: over a ~0.1 ms window it is utterly negligible next to
         # impact stresses.
-        bound = 3
+        bound = 3.0
+        fi = float(i)
+        fj = float(j)
         vx = vel[0]
         vy = vel[1]
-        if i < bound and vx < 0.0:
+        if fi < bound and vx < 0.0:
             vx = 0.0
-        if i > nx - bound and vx > 0.0:
+        if fi > edge[0] - bound and vx > 0.0:
             vx = 0.0
-        if j < bound and vy < 0.0:
+        if fj < bound and vy < 0.0:
             vy = 0.0
-        if j > ny - bound and vy > 0.0:
+        if fj > edge[1] - bound and vy > 0.0:
             vy = 0.0
         grid_v[i, j] = wp.vec2(vx, vy)
+
+
+@wp.func
+def _is_bad(a: float):
+    """1 if `a` is NaN or effectively infinite, else 0.
+
+    `a != a` is the NaN test (NaN compares unequal to everything, itself
+    included). The magnitude arm catches an inf AND the finite-but-doomed values
+    just below it — a float32 at 1e30 is one multiply from overflow, and catching
+    it there names the substep the physics broke rather than the substep the
+    format gave up.
+    """
+    if a != a:
+        return 1
+    if wp.abs(a) > 1.0e30:
+        return 1
+    return 0
+
+
+@wp.kernel
+def _nan_watch(
+    v: wp.array(dtype=wp.vec2),
+    F: wp.array(dtype=wp.mat22),
+    e: wp.array(dtype=float),
+    step: int,
+    out: wp.array(dtype=wp.int64),
+):
+    """Debug tripwire: the FIRST substep at which any particle goes non-finite.
+
+    WHY THIS EXISTS, AND WHY A CACHE CANNOT REPLACE IT. A frame is 400-1600
+    substeps, and this class of failure is instantaneous: apfsds_vs_era reads
+    perfectly healthy at frame 189 (live vel_mag max 1679 m/s) and is 98 % NaN at
+    frame 190, with the count then FROZEN — one poisoned grid node reaches every
+    particle within a few substeps. Frame cadence cannot see inside that, which is
+    exactly the blind spot milestone 11 documented for the AV ring and for the CFL
+    audit. A cache says the day it died; this says the instant, and on what.
+
+    Records min(step*1e6 + particle) per quantity, so one atomic gives BOTH the
+    earliest substep and (among ties) a concrete particle index to go look at.
+    Separate slots for v / F / e because WHICH goes first is the diagnosis: the
+    cache says momentum leads and energy trails it, and this is what confirms the
+    ordering at substep resolution rather than inferring it 1047 substeps late.
+
+    Off unless `nan_trace=True`; one extra launch per substep, no allocation.
+    """
+    p = wp.tid()
+    key = wp.int64(step) * wp.int64(1000000) + wp.int64(p)
+    vp = v[p]
+    if _is_bad(vp[0]) == 1 or _is_bad(vp[1]) == 1:
+        wp.atomic_min(out, 0, key)
+    Fp = F[p]
+    if (_is_bad(Fp[0, 0]) == 1 or _is_bad(Fp[0, 1]) == 1
+            or _is_bad(Fp[1, 0]) == 1 or _is_bad(Fp[1, 1]) == 1):
+        wp.atomic_min(out, 1, key)
+    if _is_bad(e[p]) == 1:
+        wp.atomic_min(out, 2, key)
+
+
+@wp.kernel
+def _grid_watch(
+    grid_v: wp.array2d(dtype=wp.vec2),
+    grid_m: wp.array2d(dtype=float),
+    ny: int,
+    step: int,
+    slot: int,
+    out: wp.array(dtype=wp.int64),
+    mass_out: wp.array(dtype=float),
+):
+    """Debug tripwire: the first GRID node to go non-finite, on each side of `_grid_op`.
+
+    `_nan_watch` says the particles broke; it cannot say who broke them. Both
+    candidate mechanisms poison ``grid_v`` and reach the particles through the same
+    G2P, so `v` and `F` go together either way and the ORDER discriminates nothing.
+    Sampling ``grid_v`` on both sides of the divide does discriminate, because the
+    two mechanisms sit on opposite sides of it:
+
+      * ``slot=0``, after `_p2g` — ``grid_v`` is MOMENTUM. Bad here ⇒ a particle
+        scattered a non-finite stress: the fix is at the particle.
+      * ``slot=1``, after `_grid_op` — ``grid_v`` is VELOCITY (momentum/mass). Bad
+        here but fine at slot 0 ⇒ the division made it, and then ``grid_m`` is tiny
+        *by arithmetic*, not by hypothesis: finite/m is only non-finite for small m.
+        The fix is the guard, which tests ``m > 0.0`` — divide-by-zero, not small
+        mass, so it cannot fire on the case that bites.
+
+    ``mass_out`` is the mass at the seed node, captured via the value `atomic_min`
+    returns: a thread writes only if it just lowered the minimum, so later substeps
+    (larger keys) never overwrite it. Within one substep two simultaneously-bad
+    nodes can race, and the loser's mass may land — a near-tie between two nodes of
+    the same event, which does not change the reading.
+
+    Off unless ``nan_trace=True``; two extra launches per substep, no allocation.
+    """
+    i, j = wp.tid()
+    gv = grid_v[i, j]
+    if _is_bad(gv[0]) == 1 or _is_bad(gv[1]) == 1:
+        key = wp.int64(step) * wp.int64(1000000) + wp.int64(i * ny + j)
+        old = wp.atomic_min(out, slot, key)
+        if key < old:
+            mass_out[slot] = grid_m[i, j]
 
 
 @wp.kernel
@@ -1788,7 +1910,8 @@ def _von_mises(F: np.ndarray, mu: np.ndarray, lam: np.ndarray,
 # ===========================================================================
 
 
-def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
+def bake(scenario, writer, device: str = "cuda:0", j_trace=None,
+         nan_trace: bool = False) -> None:
     """Run the elastic MLS-MPM substep loop and dump render frames.
 
     ``j_trace`` is an optional DEBUG hook, ``(frame_lo, frame_hi, material, path)``:
@@ -1927,8 +2050,15 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
     damage = wp.zeros(n, dtype=float, device=device)  # 0 intact, 1 spalled/reacting (latched)
     burn = wp.zeros(n, dtype=float, device=device)  # ms of detonation pulse remaining
 
+    # THE PAD IS NOT THE DOMAIN. `+3` buys the 3x3 stencil of a particle sitting on
+    # the position clamp somewhere to land; those nodes are OUTSIDE the material and
+    # nothing may be measured against them. `_grid_op`'s far wall takes `edge` — the
+    # domain's far corner in grid coords — precisely because `nx`/`ny` are ~3 cells
+    # further out, and using them there silently disabled the high walls entirely.
     nx = grid_res + 3
     ny = int(math.ceil((dom.ymax - dom.ymin) * inv_dx)) + 3
+    edge = wp.vec2(float((dom.xmax - dom.xmin) * inv_dx),
+                   float((dom.ymax - dom.ymin) * inv_dx))
     grid_v = wp.zeros((nx, ny), dtype=wp.vec2, device=device)
     grid_m = wp.zeros((nx, ny), dtype=float, device=device)
     origin = wp.vec2(float(dom.xmin), float(dom.ymin))
@@ -1938,14 +2068,34 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
 
     mat_id = seed["mat_id"]
 
+    # Debug tripwire (see `_nan_watch`). Slots: [0] v, [1] F, [2] e; each holds
+    # min(substep*1e6 + particle), so a slot still at SENTINEL means "never".
+    NAN_SENTINEL = (1 << 62)
+    nan_out = wp.array(np.full(3, NAN_SENTINEL, dtype=np.int64), dtype=wp.int64,
+                       device=device) if nan_trace else None
+    # Grid tripwire (see `_grid_watch`). Slots: [0] momentum after _p2g, [1]
+    # velocity after _grid_op; each holds min(substep*1e6 + i*ny + j).
+    gnan_out = wp.array(np.full(2, NAN_SENTINEL, dtype=np.int64), dtype=wp.int64,
+                        device=device) if nan_trace else None
+    gnan_mass = wp.zeros(2, dtype=float, device=device) if nan_trace else None
+    nan_step = [0]
+
     def substep():
         grid_v.zero_()
         grid_m.zero_()
         wp.launch(_p2g, dim=n, device=device, inputs=[
             x, v, C, F, mass, vol0, mu, lam, damage, reactive, det_pressure, burn,
             e, mgp, grid_v, grid_m, origin, inv_dx, dx, dt, av_c_q, av_c_l])
+        # Grid tripwire, BOTH sides of the divide: which side breaks is the whole
+        # diagnosis, and `_nan_watch` (particles only) structurally cannot say.
+        if gnan_out is not None:
+            wp.launch(_grid_watch, dim=(nx, ny), device=device, inputs=[
+                grid_v, grid_m, ny, nan_step[0], 0, gnan_out, gnan_mass])
         wp.launch(_grid_op, dim=(nx, ny), device=device, inputs=[
-            grid_v, grid_m, nx, ny])
+            grid_v, grid_m, edge])
+        if gnan_out is not None:
+            wp.launch(_grid_watch, dim=(nx, ny), device=device, inputs=[
+                grid_v, grid_m, ny, nan_step[0], 1, gnan_out, gnan_mass])
         wp.launch(_g2p, dim=n, device=device, inputs=[
             x, v, C, F, e, damage, mu, lam, mgp, rho0_a, ediag, ediag_min, grid_v,
             origin, inv_dx, dx, dt, clamp_lo, clamp_hi, av_c_q, av_c_l])
@@ -1972,6 +2122,11 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
         # reactive `damage` latch. No-op for non-reactive particles.
         wp.launch(_update_reactive, dim=n, device=device, inputs=[
             F, reactive, ign_comp, burn_time, burn, damage, dt])
+        # Tripwire LAST, so it sees the state this substep actually produced.
+        if nan_out is not None:
+            wp.launch(_nan_watch, dim=n, device=device,
+                      inputs=[v, F, e, nan_step[0], nan_out])
+            nan_step[0] += 1
 
     # --- CFL audit state (see EOS_CFL_J_MARGIN) -----------------------------
     # `dt` was sized for c_max, derived from a *predicted* compression. F comes
@@ -2148,6 +2303,69 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
     # divergence and say plainly that the rest of the numbers are stale.
     ed = ediag.numpy()
     e_worst = float(ediag_min.numpy()[0])
+    if nan_out is not None:
+        nt = nan_out.numpy()
+        print("[mpm] NaN tripwire — first non-finite, per quantity:")
+        rows = []
+        for slot, name in ((0, "v (momentum)"), (1, "F (deformation)"),
+                           (2, "e (energy)")):
+            if int(nt[slot]) >= NAN_SENTINEL:
+                print(f"[mpm]   {name:<16} never")
+                continue
+            st, pid = divmod(int(nt[slot]), 1000000)
+            rows.append((st, name, pid))
+            print(f"[mpm]   {name:<16} substep {st} (frame {st // substeps}, "
+                  f"t={st * dt * 1e3:.4f} us), particle #{pid}, "
+                  f"material {materials.id_to_name().get(str(int(mat_id[pid])), '?')}")
+        if rows:
+            rows.sort()
+            st0 = rows[0][0]
+            tied = [r for r in rows if r[0] == st0]
+            if len(tied) > 1:
+                # A TIE IS A RESULT, not something to break with a sort key. v and
+                # F both come out of G2P off the same grid_v, so a poisoned node
+                # hits them in the SAME substep — and reporting one as "first"
+                # because its name sorts earlier would invent a causal order and
+                # send the next hour after the wrong half.
+                print(
+                    f"[mpm]   -> {' and '.join(t[1] for t in tied)} went "
+                    f"non-finite in the SAME substep ({st0}) — no ordering between "
+                    f"them, so the origin is UPSTREAM of both: they are written by "
+                    f"the same G2P read of grid_v. See the grid tripwire below."
+                )
+            else:
+                print(
+                    f"[mpm]   -> {rows[0][1]} went first, at substep {st0}, on "
+                    f"particle #{rows[0][2]}. THAT is the origin; everything "
+                    f"reaching non-finite later is downstream of it, and a "
+                    f"frame-cadence read cannot tell the two apart."
+                )
+    if gnan_out is not None:
+        gt = gnan_out.numpy()
+        gm = gnan_mass.numpy()
+        print("[mpm] grid tripwire — first non-finite GRID node, per side of _grid_op:")
+        for slot, name in ((0, "momentum (after _p2g)"),
+                           (1, "velocity (after _grid_op)")):
+            if int(gt[slot]) >= NAN_SENTINEL:
+                print(f"[mpm]   {name:<27} never")
+                continue
+            st, node = divmod(int(gt[slot]), 1000000)
+            gi, gj = divmod(node, ny)
+            wall = " *** WITHIN THE 3-CELL WALL BAND ***" if (
+                gi < 3 or gi > nx - 3 or gj < 3 or gj > ny - 3) else ""
+            print(f"[mpm]   {name:<27} substep {st} (frame {st // substeps}), "
+                  f"node ({gi},{gj}) = ({origin[0] + gi * dx:.1f}, "
+                  f"{origin[1] + gj * dx:.1f}) mm, grid_m={gm[slot]:.6g}{wall}")
+        if int(gt[0]) >= NAN_SENTINEL and int(gt[1]) < NAN_SENTINEL:
+            print("[mpm]   -> MOMENTUM STAYED FINITE and VELOCITY DID NOT: the "
+                  "division in _grid_op made it. finite/m is non-finite only for "
+                  "tiny m, so this is the SMALL-MASS NODE, by arithmetic rather "
+                  "than by hypothesis. `m > 0.0` guards divide-by-zero, not small "
+                  "mass, and cannot fire on it.")
+        elif int(gt[0]) < NAN_SENTINEL and int(gt[0]) <= int(gt[1]):
+            print("[mpm]   -> MOMENTUM WAS ALREADY BAD leaving _p2g: a particle "
+                  "scattered a non-finite stress. The fix is at that particle, "
+                  "NOT in _grid_op's guard — clamping mass there would mask this.")
     if audit["nan_frame"] >= 0:
         print(
             f"[mpm] *** DIVERGED *** LIVE material went non-finite at frame "
