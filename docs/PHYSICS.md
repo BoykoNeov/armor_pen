@@ -1814,6 +1814,23 @@ Two things fall out of that table, and the second is the load-bearing one.
   "you have eaten into the safety factor", not "this diverged".** The override buys
   a warning-free bake at a real margin — not stability.
 
+**The new budget spread is 15–60 %, and the low end is not a new defect.** It was
+5–22 %. The decks that still sit low are the **ERA family**, and the reason is the
+nera situation in miniature: `era_filler` is another soft material near its own pole
+(`s=2.0`), so the deck-wide-worst pressure designs it to `J=0.570` while the deck
+only reaches ~0.68, and its near-pole stiffness then sets `c_max` for the whole
+deck. The distinction from the old bound is the one that matters: **those design
+states are on the physical MG branch** (0.570 > `J_sw`=0.55), not on the guard's
+extrapolated backstop. It is conservatism, not miscalibration.
+
+Tightening it further would mean sizing each layer by the shock actually
+*transmitted* to it through the stack rather than by the deck's worst pair — more
+physical, but a second design change, and the NERA vise is the standing proof that
+a transmission estimate does not catch everything. Root §1 (bake cost is
+irrelevant) says this is optional; it is left as a documented residual rather than
+bundled in. **One variable at a time** — the discipline that made §3.10 defer this
+milestone in the first place.
+
 **What moved, and what held.** Every deck was rebaked. Nera's filler cohesion holds
 to **0.10 %**; its spall fraction moves **+10 %** and the rod tip **+2.2 %**, which
 is the pattern every milestone here has produced — *the numbers move, the
