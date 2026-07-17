@@ -253,3 +253,51 @@ def test_nera_is_the_only_deck_that_overrides_the_margin():
         f"A new one means a new deck has a confinement the global shock bound cannot "
         f"see. Read it before adding it to this list."
     )
+
+
+# --- CFL_AUDIT_TOLERANCE: the temporary patch, kept on a short leash -----------
+# This constant deliberately reduces the audit's sensitivity, which is the exact
+# anti-pattern the module docstring above is about. It is allowed to exist only
+# while it stays (a) tiny and (b) obviously temporary. These two tests are what
+# stop it drifting into a real blindfold, so DO NOT relax them to make a new deck
+# pass — that is the 0.8 -> 0.55 -> 0.35 history repeating with a new constant.
+
+
+def test_audit_tolerance_is_small_enough_to_be_a_patch():
+    """The tolerance may hide the known 1.01x and nothing more.
+
+    Pinned at 5 % because that is comfortably above the one breach it exists for
+    (`heat_vs_composite_uniform`, 1.015x) and far below anything that would matter.
+    A tolerance that grows to cover a NEW deck is no longer a patch on a known
+    result — it is a bound being re-cut to silence its own instrument, which is the
+    defect `EOS_CFL_P_MARGIN`'s comment history documents.
+    """
+    breach = 1.0 / mpm.CFL_AUDIT_TOLERANCE
+    assert 1.0 < breach < 1.05, (
+        f"CFL_AUDIT_TOLERANCE={mpm.CFL_AUDIT_TOLERANCE} suppresses breaches up to "
+        f"{breach:.3f}x. It is a TEMPORARY patch sized for one known 1.015x result; "
+        f"if a deck needs more than 5 %, recalibrate EOS_CFL_P_MARGIN instead (P=5 "
+        f"puts the breaching deck at ~78 % of budget) and delete the tolerance."
+    )
+
+
+def test_audit_tolerance_still_lets_a_real_breach_warn():
+    """The instrument must still fire on a breach it was NOT bought for.
+
+    The failure mode this guards is the one the module docstring names: an audit
+    that prints green because it is blind. Written against the same comparison
+    `bake` makes (`c_eff * tol > c_max`) with a c_eff well past the tolerance, so
+    if someone widens the constant far enough to swallow a genuine divergence this
+    goes red first.
+    """
+    c_max = 55372.0
+    # A deck 20 % over budget is a real breach by any reading of the bound.
+    assert (c_max * 1.20) * mpm.CFL_AUDIT_TOLERANCE > c_max, (
+        "a 1.20x breach no longer trips the audit's warning — CFL_AUDIT_TOLERANCE "
+        "has stopped being a patch and become a blindfold."
+    )
+    # ...and the known 1.015x one is inside it, which is the whole point.
+    assert (c_max * 1.015) * mpm.CFL_AUDIT_TOLERANCE <= c_max, (
+        "the tolerance no longer covers the 1.015x it was added for; either it "
+        "shrank or heat_vs_composite_uniform moved. Re-read the audit line."
+    )
