@@ -42,7 +42,7 @@ caches/       gitignored bake outputs (large)
 
 ## Status
 
-All ten solver milestones are done, and the Godot viewer plays real bakes back in
+All fourteen solver milestones are done, and the Godot viewer plays real bakes back in
 motion. Every deck bakes on the RTX 5090 (NVIDIA Warp, sm_120) and passes
 `validate_cache`.
 
