@@ -175,3 +175,92 @@ def test_the_energy_equation_floors_J_exactly_as_the_pressure_does():
     assert "J_new = wp.max(J_new_raw, _J_FLOOR)" in energy, (
         "the energy equation's J_new is no longer floored (see J_old above)"
     )
+
+
+# --- The REPORT's roundoff verdict --------------------------------------------
+# The clamp's worst violation is only meaningful against `e`'s own scale. These pin
+# the verdict, not the clamp: a wrong verdict does not corrupt a bake, it tells you
+# to throw away a good one (or to ship a bad one), which is worse per-incident
+# because it is believed.
+
+# Measured on the milestone-13 rebake (MG + wall fix + AV on). The oblique deck is
+# the one that matters: an absolute `abs(e_worst) < 1.0` verdict FAILED it while
+# passing every other deck, including the jet whose `e` is 8.5x LARGER.
+REBAKE = [
+    # deck,                    e_max,    worst clamped e
+    ("heat_vs_composite",      9.021e06, -3.450e-02),
+    ("apfsds_vs_era",          1.503e06, -4.476e-01),
+    ("apfsds_vs_nera",         1.003e07, -6.184e-01),
+    ("apfsds_vs_era_oblique",  1.065e06, -1.178e+00),
+]
+REL_LIMIT = 1.0e-4  # must match the report in `bake`
+F32_EPS = 1.19e-7
+
+
+@pytest.mark.parametrize("deck,e_max,worst", REBAKE)
+def test_the_roundoff_verdict_passes_every_deck_that_actually_baked_clean(deck, e_max,
+                                                                          worst):
+    """All four decks below are known-good bakes; the verdict must say so.
+
+    Each ran to completion with the J floor and the resolution guard at EXACTLY 0 and
+    passed validate_cache including §6.8 finiteness. Whatever the verdict is, it may
+    not condemn these.
+    """
+    rel = abs(worst) / e_max
+    assert rel < REL_LIMIT, (
+        f"{deck}: verdict condemns a bake that ran clean — {rel:.2e} of e_max, "
+        f"{rel / F32_EPS:.1f} float32 eps"
+    )
+    assert rel < 20 * F32_EPS, (
+        f"{deck}: {rel / F32_EPS:.1f} eps is more cancellation than the energy "
+        f"solve's handful of operations can explain — if this is real, the verdict "
+        f"is not the thing to change"
+    )
+
+
+def test_an_ABSOLUTE_roundoff_threshold_is_anti_correlated_with_the_risk():
+    """The regression pin. An absolute J/kg threshold must never come back.
+
+    This is the decorative-guard defect again (see the guard-form test above): a
+    threshold on a quantity carrying units is a threshold on the UNITS as much as on
+    the number. Here it is not merely useless — it is INVERTED. It condemns the deck
+    with the smallest `e` and clears the deck with the largest, because the
+    cancellation it is trying to detect scales with `e` and the threshold does not.
+    """
+    by_deck = {d: (e_max, worst) for d, e_max, worst in REBAKE}
+    condemned = [d for d, (e_max, w) in by_deck.items() if abs(w) >= 1.0]
+    assert condemned, (
+        "the shipped rebake data no longer reproduces the inversion this test pins"
+    )
+    # Derive the exemplar from the data — do NOT name a deck here. The first draft
+    # of this test hardcoded the wrong one (the largest-e deck is apfsds_vs_nera at
+    # 1.00e7, not the jet at 9.02e6) and the assertion caught it, which is the
+    # method working; a named constant would just have to be maintained.
+    cleared = [(d, e) for d, (e, w) in by_deck.items() if abs(w) < 1.0]
+    biggest_cleared = max(cleared, key=lambda r: r[1])
+    for d in condemned:
+        assert by_deck[d][0] < biggest_cleared[1], (
+            f"an absolute 1.0 J/kg threshold condemned {d} (e_max "
+            f"{by_deck[d][0]:.3g}) while clearing {biggest_cleared[0]} (e_max "
+            f"{biggest_cleared[1]:.3g}, {biggest_cleared[1] / by_deck[d][0]:.1f}x "
+            f"LARGER) — it fires on the smaller-e deck, which is exactly backwards"
+        )
+    # And the relative verdict gets both right, which is the whole point.
+    for deck, e_max, worst in REBAKE:
+        assert abs(worst) / e_max < REL_LIMIT, f"{deck} must pass the relative form"
+
+
+def test_the_verdict_still_catches_a_real_negative_drive():
+    """The other half: relative must not be so loose it passes the actual failure.
+
+    The pathological paths that exposed the old decorative guard returned
+    e = -6.0e13 against a physical ~1e5-1e7 J/kg, and the pre-fix ERA bake reported
+    -inf. A verdict that cannot condemn those is decoration in the other direction.
+    """
+    for drive in (-6.0e13, -1.7e06, float("-inf")):
+        for e_max in (1.0e05, 9.0e06):
+            rel = abs(drive) / e_max
+            assert rel >= REL_LIMIT, (
+                f"a real negative drive e={drive:.3g} against e_max={e_max:.3g} "
+                f"({rel:.2e}) slips past the {REL_LIMIT:.0e} verdict"
+            )

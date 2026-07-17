@@ -2139,8 +2139,14 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None,
     # `nan_frame` = the first frame at which any LIVE particle went non-finite, or
     # -1 for never. Tracked explicitly because none of the other accumulators can
     # see it (see the finiteness note in `dump_frame`).
+    # `e_max` is the SCALE the clamp's worst violation has to be judged against —
+    # float32 cancellation in the energy solve is relative to `e`, so an absolute
+    # J/kg threshold is a threshold on the UNITS as much as on the number (the exact
+    # defect `test_energy_equation.py` pins for the old `|rho0*factor| > 1e-12`
+    # guard). Not live-only: `e` is real for a spalled fragment (CACHE_FORMAT §2 —
+    # its heat is carried state, unlike its stress).
     audit = {"c": 0.0, "J": 1.0, "div_v": 0.0, "guard_n": 0, "guard_mats": [],
-             "frames": 0, "nan_frame": -1, "nan_n": 0}
+             "frames": 0, "nan_frame": -1, "nan_n": 0, "e_max": 0.0}
 
     # --- per-substep J trace (debug hook; see `_trace_j` and the AV block) ----
     tr = None
@@ -2177,6 +2183,8 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None,
         Cn = C.numpy().reshape(n, 2, 2)
         dmg = damage.numpy()
         e_h = e.numpy()
+        if np.isfinite(e_h).any():
+            audit["e_max"] = max(audit["e_max"], float(np.nanmax(e_h)))
         vel_mag = np.linalg.norm(vel, axis=1)
         stress = _von_mises(
             Fn, seed["mu"], seed["lam"], e_h,
@@ -2382,10 +2390,30 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None,
         total = audit["frames"] * substeps * n
         # WORST CLAMPED FIRST, because it is the number that decides whether the
         # clamp is a roundoff filter or a mask. The count only says how often.
+        #
+        # JUDGE IT RELATIVE TO `e`, NEVER IN ABSOLUTE J/kg. The violation is float32
+        # cancellation in the energy solve, so it scales with `e` — and an absolute
+        # threshold is ANTI-CORRELATED with the risk it is meant to catch. Measured
+        # on the milestone-13 rebake, an earlier `abs(e_worst) < 1.0` here passed the
+        # jet (worst -0.034 against e_max 9.0e6, i.e. 0.03 eps) while failing
+        # apfsds_vs_era_oblique (-1.178 against e_max 1.1e6 — 9 eps, textbook
+        # cancellation) whose `e` is 8.5x SMALLER. It cried wolf on the safest arm.
+        #
+        # `worst` is also a min over every particle over every substep, so it grows
+        # with N by construction (the oblique deck runs 2.1e11 particle-substeps, 2x
+        # the flat one). §3.6.1's rule, again: an extremum is not a state. 1e-4 is
+        # ~840 eps — generous headroom for accumulation, and still 4+ orders of
+        # magnitude below any real negative drive (the pathological paths that
+        # exposed the old decorative guard returned e = -6e13, i.e. ~1e7 RELATIVE).
+        scale = audit["e_max"]
+        rel = abs(e_worst) / scale if scale > 0.0 else float("inf")
         verdict = (
-            "roundoff, as designed" if abs(e_worst) < 1.0
-            else "NOT roundoff — the clamp is HIDING a real negative drive, and "
-                 "the mechanism in `_g2p` is wrong. Do not ship this bake"
+            f"roundoff, as designed — {rel:.1e} of the bake's own e_max="
+            f"{scale:.3g} J/kg, i.e. {rel / 1.19e-7:.0f} float32 eps"
+            if rel < 1.0e-4
+            else f"NOT roundoff — {rel:.1e} of e_max={scale:.3g} J/kg is far past "
+                 f"float32 cancellation, so the clamp is HIDING a real negative "
+                 f"drive and the mechanism in `_g2p` is wrong. Do not ship this bake"
         )
         print(
             f"[mpm] energy-equation guards: worst clamped e = {e_worst:.3e} J/kg "
