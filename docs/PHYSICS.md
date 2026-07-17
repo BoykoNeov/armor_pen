@@ -1758,13 +1758,15 @@ error that varies 3× across the repo's own velocity range — which is exactly 
 kept needing re-cutting, and why margin 0.8 could survive `heat_vs_composite` while
 failing elsewhere.
 
-**The fix.** `EOS_CFL_P_MARGIN = 3.0` multiplies a **pressure** — the deck's
+**The fix.** `EOS_CFL_P_MARGIN = 4.0` multiplies a **pressure** — the deck's
 impedance-matched contact pressure, bisected host-side from the *same*
 `u_s = c₀ + s·u_p` fit milestone 13 already ships, so it costs **zero** new material
 constants. Linear, interpretable, and velocity-adaptive by construction, which
-removes the reason the old constant drifted. 3.0 is not a fudge: a 1-D shock
-reflecting off a stiffer neighbour roughly doubles, so 3× is one doubling plus a
-half.
+removes the reason the old constant drifted. `p_impact` is the *first contact* shock
+and a 1-D shock reflecting off a stiffer neighbour roughly doubles, so 4× is one
+doubling plus a doubling of headroom for the transient that overshoots it — and the
+value is **calibrated, not argued**: `P=3` shipped first and audited one deck over
+budget, which is what moved it to 4 (below).
 
 **Why the prize is calibration and not the ~4–5× of substeps.** Root §1 says bake
 cost is irrelevant, so "merely slow" would barely be a defect. The real problem is
@@ -1799,6 +1801,12 @@ So the vise is priced where the vise lives — `cfl_p_margin: 20.0` in the deck 
 | global `P=3`, no override | 153 | 0.5466 | 109 571 | **BREACH 1.22×** |
 | **`P=20` override — ships** | **248** | 0.5462 | 109 761 | OK, **76 %** of budget |
 
+Raising the global constant to 4 did **not** make the override redundant: it lifts
+nera's `c_max` 89 619 → 109 031 against a measured `c_eff` of 109 767, i.e. still a
+breach, at 101 %. (That is an estimate — it holds `c_eff` fixed, the same assumption
+the `P` table above gets wrong in the safe direction. It is a *sound* assumption here
+and nowhere else: nera's `c_eff` is the dt-stable one, −3.2 % across 6.8×.)
+
 Two things fall out of that table, and the second is the load-bearing one.
 
 - **`c_eff` moves −3.2 % across a 6.8× change in `dt`.** A geometric trap does not
@@ -1814,21 +1822,27 @@ Two things fall out of that table, and the second is the load-bearing one.
   "you have eaten into the safety factor", not "this diverged".** The override buys
   a warning-free bake at a real margin — not stability.
 
-**The new budget spread is 15–87 %, plus one breach, and the low end is not a new
-defect.** It was
-5–22 %. The decks that still sit low are the **ERA family**, and the reason is the
-nera situation in miniature: `era_filler` is another soft material near its own pole
-(`s=2.0`), so the deck-wide-worst pressure designs it to `J=0.570` while the deck
-only reaches ~0.68, and its near-pole stiffness then sets `c_max` for the whole
-deck. The distinction from the old bound is the one that matters: **those design
-states are on the physical MG branch** (0.570 > `J_sw`=0.55), not on the guard's
-extrapolated backstop. It is conservatism, not miscalibration.
+**The shipped `P=4` tally: 12–76 % of budget, zero breaches, 30 of 30 decks clean.**
+It was 5–22 % under the `J`-margin. `apfsds_vs_nera` is the 76 % and is not evidence
+about the global constant — it runs its own `cfl_p_margin: 20`. Excluding it the
+spread is **12–68 %**, and the top is `heat_vs_composite_uniform`, the deck that
+breached at `P=3`.
 
-#### The one breach, and the temporary patch holding it open
+**The low end is not a new defect.** The decks that sit low are the **ERA family**
+(12/13/16/17 %), and the reason is the nera situation in miniature: `era_filler` is
+another soft material near its own pole (`s=2.0`), so the deck-wide-worst pressure
+designs it close to the guard while the deck only reaches ~0.68, and its near-pole
+stiffness then sets `c_max` for the whole deck. The distinction from the old bound is
+the one that matters: **that design state is still on the physical MG branch**, not on
+the guard's extrapolated backstop. It is conservatism, not miscalibration.
 
-**`heat_vs_composite_uniform` audits at 101 % — the only deck over budget.** It is
-worth reading closely, because the mechanism is not what it looks like and two
-plausible diagnoses died on the way to it.
+#### The one breach at `P=3`, and what it took to close it
+
+**`heat_vs_composite_uniform` audited at 101 % — the only deck ever over budget.**
+It is worth reading closely, because the mechanism is not what it looks like, two
+plausible diagnoses died on the way to it, and it is the entire reason `P` is 4 and
+not 3. All figures in this subsection are the **`P=3`** measurements, i.e. the
+calibration data.
 
 **What it is: the jet compresses past its own design `J`.** `copper_jet` designs to
 `J=0.4624` under this deck's `p_design`, and reaches **0.4405** live — past its own
@@ -1865,42 +1879,63 @@ overshoots hardest that borrowed cushion ran out. Note this makes `j_design`
   heating that a real trajectory may or may not deposit"* — and the measurement
   vindicates it. **The cold curve is the conservative choice, and it is correct.**
 
-**The remedy is `P`, and it is deferred, not rejected.** Overshoot past the design
-pressure is *precisely* what `EOS_CFL_P_MARGIN` is the allowance for, so this is a
-calibration shortfall in the constant, not a structural flaw in the formula (contrast
-milestone 14 itself, which was structural). Measured on this deck:
+**The remedy is `P`, and `P = 4` ships.** Overshoot past the design pressure is
+*precisely* what `EOS_CFL_P_MARGIN` is the allowance for, so this is a calibration
+shortfall in the constant, not a structural flaw in the formula (contrast milestone 14
+itself, which was structural). Measured on this deck, before the rebake:
 
-| `P` | `Jd(copper_jet)` | `c_max` | substeps vs `P=3` | this deck's budget |
-|---|---|---|---|---|
-| **3.0 — ships** | 0.4624 | 55 372 | 1.00× | **101 % — breach** |
-| 4.0 | 0.4440 | 64 101 | 1.16× | 88 % |
-| 5.0 | 0.4315 | 72 277 | 1.31× | 78 % |
-| 6.0 | 0.4223 | 80 037 | 1.45× | 70 % |
+| `P` | `Jd(copper_jet)` | `c_max` | substeps vs `P=3` | budget, **predicted** | ERA family |
+|---|---|---|---|---|---|
+| 3.0 — *was* | 0.4624 | 55 372 | 1.00× | **101 % — breach** (measured) | ok |
+| **4.0 — ships** | 0.4440 | 64 101 | 1.16× | 88 % → **measured 68 %** | ok, by **0.0004** |
+| 5.0 | 0.4315 | 72 277 | 1.31× | 78 % | ❌ **backstop** |
+| 6.0 | 0.4223 | 80 037 | 1.45× | 70 % | ❌ **backstop** |
 
-`P=5` is the first value whose design `J` actually bounds the observed compression;
-even `P=6` leaves bakes ~3× faster than pre-M14, and root §1 says that cost is
-irrelevant. This is the recommended fix when it is picked up.
+Two independent caveats sit on that table, and both were found by checking it rather
+than reading it.
 
-**⚠ What ships instead is a TEMPORARY PATCH: `CFL_AUDIT_TOLERANCE = 0.98`.** It buys
-**no safety**. `dt` is unchanged, the physics is unchanged, and the bake still eats
-101 % of the same CFL = 0.3 safety factor it did before — the number simply stops
-being called a breach. Stated plainly so the next reader is not misled:
+**It is an upper bound, not a prediction — the `P=4` row proves it.** Every budget
+figure but the first scales `c_max` while holding `c_eff` at its `P=3` value. `c_eff`
+is not fixed: the rebake measured **68 %**, not the projected 88 %, because this deck's
+`c_eff` came in 22 % lower. That direction is not new physics — §3.6.1 already
+contrasts nera's `c_eff` (stable to −3.2 % across a 6.8× `dt` change, because a
+geometric vise does not dissolve under refinement) with **the jet's ring ratio, which
+does drift with `dt`**. This deck is the jet. Read the table as *"`P=4` buys at least
+this much"* and the audit line for what it bought.
 
-- It is **fitted to one observation** (101.5 % → 99.5 % clears by 0.5 %).
-- It costs the audit **2 % of its sensitivity on all 30 decks, permanently**,
-  including any future deck that breaches for an unrelated and real reason.
-- It argues with this file's own posture and with the repeating defect documented
-  throughout: **an instrument that is green because it is blind, not because it
-  looked.**
+**Its bottom two rows are not available, and the table could not see that** because it
+was computed for `copper_jet` on one deck. `era_filler` designs to `J=0.5504` against
+a guard switch at **0.5500**: raising `P` 3 → 4 ate **97 %** of that clearance, and the
+crossing is **between `P=4.05` and `P=4.10`**. Past it the four ERA decks size from the
+guard's extrapolated backstop — *the milestone-14 defect itself* — and
+`test_design_state_is_on_the_physical_eos_branch` goes red on all four (verified at
+`P=5`, not assumed). **`P` therefore has a ceiling near 4.05, and 4.0 ships 2.5 % under
+it.** That is tight, and it is deliberate: the invariant is pinned by a test, so a
+future raise cannot land silently. **If a deck ever needs `P > 4.05`, the answer is not
+a bigger `P`** — it is either a per-deck `cfl_p_margin` (the nera precedent, §3.6.1) or
+a look at why `era_filler`'s guard sits where it does.
 
-Three things keep it honest, and they should survive until it is deleted. The true
-`c_eff` is still **measured and printed at full value**; a deck carried by the
-tolerance prints **`OVER BUDGET at 101 % … suppressed by the TEMPORARY 1.02×`** and
-never the word *OK*; and `test_cfl_sizing.py` pins the tolerance **below 1.05× and
-verified red at 0.5 and 1.0**, so it cannot quietly grow to swallow a new deck. That
-last guard is the important one: the constant this patch defers to has a documented
-history of being re-cut (0.8 → 0.55 → 0.35) to silence its own instrument.
-**Revisit: recalibrate `P` against the tally and delete the tolerance.**
+**The calibration target is `c_eff ≤ c_max`, not the diagnosis.** It is tempting to
+demand that each material's design `J` bound its own live `J` — the property whose
+failure *explains* the breach. Don't: that comparison is **circular**. Live `J` is
+read off a bake whose `dt` was sized by the very design `J` being checked, so it is
+not an independent target, and `worst live J` is a min over every particle over every
+frame besides — the extremum §3.6.1 and §3.9 have both already been burned by. The
+requirement is the operational one: **the bound must cover what the bake actually
+reached**, with the CFL = 0.3 safety factor intact. `test_cfl_sizing.py` pins the
+measured `c_eff` against a recomputed `c_max`, and says why.
+
+**A tolerance was considered and rejected.** `CFL_AUDIT_TOLERANCE = 0.98` briefly
+shipped, widening the threshold at which the audit calls 101 % a breach. It bought
+**no safety** — `dt`, the physics and the bake were all unchanged, and the deck still
+ate 101 % of the same safety factor; only the warning went away. It was also fitted to
+one observation (101.5 → 99.5 %) and cost the audit 2 % of its sensitivity on all 30
+decks, including any future deck breaching for an unrelated reason. That is this
+file's recurring defect — **an instrument that is green because it is blind, not
+because it looked** — and the constant it deferred to has a documented history
+(0.8 → 0.55 → 0.35) of being re-cut to silence its own instrument. Raising `P` costs
+16 % more substeps, which root §1 calls irrelevant, and shrinks `dt` for real.
+`test_cfl_sizing.py` pins the deletion.
 
 Tightening it further would mean sizing each layer by the shock actually
 *transmitted* to it through the stack rather than by the deck's worst pair — more
@@ -1910,11 +1945,26 @@ irrelevant) says this is optional; it is left as a documented residual rather th
 bundled in. **One variable at a time** — the discipline that made §3.10 defer this
 milestone in the first place.
 
-**What moved, and what held.** Every deck was rebaked. Nera's filler cohesion holds
-to **0.10 %**; its spall fraction moves **+10 %** and the rod tip **+2.2 %**, which
-is the pattern every milestone here has produced — *the numbers move, the
-conclusions hold.* Treat the absolutes as readings of one configuration (see §3.5 on
-not quoting tip-`J` to four decimals; this is the fifth demonstration).
+**What moved, and what held.** Every deck was rebaked twice — once at `P=3`, then
+again at the shipped `P=4`. On the shipped bake `apfsds_vs_rha` reads **RHA spall
+0.2085** and **rod tip 231.13 mm**, at the same 135 557 particles, against milestone
+13's 0.251 / 228.27. So the largest headline figure in the repo has now read
+16 → 18.2 → 25.1 → **20.85 %** across four configurations, and every conclusion those
+milestones drew still stands — *the numbers move, the conclusions hold.* This is the
+sixth demonstration; treat every absolute here as a reading of one configuration
+(§3.5).
+
+`apfsds_vs_nera` is the one deck the change did **not** touch, and that is a check
+rather than a coincidence: its `dt` comes from its own `cfl_p_margin: 20`, so the
+global constant cannot reach it. Its cohesion result stands as measured.
+
+**An interim `P=3` figure is retracted, not carried forward.** This section briefly
+recorded "spall **+10 %**, rod tip **+2.2 %**" as what milestone 14 moved. Those were
+measured on the `P=3` bake, which `P=4` overwrote, so they are **not re-derivable and
+must not be quoted** — the same disclosure §3.6.2 makes about M5's ad-hoc probe. The
+`P=4` readings above replace them, and the probe that produced them is stated: mean
+latched `damage` over the material's own particles, the definition
+`tools/measure_reactive_ab.py` uses (verified identical on this cache to 8 digits).
 
 **Correcting the record.** The old comment's *"margin 0.55 let `apfsds_vs_nera`
 breach by 2.41×"* was measured when nera's worst live `J` was **0.2421**.

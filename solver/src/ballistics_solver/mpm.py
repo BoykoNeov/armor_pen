@@ -126,10 +126,32 @@ CFL: float = 0.3
 # removes the need by computing the real thing per deck, from the SAME `u_s = c0 +
 # s*u_p` Hugoniot fit milestone 13 already ships — zero new material constants.
 #
-# 3.0 is not a fudge: p_impact is the FIRST contact shock, and the pressure a
-# 1-D shock reflecting off a stiffer neighbour reaches is ~2x that, so 3x is one
-# doubling plus a half. Audited on all 30 decks (see PHYSICS §3.11): 29 hold, and
-# `heat_vs_composite_uniform` breaches by 1.01x — see CFL_AUDIT_TOLERANCE.
+# 4.0 is not a fudge: p_impact is the FIRST contact shock, and the pressure a 1-D
+# shock reflecting off a stiffer neighbour reaches is ~2x that, so 4x is one doubling
+# plus a doubling of headroom for the transient that overshoots it.
+#
+# THE OVERSHOOT IS REAL AND IT IS WHAT SET THIS CONSTANT. At 3.0 the tally audited
+# 29 of 30 decks clean and `heat_vs_composite_uniform` at 101 % — the shaped-charge
+# jet compresses PAST ITS OWN design J (0.4405 live vs 0.4624 designed), because a
+# uniform jet is never replaced by slower material and so holds peak stagnation
+# longest. `c_max` had been covering it by borrowing `rha`'s larger number (rha
+# designs to a J it never reaches), and on that deck the borrowed cushion ran out.
+# 4.0 designs the jet to J=0.4440 and puts the deck inside budget: the shipped tally
+# is 12-76 % across all 30, ZERO breaches (76 % is nera under its own override; the
+# top of the global range is 68 %, that same uniform jet). See PHYSICS §3.11 for the
+# measurement, and for two remedies that were FALSIFIED first — the bound is NOT
+# cold-blind (heat at the design J is worth +6.2 %, and the binding particle is
+# essentially cold), and designing on the Hugoniot INVERTS the bound.
+#
+# !! 4.0 IS NEAR A CEILING — DO NOT RAISE THIS CASUALLY. `era_filler` designs to
+# J=0.5504 against its guard switch at 0.5500: raising P from 3 to 4 ate 97 % of that
+# clearance, and the crossing is between P=4.05 and P=4.10. Past it the four ERA decks
+# size from the pole guard's extrapolated backstop, which IS the milestone-14 defect
+# this constant exists to fix — verified at P=5, where
+# `test_design_state_is_on_the_physical_eos_branch` goes red on all four. That test is
+# the guard rail; a raise cannot land silently. If a deck ever needs more than ~4.05,
+# the answer is a per-deck `cfl_p_margin` (the nera precedent, below) or a look at why
+# `era_filler`'s guard sits where it does — NOT a bigger global P.
 #
 # WHAT THIS DELIBERATELY DOES NOT COVER, and why that is not a hole: `apfsds_vs_nera`
 # is not shock-loaded. Its worst particles are a KINEMATIC VISE — 2 of 36 966 filler
@@ -148,36 +170,7 @@ CFL: float = 0.3
 # fraction of the CFL=0.3 SAFETY FACTOR, not of the stability limit: a breach of
 # 2x means the substep ran at Courant ~0.6, which is eating the safety factor, not
 # necessarily diverging. It is a warning, not a verdict.
-EOS_CFL_P_MARGIN: float = 3.0
-
-# --- TEMPORARY PATCH: the breach tolerance the audit will not warn about -------
-# ⚠ THIS BUYS NO SAFETY. It does not change dt, the physics, or what the bake
-# does — it only widens the threshold at which the audit COMPLAINS. A deck inside
-# this tolerance is still eating the same fraction of the CFL=0.3 safety factor
-# it was before; the number just stops being called a breach.
-#
-# WHY IT EXISTS. Milestone 14's tally (PHYSICS §3.11) left exactly one deck over
-# budget: `heat_vs_composite_uniform` at 1.01x. The mechanism is understood and is
-# NOT thermal — the copper jet compresses past its OWN design J (0.4405 live vs
-# 0.4624 designed), and its cold sound speed there (34 087 mm/ms) reproduces the
-# audited c_eff to within 0.6%. Meanwhile `c_max` is set by `rha` at a J that rha
-# never reaches, so the bound had been covering the jet by borrowing rha's larger
-# number, and on the deck that sustains peak stagnation longest that cushion ran
-# out. The corresponding fix is a bigger EOS_CFL_P_MARGIN (P=5 puts the deck at
-# ~78% of budget for 1.31x the substeps); it is deferred, not rejected.
-#
-# WHY THIS IS A PATCH AND NOT A FIX, spelled out so the next reader is not misled:
-#   - It is fitted to ONE observation. 101.5% -> 99.5% clears by 0.5%.
-#   - It costs the audit 2% of its sensitivity on ALL 30 decks, forever, including
-#     a future deck that breaches for an unrelated and real reason.
-#   - It argues with the file's own posture (see MG_F_SWITCH: "do not 'fix' a
-#     warning by lowering") and with the repeating defect PHYSICS §3.11 documents:
-#     an instrument that is green because it is BLIND, not because it looked.
-# So the true c_eff is still MEASURED and still PRINTED at full value below, and
-# when this tolerance is what carries a deck the audit says so in as many words.
-# Only the warning threshold moves. REVISIT: recalibrate P against the tally and
-# delete this.
-CFL_AUDIT_TOLERANCE: float = 0.98
+EOS_CFL_P_MARGIN: float = 4.0
 
 # Volume-ratio floor: the most-compressed state the EOS will represent. Below it
 # the pressure saturates. Shared by every path that divides by J or raises it to a
@@ -2526,31 +2519,14 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None,
             f"physics; if it is load-bearing the volumetric response is soft again in "
             f"exactly the way milestone 8 set out to fix."
         )
-    # CFL_AUDIT_TOLERANCE moves the THRESHOLD, never the measurement: `audit["c"]`
-    # is the true worst c_eff everywhere below, in the warning and the OK line
-    # alike. A deck that only passes because of the tolerance gets told so.
-    if audit["c"] * CFL_AUDIT_TOLERANCE > c_max:
+    if audit["c"] > c_max:
         print(
             f"[mpm] WARNING: CFL margin BREACHED. dt was sized for c_max="
             f"{c_max:.0f} mm/ms (EOS design J={j_design:.3f}), but live material "
             f"reached J={audit['J']:.4f}, div_v={audit['div_v']:.3e} /ms -> "
-            f"c_eff={audit['c']:.0f} mm/ms ({audit['c']/c_max:.2f}x the budget, "
-            f"past the {1.0/CFL_AUDIT_TOLERANCE:.2f}x temporary tolerance). "
+            f"c_eff={audit['c']:.0f} mm/ms ({audit['c']/c_max:.2f}x the budget). "
             f"The bake may be unstable past that point; raise EOS_CFL_P_MARGIN "
             f"(or av_c_q/av_c_l, if the AV term is what pushed it over) and rebake."
-        )
-    elif audit["c"] > c_max and audit["nan_frame"] < 0:
-        # Over budget, but inside the temporary tolerance. This is NOT a pass —
-        # it is a known breach being held open on purpose (see
-        # CFL_AUDIT_TOLERANCE), so it must not print the word OK.
-        print(
-            f"[mpm] CFL audit: OVER BUDGET at {audit['c']/c_max:.0%} "
-            f"(worst live J={audit['J']:.4f}, div_v={audit['div_v']:.3e} /ms -> "
-            f"c_eff={audit['c']:.0f} mm/ms vs c_max={c_max:.0f} mm/ms), suppressed "
-            f"by the TEMPORARY {1.0/CFL_AUDIT_TOLERANCE:.2f}x CFL_AUDIT_TOLERANCE. "
-            f"The bake ate {audit['c']/c_max:.0%} of the CFL={CFL} safety factor; "
-            f"the tolerance bought no safety, it only silenced the warning. "
-            f"Recalibrate EOS_CFL_P_MARGIN and delete the tolerance."
         )
     elif audit["nan_frame"] < 0:
         # "OK" is only sayable when the bake stayed finite. Gating this on

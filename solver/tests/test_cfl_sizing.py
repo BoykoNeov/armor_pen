@@ -38,8 +38,20 @@ WHAT IS PINNED HERE, and why each is written the way it is:
      If someone reintroduces a multiplier on `J`, raising the constant would make the
      bound looser; here raising it must make the bound TIGHTER. That sign is the whole
      difference between the two designs, so it gets a test.
+  4. `test_audit_has_no_breach_tolerance` — pins a DELETION. A tolerance constant
+     shipped for one commit to hold the P=3 breach open; it changed no physics, only
+     the warning. The constant it would defer to has a history (0.8 -> 0.55 -> 0.35)
+     of being re-cut to silence its own instrument, so the absence gets a test.
+  5. `test_margin_covers_the_measured_jet_overshoot` — the actual calibration target,
+     `c_eff <= c_max`, against `c_eff` MEASURED by a bake. Deliberately not the
+     tempting "design J bounds live J", which is the breach's diagnosis and is
+     circular besides — live J is read from a bake whose dt that design J set. This
+     test's `_deck_c_max` DOES re-run the sizing arithmetic, which (1) forbids; that
+     is legitimate here only because the result is checked against an INDEPENDENT
+     measurement rather than against itself.
 
-These are all host-side arithmetic — no GPU, no bake.
+Items 1-4 are host-side arithmetic — no GPU, no bake. Item 5 is host-side too, but
+its table is bake data and goes stale whenever dt or the physics moves.
 """
 from pathlib import Path
 
@@ -54,9 +66,54 @@ SCENARIOS = Path(__file__).resolve().parents[1] / "scenarios"
 ALL_DECKS = sorted((p.stem, p) for p in SCENARIOS.glob("*.yaml"))
 
 
+# The worst `c_eff` (mm/ms) each of these decks was MEASURED at, read off its audit
+# line. These are the binding decks — the two shaped-charge ones that set the margin
+# (§3.11) plus a KE control. They are DATA, from the bake, not a prediction: that is
+# what makes them usable to check a prediction against. Re-read them after any change
+# that moves dt or the physics, and never edit one to make a test pass.
+#
+# Read from the P=4 rebake (2026-07-17). `heat_vs_composite_uniform` is the deck that
+# breached at P=3; it is the tightest non-override deck here at 68 % of budget.
+MEASURED_C_EFF = {
+    "heat_vs_composite_uniform": 43813.0,
+    "heat_vs_composite": 40448.0,
+    "apfsds_vs_rha": 11725.0,
+}
+
+
 def _k0(mat):
     mu, lam = mpm._lame(mat.youngs_modulus, mat.poisson_ratio)
     return lam + mu
+
+
+def _deck_c_max(scenario):
+    """The a-priori signal-speed bound `bake` sizes dt from. Mirrors that block.
+
+    Recomputing the sizing arithmetic is the thing this module's docstring warns
+    against — but only when the result is checked against itself. Here it is checked
+    against an INDEPENDENT measurement (the audit's `c_eff`), which is the one use
+    that cannot be satisfied by copying the bug.
+    """
+    proj = materials.get(scenario.projectile.material)
+    names = {scenario.projectile.material, *(a.material for a in scenario.armor)}
+    v_tip = scenario.projectile.velocity
+    dom = scenario.domain
+    dx = (dom.xmax - dom.xmin) / scenario.solver.grid_resolution
+    p_design = mpm._scenario_cfl_margin(scenario) * max(
+        [mpm._impact_pressure(proj, materials.get(nm), v_tip) for nm in names]
+        + [mpm._impact_pressure(proj, proj, v_tip)]
+    )
+    c_max = 0.0
+    for name in names:
+        mat = materials.get(name)
+        mu, _ = mpm._lame(mat.youngs_modulus, mat.poisson_ratio)
+        K0 = _k0(mat)
+        mgp = mpm._mg_params(mat)
+        Jd = mpm._eos_equilibrium_j(p_design, K0, mgp)
+        c_eos = float(mpm._eos_sound_speed(Jd, K0, mu, mat.density, mgp, 0.0))
+        c_max = max(c_max, mpm._av_signal_speed(
+            c_eos, -v_tip / dx, dx, scenario.solver.av_c_q, scenario.solver.av_c_l))
+    return c_max
 
 
 def _deck_design_j(scenario, name):
@@ -255,49 +312,55 @@ def test_nera_is_the_only_deck_that_overrides_the_margin():
     )
 
 
-# --- CFL_AUDIT_TOLERANCE: the temporary patch, kept on a short leash -----------
-# This constant deliberately reduces the audit's sensitivity, which is the exact
-# anti-pattern the module docstring above is about. It is allowed to exist only
-# while it stays (a) tiny and (b) obviously temporary. These two tests are what
-# stop it drifting into a real blindfold, so DO NOT relax them to make a new deck
-# pass — that is the 0.8 -> 0.55 -> 0.35 history repeating with a new constant.
+def test_audit_has_no_breach_tolerance():
+    """`c_eff > c_max` must be the WHOLE breach test — nothing may discount it.
 
-
-def test_audit_tolerance_is_small_enough_to_be_a_patch():
-    """The tolerance may hide the known 1.01x and nothing more.
-
-    Pinned at 5 % because that is comfortably above the one breach it exists for
-    (`heat_vs_composite_uniform`, 1.015x) and far below anything that would matter.
-    A tolerance that grows to cover a NEW deck is no longer a patch on a known
-    result — it is a bound being re-cut to silence its own instrument, which is the
-    defect `EOS_CFL_P_MARGIN`'s comment history documents.
+    A tolerance constant shipped here briefly (CFL_AUDIT_TOLERANCE=0.98) to hold
+    `heat_vs_composite_uniform`'s 1.01x open, and was deleted in favour of raising
+    the margin to P=4, which buys real headroom instead of silence. This pins the
+    deletion, because the patch bought NO safety: dt and the bake were unchanged and
+    the deck still ate 101 % of the CFL=0.3 safety factor — only the warning went
+    away. That is the defect this module's docstring is about, and the constant it
+    would defer to has a documented history (0.8 -> 0.55 -> 0.35) of being re-cut to
+    silence its own instrument. If a deck breaches, recalibrate P or read the deck;
+    do not discount the measurement.
     """
-    breach = 1.0 / mpm.CFL_AUDIT_TOLERANCE
-    assert 1.0 < breach < 1.05, (
-        f"CFL_AUDIT_TOLERANCE={mpm.CFL_AUDIT_TOLERANCE} suppresses breaches up to "
-        f"{breach:.3f}x. It is a TEMPORARY patch sized for one known 1.015x result; "
-        f"if a deck needs more than 5 %, recalibrate EOS_CFL_P_MARGIN instead (P=5 "
-        f"puts the breaching deck at ~78 % of budget) and delete the tolerance."
+    assert not hasattr(mpm, "CFL_AUDIT_TOLERANCE"), (
+        "CFL_AUDIT_TOLERANCE is back. A breach tolerance changes no physics — it "
+        "only stops the audit saying what the bake already did. Raise "
+        "EOS_CFL_P_MARGIN instead; that is what actually shrinks dt."
     )
 
 
-def test_audit_tolerance_still_lets_a_real_breach_warn():
-    """The instrument must still fire on a breach it was NOT bought for.
+def test_margin_covers_the_measured_jet_overshoot():
+    """`c_max` must exceed the `c_eff` the binding decks were MEASURED at.
 
-    The failure mode this guards is the one the module docstring names: an audit
-    that prints green because it is blind. Written against the same comparison
-    `bake` makes (`c_eff * tol > c_max`) with a c_eff well past the tolerance, so
-    if someone widens the constant far enough to swallow a genuine divergence this
-    goes red first.
+    This is the real calibration target, and it is deliberately NOT the tempting
+    one. "Each material's design J bounds its own live J" is a DIAGNOSIS of the P=3
+    breach, not the requirement, and pinning it would be CIRCULAR: live J is read
+    from a bake whose dt was sized by the very design J being checked, so it is not
+    a fixed target to compare a fresh design against. A test written that way
+    compares a prediction to data from a different configuration — and `worst live J`
+    is a min over every particle over every frame besides, an extremum this repo has
+    been burned by repeatedly (§3.6.1, §3.9). Do not pin the story.
+
+    `c_eff` vs `c_max` is the honest target because it is the operational
+    requirement — the bound must cover what the bake actually reached, with the
+    CFL=0.3 safety factor intact. MEASURED_C_EFF is read off the audit line of the
+    tally in PHYSICS §3.11: calibration data, not a recomputation of the sizing
+    arithmetic (which would be satisfied by copying the bug).
     """
-    c_max = 55372.0
-    # A deck 20 % over budget is a real breach by any reading of the bound.
-    assert (c_max * 1.20) * mpm.CFL_AUDIT_TOLERANCE > c_max, (
-        "a 1.20x breach no longer trips the audit's warning — CFL_AUDIT_TOLERANCE "
-        "has stopped being a patch and become a blindfold."
+    assert MEASURED_C_EFF, (
+        "MEASURED_C_EFF is empty, so this test checks nothing and passes anyway — "
+        "the blind-instrument failure this module's docstring is about. Re-read the "
+        "audit lines from a full rebake and restore the table."
     )
-    # ...and the known 1.015x one is inside it, which is the whole point.
-    assert (c_max * 1.015) * mpm.CFL_AUDIT_TOLERANCE <= c_max, (
-        "the tolerance no longer covers the 1.015x it was added for; either it "
-        "shrank or heat_vs_composite_uniform moved. Re-read the audit line."
-    )
+    for deck_name, c_eff_measured in sorted(MEASURED_C_EFF.items()):
+        sc = config.load_scenario(SCENARIOS / f"{deck_name}.yaml")
+        c_max = _deck_c_max(sc)
+        assert c_max > c_eff_measured, (
+            f"{deck_name}: c_max={c_max:.0f} mm/ms no longer covers the measured "
+            f"c_eff={c_eff_measured:.0f} ({c_eff_measured / c_max:.0%} of budget). "
+            f"This deck breaches. Read its audit line — at P=3 this was the "
+            f"shaped-charge jet overshooting its own design state (PHYSICS §3.11)."
+        )
