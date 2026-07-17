@@ -1831,18 +1831,27 @@ breached at `P=3`.
 **The low end is not a new defect.** The decks that sit low are the **ERA family**
 (12/13/16/17 %), and the reason is the nera situation in miniature: `era_filler` is
 another soft material near its own pole (`s=2.0`), so the deck-wide-worst pressure
-designs it close to the guard while the deck only reaches ~0.68, and its near-pole
-stiffness then sets `c_max` for the whole deck. The distinction from the old bound is
-the one that matters: **that design state is still on the physical MG branch**, not on
-the guard's extrapolated backstop. It is conservatism, not miscalibration.
+designs it close to the guard while the deck only reaches ~0.68. Its near-pole
+stiffness then sets `c_max` **for the whole deck** — measured on `apfsds_vs_era` at
+`P=4`, `era_filler` reads `c=66 644` against `rha`'s 15 799 and `tungsten_rod`'s
+9 688, a **4.2×** margin, and with the AV terms it reproduces that deck's audit line
+(109 031) exactly. So a soft interlayer, not the steel or the rod, is what prices
+every ERA deck's substep. The distinction from the old bound is the one that matters:
+**that design state is still on the physical MG branch**, not on the guard's
+extrapolated backstop. It is conservatism, not miscalibration.
 
 #### The one breach at `P=3`, and what it took to close it
 
 **`heat_vs_composite_uniform` audited at 101 % — the only deck ever over budget.**
 It is worth reading closely, because the mechanism is not what it looks like, two
 plausible diagnoses died on the way to it, and it is the entire reason `P` is 4 and
-not 3. All figures in this subsection are the **`P=3`** measurements, i.e. the
-calibration data.
+not 3.
+
+**Read the figures below by which question they answer**, because this subsection
+spans both constants: **the breach and its diagnosis are `P=3`** (that bake is the
+calibration data, and `P=4` has since overwritten its caches), while **the remedy,
+the ceiling and the verification are `P=4`** (the shipped bake). Each is labelled
+where it could be mistaken.
 
 **What it is: the jet compresses past its own design `J`.** `copper_jet` designs to
 `J=0.4624` under this deck's `p_design`, and reaches **0.4405** live — past its own
@@ -1936,6 +1945,14 @@ because it looked** — and the constant it deferred to has a documented history
 (0.8 → 0.55 → 0.35) of being re-cut to silence its own instrument. Raising `P` costs
 16 % more substeps, which root §1 calls irrelevant, and shrinks `dt` for real.
 `test_cfl_sizing.py` pins the deletion.
+
+**The restored warning was verified to FIRE, not assumed to.** Deleting the tolerance
+put back the original `c_eff > c_max` test — and at `P=4` nothing breaches, so nothing
+in the shipped tally exercises that branch. An instrument that never fires is the
+defect this file keeps finding, so it was checked directly: `heat_vs_composite_uniform`
+re-baked with `cfl_p_margin: 1.0` prints **`WARNING: CFL margin BREACHED … c_eff=62 028
+mm/ms (1.64x the budget)`**. The audit can still see a breach; it is silent because
+there is none.
 
 Tightening it further would mean sizing each layer by the shock actually
 *transmitted* to it through the stack rather than by the deck's worst pair — more
