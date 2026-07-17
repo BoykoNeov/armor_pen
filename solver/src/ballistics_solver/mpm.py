@@ -1092,6 +1092,7 @@ def _g2p(
     C: wp.array(dtype=wp.mat22),
     F: wp.array(dtype=wp.mat22),
     e: wp.array(dtype=float),
+    damage: wp.array(dtype=float),
     mu: wp.array(dtype=float),
     lam: wp.array(dtype=float),
     mgp: wp.array(dtype=MGParams),
@@ -1146,7 +1147,9 @@ def _g2p(
     F[p] = F_new
 
     # --- energy equation (milestone 13, PHYSICS §3.10) -----------------------
-    # Specific internal energy, per unit REFERENCE volume:
+    # `e` is SPECIFIC internal energy — per unit MASS. `rho0*e` is the corresponding
+    # energy per unit REFERENCE volume, which is the quantity this balance is written
+    # in (and the one `dJ`, a reference-volume ratio, is conjugate to):
     #
     #     rho0 * de = -(p + q) * dJ
     #
@@ -1183,6 +1186,27 @@ def _g2p(
     # heat source. Deliberate and stated: it is negligible at the near-hydrostatic jet
     # stagnation point this milestone is about, and `_return_mapping` runs in a
     # separate kernel on log-strain, where the dissipated work is not on hand.
+    # GATED ON COHESION, and the gate is load-bearing. A particle that carries no
+    # stress does no compression work, so its internal energy LATCHES at the moment
+    # it broke: a fragment keeps the heat it took on and stops accumulating. This
+    # inherits `_p2g`'s stress gating exactly — the same principle the AV term above
+    # already follows.
+    #
+    # MEASURED, because the first cut of this column omitted the gate: a spalled
+    # particle's F keeps evolving with no stress feedback (see J_FLOOR), so
+    # `-(p+q)*dJ` integrates against a garbage pressure forever. On apfsds_vs_rha
+    # that put the SPALLED median at 1.4e8 J/kg and its max at 4.8e11 — against a
+    # live max of 8.1e3, and a physical shocked metal's ~1e5. Not a tail: 25 % of
+    # the cache, median-garbage, enough to flatten every live particle to zero on
+    # any linear colormap.
+    #
+    # It never reached the physics — `_p2g` drops a spalled particle's stress term
+    # and the CFL audit reads live particles only — so it was a readout/contract
+    # defect, not a solver one. Which is exactly why it had to be caught on purpose:
+    # nothing blows up, and the cache is just quietly wrong.
+    if damage[p] >= 0.5:
+        return
+
     J_old = wp.determinant(F_old)
     J_new = wp.determinant(F_new)
     dJ = J_new - J_old
@@ -1786,8 +1810,8 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
         wp.launch(_grid_op, dim=(nx, ny), device=device, inputs=[
             grid_v, grid_m, nx, ny])
         wp.launch(_g2p, dim=n, device=device, inputs=[
-            x, v, C, F, e, mu, lam, mgp, rho0_a, grid_v, origin, inv_dx, dx, dt,
-            clamp_lo, clamp_hi, av_c_q, av_c_l])
+            x, v, C, F, e, damage, mu, lam, mgp, rho0_a, grid_v, origin, inv_dx,
+            dx, dt, clamp_lo, clamp_hi, av_c_q, av_c_l])
         # Bound the reactive filler's post-transfer speed so the F-independent
         # detonation source can't accelerate unconfined debris to a CFL-breaking
         # ~14 km/s (reactive particles only; see REACTIVE_VMAX / _clamp_reactive_v).
@@ -1908,6 +1932,13 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
             pos[:, 0], pos[:, 1], vel_mag, stress,
             dmg,  # 0 intact, 1 spalled (latched past damage_threshold)
             mat_id,
+            # `internal_energy` (schema v2, milestone 13). SPECIFIC — per unit
+            # mass, J/kg. Written raw, and unlike `stress` above it needs no
+            # zeroing on spall: `_g2p` latches it when the particle breaks, so a
+            # fragment already reads the heat it carried in, not an integral
+            # against a stale F. Zeroing here would be the wrong fix for that —
+            # it would throw away a real state instead of stopping a fake one.
+            e_h,
         ]).astype(np.float32)
         writer.write_frame(frame)
 

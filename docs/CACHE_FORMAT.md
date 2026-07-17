@@ -1,8 +1,16 @@
-# Cache Format — THE CONTRACT (v1)
+# Cache Format — THE CONTRACT (v2)
 
 This document is the **single source of truth** for the on-disk cache format.
 It is the one and only thing the solver and the visualizer share. If this
 document and any code disagree, **this document wins** and the code is a bug.
+
+> **Version history.**
+> - **v2** (milestone 13) — appended the `internal_energy` column. Mie-Grüneisen
+>   evolves a specific internal energy per particle (`docs/PHYSICS.md` §3.10);
+>   v2 exposes it. No layout, ordering, or endianness change: v2 is v1 with one
+>   more name in `attributes`. A v1 cache is **not** a valid v2 cache (the column
+>   is absent), which is why the version moved — see the note in §2.
+> - **v1** — initial format.
 
 > **Change protocol (CLAUDE.md §9).** Any change to what a cache contains is a
 > change to *this file first*, plus a bump of `schema_version`, then — in this
@@ -32,15 +40,15 @@ authoritative for everything.
 
 ## 2. `manifest.json`
 
-A single JSON object. Example (`schema_version: 1`):
+A single JSON object. Example (`schema_version: 2`):
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "scenario": "apfsds_vs_rha",
   "particle_count": 240000,
   "frame_count": 90,
-  "attributes": ["pos_x", "pos_y", "vel_mag", "stress", "damage", "material_id"],
+  "attributes": ["pos_x", "pos_y", "vel_mag", "stress", "damage", "material_id", "internal_energy"],
   "dtype": "float32",
   "frame_dt": 2.0e-6,
   "domain": {"xmin": 0, "xmax": 200, "ymin": 0, "ymax": 100},
@@ -53,7 +61,7 @@ A single JSON object. Example (`schema_version: 1`):
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `schema_version` | int | yes | Format version. v1 = this document. Readers **must** reject a version they do not understand. |
+| `schema_version` | int | yes | Format version. v2 = this document. Readers **must** reject a version they do not understand. |
 | `scenario` | string | yes | Human label for the bake. Matches the input deck's name by convention, not by requirement. |
 | `particle_count` | int > 0 | yes | Number of particles, **fixed for the whole bake** (see §5). |
 | `frame_count` | int > 0 | yes | Number of render frames stored. |
@@ -66,13 +74,20 @@ A single JSON object. Example (`schema_version: 1`):
 
 ### Required & recommended attributes
 
-`attributes` is **open** — the solver may append new columns (e.g.
-`temperature`) and older viewers keep working, coloring by whatever they are
-told. Two constraints for v1:
+`attributes` is **open** — the solver may append new columns and older viewers
+keep working, coloring by whatever they are told. Two constraints:
 
 - `pos_x` and `pos_y` **must** be present (the viewer needs positions to draw).
 - The viewer **must** read the attribute layout from the manifest and locate
   columns by name. It **must not** hardcode column offsets.
+
+**Openness is a property of *readers*, not a licence to skip the version bump.**
+A name-driven reader survives an appended column — that is what "open" buys, and
+it is why v2 needs no `cache_loader.gd` rewrite. It does **not** make the two
+versions interchangeable: a v1 cache lacks `internal_energy` entirely, so a
+consumer that requires it would fault on data the manifest never promised. The
+bump is what lets a reader tell the two apart *before* reading. Both rules hold
+at once (root CLAUDE.md §4: any change to what is in a cache bumps the version).
 
 Conventional attribute semantics (all `float32`):
 
@@ -83,6 +98,22 @@ Conventional attribute semantics (all `float32`):
 | `stress` | A scalar stress measure, e.g. von Mises equivalent (MPa). |
 | `damage` | Scalar damage in `[0, 1]`; a detached (spalled) particle is one flagged via this attribute, not a created/destroyed particle. |
 | `material_id` | Integer material id **stored as a float32**; readers round to nearest int and look it up in `materials`. |
+| `internal_energy` | **Specific** internal energy — per unit **mass**, `J/kg` (numerically `(m/s)²` in mm-ms-g). `0` = the reference state, so a deck at rest reads 0. **Not** energy per unit volume: the per-reference-volume density is `ρ₀·e`, which is what the solver's energy balance is written in. See the reader's note below. |
+
+**Reading `internal_energy` honestly.** Three things a viewer must not assume:
+
+- **It is not temperature, and must not be labelled as one.** Temperature needs a
+  per-material heat capacity `c_v`, which this project does not carry; deriving one
+  is a future change, not a rename. A viewer may color by this column, but the
+  legend says *internal energy*.
+- **It is volumetric + shock-heating work only.** Plastic dissipation is **not**
+  fed to `e` (PHYSICS §3.10), so strongly-shearing regions — the crater walls, not
+  the jet stagnation point — are missing a real heat source and this column
+  **under-reads** there. It is a deliberate, stated limit, not a bug to fix in the
+  viewer.
+- **It is not comparable across materials.** Different `ρ₀` and different baselines
+  mean a shared color scale reads as "copper is cold" when it is not. Normalize
+  per material when coloring; that is a viewer concern, not a format one.
 
 ---
 

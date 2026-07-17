@@ -10,4 +10,5 @@ __version__ = "0.0.1"
 
 # The cache format this solver emits. Must match docs/CACHE_FORMAT.md and the
 # validator/loader. Bumping this is a format change — follow CLAUDE.md §9.
-CACHE_SCHEMA_VERSION = 1
+# v2 (milestone 13): appended the `internal_energy` column.
+CACHE_SCHEMA_VERSION = 2

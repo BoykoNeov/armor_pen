@@ -9,7 +9,11 @@ class_name CacheLoader
 ## hardcoded (CACHE_FORMAT §2). Add an attribute to the solver's output and this
 ## loader keeps working — it just exposes one more named column.
 
-const SUPPORTED_SCHEMA_VERSION := 1
+## v2 (milestone 13) appended `internal_energy`. Nothing below changed to read it:
+## the loader locates columns by name, so it needed only this number. That is the
+## §2 openness rule paying out — but the gate still moves, because a v1 cache does
+## not have the column and a reader must be able to tell before it looks.
+const SUPPORTED_SCHEMA_VERSION := 2
 
 var particle_count: int = 0
 var frame_count: int = 0

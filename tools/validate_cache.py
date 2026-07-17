@@ -16,7 +16,10 @@ import struct
 import sys
 from pathlib import Path
 
-SUPPORTED_SCHEMA_VERSIONS = {1}
+# v2 (milestone 13) appended the `internal_energy` column. v1 is deliberately NOT
+# kept: every cache the solver emits is rebaked to v2, so accepting v1 would only
+# let a stale pre-milestone-13 cache validate clean and look current.
+SUPPORTED_SCHEMA_VERSIONS = {2}
 REQUIRED_FIELDS = {
     "schema_version": int,
     "scenario": str,
