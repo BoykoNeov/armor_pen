@@ -451,6 +451,12 @@ Grow the reference MLS-MPM incrementally, validating visually with
      Recalibrating a *global* stability constant inside a change that already moves
      the EOS **and** the boundary condition is three variables at once. Those
      percentages are the evidence base for doing it later, as its own A/B.
+     > **✅ DONE — milestone 14 took this follow-up, and the deferral was right for
+     > the wrong reason.** The 5–22 % was not the constant being cautious; it was
+     > **M13 succeeding**. MG relieved the nera crush (worst live J 0.2421 → 0.5434)
+     > that the margin had been sized against, so the constant went stale at M13 and
+     > the audit line said so. The formula, not the constant, was the defect —
+     > `EOS_CFL_J_MARGIN` is retired for `EOS_CFL_P_MARGIN`. See milestone 14 below.
    - Schema **v1 → v2**: `internal_energy`, **specific, per unit MASS (J/kg)**. NOT
      `temperature` — that needs a per-material `c_v` *and* would under-read exactly
      in the shear zones a viewer most wants (the `e` update drops plastic
@@ -462,6 +468,65 @@ Grow the reference MLS-MPM incrementally, validating visually with
      700-frame bake) while clearing `apfsds_vs_nera` (e_max 1.00e7, 9.4× larger).
      A negative `e` is a **TRACER, not a cause** — it is universal, born at roundoff
      in every deck, and clamping it did **not** fix the ERA divergence.
+
+12. **Milestone 14 — the CFL margin multiplied a volume RATIO (PHYSICS §3.11).**
+   The follow-up M13 deferred. `EOS_CFL_J_MARGIN` → **`EOS_CFL_P_MARGIN = 3.0`**;
+   new host helper `_impact_pressure`; `SolverParams.cfl_p_margin` for per-deck
+   override. Read §3.11 before touching the substep bound.
+   - **`Jd = 0.35 * J_eq` scaled a volume RATIO.** `J` is in (0,1] with the EOS
+     diverging at J→0, so that is not "35 % of margin" — it demanded ~3× more
+     compression than equilibrium, and the design state landed **past every
+     material's MG pole, on 30 of 30 decks, in 54 of 68 (deck, material) pairs**. The
+     bound was read off the **pole guard's extrapolated backstop** — the branch
+     `J_FLOOR`'s own comment calls "a degeneracy backstop, NOT a physical limit".
+     `rha` equilibrates at **J_eq=0.902** (a 10 % compression) and the bound designed
+     for **0.316**, reading **137 281 mm/ms** for a material whose real shocked speed
+     is ~6 000. That ~20× IS the 5–22 %-of-budget figure, from the other end.
+   - **The SCALE was wrong too, and velocity-dependently so — no constant fixes
+     that.** `½ρv²` is *steady stagnation*; the substep must survive the **contact
+     shock**, which is an impedance match of the two Hugoniots. `p_impact/p_stag` runs
+     **3.58× at 1500 m/s → 1.25× at 7000 m/s**. **That spread is the fingerprint on
+     the old constant's history** (0.8 → 0.55 → 0.35): one number re-cut to patch an
+     error that varies 3× across the repo's own velocity range. `_impact_pressure`
+     costs **zero** new material constants — it reuses M13's `u_s = c₀ + s·u_p` fit.
+   - **THE PRIZE IS CALIBRATION, NOT THE ~4–5× OF SUBSTEPS** (root §1: bake cost is
+     irrelevant; and I/O partly masks it anyway — nera's `frames.bin` is 2.76 GB). The
+     old bound **never failed**: it erred in the SAFE direction, which is exactly why
+     it survived four milestones unexamined. **A bound that over-predicts 20× is not
+     conservative, it is UNCALIBRATED** — and an uncalibrated bound is free to
+     *under*-predict on the next deck. That is not hypothetical: margin 0.8 did it on
+     `heat_vs_composite`. Same shape as [[instruments-that-cannot-see-the-failure]].
+   - **`apfsds_vs_nera` is priced in its OWN deck (`cfl_p_margin: 20.0`), because what
+     it covers is NOT a shock.** Its binding particles are 2–4 of 36 966 filler
+     particles in a **kinematic vise** (§3.6.1) whose J is set by geometry.
+     `nera_filler` sits at its pole (J=1−1/s=0.5) where the EOS asymptotes, so
+     pressure is a near-flat lever: **12× the shock moves the design J only
+     0.597 → 0.511**, and covering it globally needs **P≈50** — a global stability
+     constant sized against a 2-particle extremum, the exact anti-pattern the old
+     comment argued against and then committed.
+   - **The override is licensed by the measurement being STABLE:** `c_eff` moves only
+     **−3.2 %** (113 228 → 109 571) across a **6.8× dt change**, because a geometric
+     trap does not dissolve under refinement (§3.6.2 said so). Contrast the jet's
+     shock-ring ratio, which drifts with dt and must never be sized against. Shipped:
+     **248 substeps, 76 % of budget** (was 1047 at 18 %).
+   - **A BREACH IS NOT A DIVERGENCE — read the audit ratio correctly.** It is a
+     fraction of the **CFL=0.3 SAFETY FACTOR**, not of the stability limit. Global P=3
+     breaches nera 1.22× = Courant **0.37** against a limit near 1, and it bakes
+     **finite** with cohesion moving **−0.06 %**. The override buys a warning-free bake
+     at a real margin; it does **not** prevent an instability.
+   - **What moved:** all 30 rebaked. Nera cohesion holds to **0.10 %**; spall **+10 %**,
+     rod tip **+2.2 %**. Numbers move, conclusions hold — fifth demonstration.
+   - **The stale comment that hid it:** "0.55 let `apfsds_vs_nera` breach by 2.41×" was
+     measured at nera's **pre-M13** worst live J of 0.2421. MG relieved that crush, so
+     the breach stopped constraining the constant at M13 and nobody noticed. **M13 made
+     the margin over-conservative BY SUCCEEDING.**
+   - `tests/test_cfl_sizing.py` pins the design state on the physical branch, derived
+     from `materials.py` — **not** by re-running the sizing arithmetic, which would be
+     satisfied by copying the bug. **Verified to FAIL on the old formula first.** One
+     of its asserts was itself wrong and got fixed by the code: a per-pair
+     `p_impact > p_stag` claim fails on rha/copper at 7 km/s, because a lower-impedance
+     target genuinely cannot sustain the striker's stagnation pressure. Only the
+     **deck-wide max** (which includes the symmetric self-impact) carries the claim.
 
 ### The free-slip HIGH walls never fired — a BC fix, not a milestone (done)
 

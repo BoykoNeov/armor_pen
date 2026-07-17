@@ -1702,6 +1702,133 @@ percentages are the evidence base for doing it later, as its own A/B.
 
 ---
 
+### 3.11 The CFL margin multiplied a volume ratio (milestone 14)
+
+Milestone 13 closed by writing down an observation and declining to act on it:
+decks were using **5–22 % of their own CFL budget**, so the margin was
+"conservative = correct, merely slow", and recalibrating a global stability
+constant alongside a new EOS and a boundary fix would have been three variables at
+once. That deferral was right. This section is the follow-up it asked for, and the
+suspicion recorded with it — *"I'd suspect the sizing formula rather than the
+constant"* — was correct.
+
+**The defect.** `EOS_CFL_J_MARGIN` made headroom by multiplying `J`:
+
+```
+Jd = 0.35 * J_eq(p_stag)        # "35 % of margin"
+```
+
+`J` is a volume **ratio** in (0,1], and the EOS diverges as `J → 0`. Scaling it is
+not a 35 % adjustment; it is a demand that the material compress to roughly a third
+of its equilibrium volume ratio. Measured across the shipped decks, the design state
+landed **past every material's Mie-Grüneisen pole and below its guard switch — on
+30 of 30 decks, in 54 of 68 (deck, material) pairs**. The bound was therefore read
+off the pole guard's extrapolated Murnaghan `J^−4` backstop: the branch `J_FLOOR`'s
+own comment calls *"a degeneracy backstop, NOT a physical limit"*.
+
+`apfsds_vs_rha` is the clearest case, because nothing about it is exotic:
+
+| | value |
+|---|---|
+| `rha`'s honest equilibrium under the deck's impact | `J_eq = 0.902` (a **10 %** compression) |
+| what the margin designed for | `Jd = 0.316` |
+| `rha`'s MG pole (`1 − 1/s`) / guard switch | 0.329 / 0.396 — **`Jd` is past both** |
+| design sound speed read off the backstop | **137 281 mm/ms** |
+| steel's real shocked sound speed | ~6 000 mm/ms |
+
+`dt` was sized against a 137 km/s wave in a material that never exceeds ~6 km/s.
+That ~20× is the 5–22 %-of-budget figure, from the other end.
+
+**The scale was wrong too, and that part no constant could fix.** `p_stag = ½ρv²`
+is the *steady* stagnation pressure of an established penetration channel. The
+substep has to survive **first contact**, which is a shock, and a shock's pressure
+comes from impedance-matching the two Hugoniots — not from a kinetic-energy
+density. The two disagree by a **velocity-dependent** factor:
+
+| deck arm | `p_impact / p_stag` |
+|---|---|
+| 1500 m/s | **3.58×** |
+| 3500 m/s | 1.89× |
+| 7000 m/s | **1.25×** |
+
+`½ρv²` is quadratic in `v` while the contact shock is closer to `ρcv`, so the error
+*shrinks* as the deck gets faster. **That spread is the fingerprint on the old
+constant's history.** 0.8 → 0.55 → 0.35 was a single number being re-cut to patch an
+error that varies 3× across the repo's own velocity range — which is exactly why it
+kept needing re-cutting, and why margin 0.8 could survive `heat_vs_composite` while
+failing elsewhere.
+
+**The fix.** `EOS_CFL_P_MARGIN = 3.0` multiplies a **pressure** — the deck's
+impedance-matched contact pressure, bisected host-side from the *same*
+`u_s = c₀ + s·u_p` fit milestone 13 already ships, so it costs **zero** new material
+constants. Linear, interpretable, and velocity-adaptive by construction, which
+removes the reason the old constant drifted. 3.0 is not a fudge: a 1-D shock
+reflecting off a stiffer neighbour roughly doubles, so 3× is one doubling plus a
+half.
+
+**Why the prize is calibration and not the ~4–5× of substeps.** Root §1 says bake
+cost is irrelevant, so "merely slow" would barely be a defect. The real problem is
+that **the old bound never failed** — it erred in the *safe* direction, which is
+precisely why it survived four milestones unexamined. A bound that over-predicts 20×
+is not conservative, it is **uncalibrated**, and an uncalibrated bound is equally
+free to *under*-predict on the next deck. That is not hypothetical: it is what
+margin 0.8 did on `heat_vs_composite`, surviving only because that deck's ceramic
+donated headroom the copper tip borrowed. This is the repo's recurring shape —
+*green because nothing looked, not because the answer was right.*
+
+#### The deck that is not shock-loaded, and why it is priced in its own YAML
+
+`apfsds_vs_nera` binds, and no pressure bound expresses it. Its worst particles are
+**2–4 of 36 966** filler particles dragged 34 mm downrange and pinned in the *main
+plate's* crater between the rod tip and the plate (§3.6.1) — a **kinematic vise**
+whose compression is set by geometry, not pressure. `nera_filler` sits at its pole
+(`J = 1 − 1/s = 0.5`) where the EOS asymptotes, so pressure is a near-flat lever
+there: **12× the impact shock moves the design J only 0.597 → 0.511.** Covering the
+vise globally would need `P ≈ 50` — which is not a statement about a shock. It is a
+global stability constant sized against a 2-particle extremum: the anti-pattern the
+old constant's own comment argued against, and then committed.
+
+So the vise is priced where the vise lives — `cfl_p_margin: 20.0` in the deck (root
+§9: scenarios are data) — and the global constant stays a statement about shocks.
+
+**Measured, and the measurement is what licenses it:**
+
+| config | substeps | worst live `J` | `c_eff` | audit |
+|---|---|---|---|---|
+| shipped M13 (`J`-margin 0.35) | 1047 | 0.5385 | 113 228 | OK, **18 %** of budget |
+| global `P=3`, no override | 153 | 0.5466 | 109 571 | **BREACH 1.22×** |
+| **`P=20` override — ships** | **248** | 0.5462 | 109 761 | OK, **76 %** of budget |
+
+Two things fall out of that table, and the second is the load-bearing one.
+
+- **`c_eff` moves −3.2 % across a 6.8× change in `dt`.** A geometric trap does not
+  dissolve under refinement — §3.6.2 said exactly this — so the override is sized
+  against a **stable** number. Contrast the jet's shock-ring ratio, which drifts
+  with `dt` (0.648 → 0.713) and must never be sized against. *This* is the
+  difference between a measured constant and a fitted one.
+- **The `P=3` breach is survivable, and the override is not what prevents a
+  divergence.** It bakes finite, and nera's go/no-go conclusion (filler cohesion)
+  moves **−0.06 %**. Read the audit's ratio correctly: it is a fraction of the
+  **CFL = 0.3 safety factor**, not of the stability limit, so a 1.22× breach means
+  the substep ran at Courant ≈0.37 against a limit near 1. **A breach warning is
+  "you have eaten into the safety factor", not "this diverged".** The override buys
+  a warning-free bake at a real margin — not stability.
+
+**What moved, and what held.** Every deck was rebaked. Nera's filler cohesion holds
+to **0.10 %**; its spall fraction moves **+10 %** and the rod tip **+2.2 %**, which
+is the pattern every milestone here has produced — *the numbers move, the
+conclusions hold.* Treat the absolutes as readings of one configuration (see §3.5 on
+not quoting tip-`J` to four decimals; this is the fifth demonstration).
+
+**Correcting the record.** The old comment's *"margin 0.55 let `apfsds_vs_nera`
+breach by 2.41×"* was measured when nera's worst live `J` was **0.2421**.
+Mie-Grüneisen relieved that crush to 0.5434 (§3.10), so the historical breach
+**stopped constraining the constant at milestone 13** — and nobody noticed. M13 made
+the margin over-conservative *by succeeding*. The 5–22 % it recorded was that fact,
+already visible in the audit line, waiting to be read.
+
+---
+
 ## 4. Timestep & why we bake offline
 
 The cost driver is the **CFL timestep, not particle count**. Steel's sound
