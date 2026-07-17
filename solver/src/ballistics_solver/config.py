@@ -156,6 +156,27 @@ class SolverParams:
     av_c_q: float = 1.5  # quadratic: spreads strong shocks over a few cells
     av_c_l: float = 0.6  # linear: damps the post-shock elastic RING
 
+    # Per-deck override for `mpm.EOS_CFL_P_MARGIN` (milestone 14). `None` = inherit
+    # the global default, which is what every deck but one does.
+    #
+    # A deck field, not a bigger global, BECAUSE THE THING IT COVERS IS NOT GLOBAL.
+    # The global constant is a statement about SHOCKS: design for this multiple of
+    # the deck's impedance-matched contact pressure. `apfsds_vs_nera`'s worst
+    # particles are not shock-loaded at all — they are 2 of 36 966 filler particles
+    # pinned in the main plate's crater by the rod tip (PHYSICS §3.6.1), a KINEMATIC
+    # VISE whose J is set by geometry. Pressure is a near-flat lever there because
+    # `nera_filler` sits at its MG pole (J = 1 - 1/s = 0.5), so covering it globally
+    # would take P ~ 50 — inflating a global stability constant to cover ONE deck's
+    # 2-particle extremum, which is the anti-pattern its predecessor's own comment
+    # argued against and then committed anyway.
+    #
+    # So the vise is priced where the vise lives (root §9: scenarios are data), and
+    # every other deck keeps a bound that means what it says. If a NEW deck needs
+    # this, that is a signal worth reading, not a knob to reach for: it says the deck
+    # has a confinement the shock bound cannot see. Measure before setting it — the
+    # audit line reports what was actually reached.
+    cfl_p_margin: float | None = None
+
 
 @dataclass
 class Scenario:

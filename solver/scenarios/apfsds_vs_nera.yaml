@@ -65,3 +65,28 @@ solver:
   # Matches the ERA decks so the three-arm A/B stays frame-aligned.
   total_time: 1.1e-4
   frame_count: 550    # frame_dt = 2.0e-7 s, uniform across every deck
+  # The ONE deck that overrides the global CFL pressure margin (mpm.EOS_CFL_P_MARGIN
+  # = 3.0). Not a tuning knob — it prices a mechanism the global bound cannot see.
+  #
+  # The global constant is a statement about SHOCKS: design for 3x the deck's
+  # impedance-matched contact pressure. This deck's binding particles are not
+  # shock-loaded. They are 2-4 of 36 966 filler particles dragged 34 mm downrange
+  # across the standoff gap and pinned in the MAIN PLATE's crater between the rod tip
+  # and the plate (PHYSICS §3.6.1) — a tungsten-vs-RHA vise whose compression is set
+  # by GEOMETRY, not by pressure. `nera_filler` sits at its Mie-Grüneisen pole
+  # (J = 1 - 1/s = 0.5) where the EOS asymptotes, so pressure is a near-flat lever:
+  # 12x the impact shock moves the design J only 0.597 -> 0.511.
+  #
+  # 20 is sized from the MEASURED requirement, not guessed: the deck reaches
+  # c_eff = 113 228 mm/ms, and 20x designs for c_max = 145 106 — a 1.28x margin, i.e.
+  # Courant 0.234 against the CFL=0.3 the substep is nominally sized for.
+  #
+  # It is trustworthy because the number it is sized against is STABLE, which is the
+  # opposite of the situation its predecessor faced: c_eff moves only -3.2 %
+  # (113 228 -> 109 571) across a 6.8x dt change, because a geometric trap does not
+  # dissolve under refinement (M12 said exactly this, §3.6.2). Contrast the jet's
+  # shock-ring ratio, which drifts with dt and must never be sized against.
+  #
+  # Do NOT copy this into another deck to silence a breach. It says "this deck has a
+  # confinement the shock bound cannot see" — if a new deck needs it, read why first.
+  cfl_p_margin: 20.0

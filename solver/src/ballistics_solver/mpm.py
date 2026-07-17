@@ -98,79 +98,56 @@ from . import materials
 # substep dt is min(deck dt, CFL * dx / c_p). See root §6/§11 and PHYSICS §4.
 CFL: float = 0.3
 
-# Overshoot margin for the EOS-aware CFL bound (milestone 8). The substep is
-# sized from the volume ratio the deck's own stagnation pressure predicts
-# (``_eos_equilibrium_j``), but the impact shock is a TRANSIENT that overshoots
-# that equilibrium before settling. Since Murnaghan stiffens as K = K0·J^-K', the
-# sound speed climbs as J^(-K'/2), so an overshoot the substep was not sized for
-# is a CFL violation rather than a small error. Design for a J this fraction
-# BELOW the predicted equilibrium.
+# Overshoot margin for the EOS-aware CFL bound (milestone 8; RESHAPED in milestone
+# 14). The substep is sized from the compression the deck's own impact shock drives
+# its materials to, with this much headroom for the transient that overshoots it.
 #
-# MEASURED, not guessed — and the binding case is not the one you would expect.
+# THIS MULTIPLIES A PRESSURE. Its predecessor, `EOS_CFL_J_MARGIN`, multiplied `J` —
+# a volume RATIO — and that was the defect milestone 14 fixed. `J` lives in (0,1]
+# with the EOS diverging at J -> 0, so scaling it is violently nonlinear: margin
+# 0.35 against rha's honest J_eq=0.902 demanded a design J of 0.316, which is past
+# rha's own MG pole (J = 1 - 1/s = 0.329) and below its guard switch (J_sw=0.396).
+# The bound was therefore read off the guard's extrapolated J^-4 backstop — the
+# branch J_FLOOR's comment calls "a degeneracy backstop, NOT a physical limit" —
+# and it sized dt against a 137 000 mm/ms sound speed for a material whose real
+# shocked speed is ~6 000. That happened on ALL 30 decks, in every material.
 #
-#   copper jet tip  predicted J_eq=0.6056, reached 0.4315 -> ratio 0.713
-#   nera_filler     predicted J_eq=0.5480, reached 0.2421 -> ratio 0.442  <-- binds
+# A pressure margin is linear, interpretable, and cannot by itself push a lightly
+# loaded material past its pole. Measured: this is where the 5-22 %-of-budget
+# figure milestone 13 recorded came from, and correcting the shape recovers ~5x.
 #
-# Note the jet's ratio is itself dt-dependent (0.648 at 47 substeps, 0.713 at 240)
-# because it measures the shock ring, which resolves as dt falls. The filler's does
-# NOT drift, so the binding number is the stable one — which is the only reason a
-# single margin can be trusted here.
+# WHY THE SCALE IS THE IMPACT SHOCK, NOT `1/2 rho v^2`. The old bound's stagnation
+# pressure was not merely under-margined, it was the wrong scale, and wrong in a
+# VELOCITY-DEPENDENT way no constant can absorb: `1/2 rho v^2` is quadratic in v
+# while the contact shock is closer to `rho c v`, so p_impact/p_stag runs 3.58x at
+# 1500 m/s down to 1.25x at 7000 m/s across this repo's own decks. That spread is
+# the fingerprint on the old constant's history (0.8 -> 0.55 -> 0.35): a single
+# number was being re-cut to patch a velocity-dependent error. `_impact_pressure`
+# removes the need by computing the real thing per deck, from the SAME `u_s = c0 +
+# s*u_p` Hugoniot fit milestone 13 already ships — zero new material constants.
 #
-# The **NERA filler** sets this constant, not the hypervelocity jet — but NOT for
-# the reason this comment used to give. It said the filler "can neither yield nor
-# break nor self-vent ... so the rod squeezes it to ~79 % volume loss", and that
-# J≈0.21 was "REAL ... converged to 1.8 %", so "the filler genuinely goes there".
+# 3.0 is not a fudge: p_impact is the FIRST contact shock, and the pressure a
+# 1-D shock reflecting off a stiffer neighbour reaches is ~2x that, so 3x is one
+# doubling plus a half. Verified by audit on all 30 decks (see PHYSICS §3.11).
 #
-# MILESTONE 12 FALSIFIED THAT (PHYSICS §3.6.1). Two errors compounded:
+# WHAT THIS DELIBERATELY DOES NOT COVER, and why that is not a hole: `apfsds_vs_nera`
+# is not shock-loaded. Its worst particles are a KINEMATIC VISE — 2 of 36 966 filler
+# particles pinned in the main plate's crater between the rod tip and the plate
+# (PHYSICS §3.6.1) — and their J is set by geometry, not pressure. `nera_filler`
+# sits at its pole (J = 1 - 1/s = 0.5) where the EOS asymptotes, so pressure is a
+# near-flat lever there: 12x the impact shock moves the design J only 0.597 -> 0.511.
+# Covering that vise from a pressure bound would need P ~ 50, which is not a
+# physical statement about a shock — it is the old anti-pattern (a GLOBAL stability
+# constant sized against a 2-particle extremum) wearing a new name. So nera carries
+# `cfl_p_margin` in its OWN deck instead (root §9: scenarios are data), and this
+# constant stays a statement about shocks. See PHYSICS §3.11.
 #
-#   * `worst live J` is a MIN over every live particle over every frame — ONE
-#     particle. Read as a bulk state it is simply wrong: at the worst frame only
-#     25 of 36966 filler particles (0.068 %) are below J=0.5, the median is 0.9932,
-#     and the mean live J NEVER drops below 0.9495 over the whole event. There is
-#     no 79 % volume loss. (§3.9 already warned a min-over-a-set is the wrong
-#     instrument; this constant was sized with it anyway.)
-#   * The "converged to 1.8 %" check refined dt on a GEOMETRIC trap — the same
-#     handful of particles at 110 and 336 substeps. Wrong axis, same class of error
-#     as §3.8's grid-limited jet.
-#
-# What it actually is: filler debris dragged 34 mm downrange ACROSS THE STANDOFF
-# GAP and pinned in the MAIN PLATE's crater between the rod tip and the plate — a
-# tungsten-vs-RHA vise. The mechanism the old comment named (no dissipation path ->
-# squeezed arbitrarily far) was right; the magnitude and the location were not.
-#
-# M12 gave the filler a real dissipation path (materials.py: non-reactive, ductile).
-# It did NOT relieve this, and cannot: the trapped particles carry equivalent
-# plastic strain 2.91 of a 3.0 reserve — 97 %, i.e. SATURATING the yield surface —
-# and are still crushed, because plastic flow is isochoric and volumetric
-# confinement is orthogonal to it. Relief needs a VOLUMETRIC (compaction) criterion.
-# Until then the substep still has to cover these particles, so this margin stays.
-#
-# 0.35 is the measured value, verified by audit (post-M12: 63 % of budget used on
-# the deck that binds, was 79 % pre-M12; 27-57 % elsewhere, not re-measured).
-#
-# WHY IT IS NOT RAISED, now that M12 moved the binding deck from 0.2159 to 0.2421.
-# It could be, arithmetically: the margin sets design J = margin * J_eq, so 0.40
-# would design for J=0.219 and still clear the reached 0.2421, saving ~23 % of
-# substeps ((0.35/0.40)^2). It is deliberately NOT taken. The number it would be
-# sized against is a SINGLE-PARTICLE EXTREMUM that wobbles ~1 % run to run (the
-# repo's <=0.11 % scatter floor is for aggregates), so a margin with ~10 % headroom
-# above it is fragile in exactly the way this constant exists to prevent. And the
-# margin is GLOBAL: raising it demands re-measuring predicted-vs-reached on every
-# deck, not just the one that moved. A cheap substep saving is not worth a bake
-# that validates clean and is quietly wrong.
-#
-# Earlier cuts and why they were wrong: 0.8 only
-# survived `heat_vs_composite` because that deck's ceramic donated headroom the
-# copper tip borrowed; 0.55 covered the jet but let `apfsds_vs_nera` breach by
-# 2.41x. Substeps scale as (1/margin)^(K'/2), so this costs ~2.5x over an
-# unmargined bound — irrelevant for an offline solver (root §1), unlike a bake
-# that validates clean and is quietly wrong.
-#
-# Why an overshoot exists at all: MPM resolves a shock across a couple of cells
-# with no artificial (shock) viscosity to damp the elastic ring, so the front
-# overshoots its equilibrium. That is a separate, still-open defect from the
-# missing-EOS one milestone 8 fixed — see PHYSICS §3.5.
-EOS_CFL_J_MARGIN: float = 0.35
+# Read the audit line on every new deck, especially a faster one — the bound is a
+# PREDICTION and `bake` measures whether it held. Note the audit's ratio is a
+# fraction of the CFL=0.3 SAFETY FACTOR, not of the stability limit: a breach of
+# 2x means the substep ran at Courant ~0.6, which is eating the safety factor, not
+# necessarily diverging. It is a warning, not a verdict.
+EOS_CFL_P_MARGIN: float = 3.0
 
 # Volume-ratio floor: the most-compressed state the EOS will represent. Below it
 # the pressure saturates. Shared by every path that divides by J or raises it to a
@@ -1566,7 +1543,7 @@ def _mg_p_cold_host(J, K0, mg: dict):
 def _eos_equilibrium_j(p: float, K0: float, mg: dict) -> float:
     """Volume ratio at which the EOS balances pressure ``p`` (MPa).
 
-    Host-side only — used to size the substep a priori (see ``EOS_CFL_J_MARGIN``),
+    Host-side only — used to size the substep a priori (see ``EOS_CFL_P_MARGIN``),
     never in the kernels.
 
     Milestone 8's version was a closed-form inverse of Murnaghan. Mie-Grueneisen has
@@ -1586,6 +1563,68 @@ def _eos_equilibrium_j(p: float, K0: float, mg: dict) -> float:
     return 0.5 * (lo + hi)
 
 
+def _scenario_cfl_margin(scenario) -> float:
+    """The pressure margin this deck sizes its substep with (see ``EOS_CFL_P_MARGIN``).
+
+    The global constant unless the deck overrides it. Only ``apfsds_vs_nera`` does,
+    and `config.SolverParams.cfl_p_margin` documents why a deck field is the right
+    home for it rather than a bigger global.
+    """
+    override = getattr(scenario.solver, "cfl_p_margin", None)
+    return EOS_CFL_P_MARGIN if override is None else float(override)
+
+
+def _bulk_c0(mat) -> float:
+    """Reference bulk sound speed (mm/ms), ``sqrt(K0/rho0)``.
+
+    The same derivation ``_mg_params`` uses for the Hugoniot's intercept, kept in one
+    place so the substep bound and the EOS cannot disagree about what ``c0`` means.
+    """
+    mu, lam = _lame(mat.youngs_modulus, mat.poisson_ratio)
+    return math.sqrt((lam + mu) / mat.density)
+
+
+def _hugoniot_pressure(mat, u_p: float) -> float:
+    """Pressure (MPa) on ``mat``'s shock Hugoniot at particle velocity ``u_p`` (mm/ms).
+
+    ``p_H = rho0 * u_s * u_p`` with ``u_s = c0 + s*u_p`` — the linear fit milestone 13
+    already stores per material (``ShockEOS.s``). Host-side only.
+    """
+    return mat.density * (_bulk_c0(mat) + mat.shock.s * u_p) * u_p if u_p > 0.0 else 0.0
+
+
+def _impact_pressure(a, b, v: float) -> float:
+    """Contact pressure (MPa) when material ``a`` at ``v`` (mm/ms) strikes ``b`` at rest.
+
+    Host-side only — used to size the substep a priori (see ``EOS_CFL_P_MARGIN``).
+
+    THIS IS THE SCALE THE OLD BOUND GOT WRONG. `1/2*rho*v^2` is the STEADY stagnation
+    pressure of an established penetration channel; the substep has to survive the
+    FIRST CONTACT, which is a shock, and a shock's pressure comes from impedance
+    matching the two Hugoniots — not from a kinetic-energy density. The two disagree
+    by 1.25x at 7 km/s and 3.58x at 1.5 km/s, i.e. the error is velocity-dependent,
+    which is exactly what a single constant margin cannot fix.
+
+    Both materials must reach the same pressure and the same interface velocity, so
+    with ``u`` the struck material's particle velocity the projectile's is ``v - u``:
+
+        rho_b*(c0_b + s_b*u)*u  ==  rho_a*(c0_a + s_a*(v-u))*(v-u)
+
+    The left side rises monotonically from 0 in ``u`` and the right falls monotonically
+    to 0, so the difference has exactly one root in (0, v) — bisected here, matching
+    ``_eos_equilibrium_j``'s posture (host-side, once per material pair per bake, so
+    cost is irrelevant and a dependency-free solve beats importing a root-finder).
+    """
+    lo, hi = 0.0, v
+    for _ in range(200):
+        mid = 0.5 * (lo + hi)
+        if _hugoniot_pressure(b, mid) < _hugoniot_pressure(a, v - mid):
+            lo = mid  # struck material not yet up to the projectile's pressure
+        else:
+            hi = mid
+    return _hugoniot_pressure(b, 0.5 * (lo + hi))
+
+
 def _av_signal_speed(c: float, div_v: float, l: float, c_q: float, c_l: float) -> float:
     """Effective signal speed once artificial viscosity is on (mm/ms).
 
@@ -1603,7 +1642,7 @@ def _av_signal_speed(c: float, div_v: float, l: float, c_q: float, c_l: float) -
 
     Host-side only: used to size the substep a priori and, in ``bake``'s per-frame
     audit, to MEASURE what was actually reached. Same predict-then-verify contract
-    the EOS bound already runs under (see ``EOS_CFL_J_MARGIN``).
+    the EOS bound already runs under (see ``EOS_CFL_P_MARGIN``).
     """
     return c * (1.0 + c_l) + c_q * l * abs(min(div_v, 0.0))
 
@@ -1953,27 +1992,36 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None,
     # The EOS STIFFENS under compression (K = K0·J^-K'), so the REST sound speed is
     # no longer the bound — a shocked particle is several times stiffer than a
     # resting one, and c ~ J^(-K'/2). Size the substep from the compression this
-    # deck's own stagnation pressure drives its materials to, with
-    # EOS_CFL_J_MARGIN of headroom for the transient overshoot past equilibrium.
+    # deck's own IMPACT SHOCK drives its materials to, with EOS_CFL_P_MARGIN of
+    # headroom for the transient that overshoots it.
     # This is a prediction, so the frame loop below MEASURES whether it held.
     proj = materials.get(scenario.projectile.material)
-    # Tip velocity — `tail_velocity` (if any) is slower by construction, so the
-    # tip bounds the deck's stagnation pressure.
-    p_stag = 0.5 * proj.density * scenario.projectile.velocity ** 2
+    names = {scenario.projectile.material, *(a.material for a in scenario.armor)}
+    # Tip velocity — `tail_velocity` (if any) is slower by construction, so the tip
+    # bounds the deck's impact pressure.
+    v_tip = scenario.projectile.velocity
+    # Deck-wide WORST contact pressure, including the projectile striking its own
+    # material (the symmetric case, which bounds what the projectile itself sees and
+    # is the binding pair on every same-material or soft-target deck).
+    #
+    # Why deck-wide rather than each material's own 1-D match: pressure transmits
+    # through a stack, and a CONFINED soft layer is crushed by its stiff neighbours,
+    # not by its own (tiny) impedance. Per-material matching would hand `era_filler`
+    # a comfortable bound precisely because it is soft — which is backwards. This
+    # keeps the old bound's deliberately-conservative posture (every material sized
+    # by the deck's worst) and changes only the SCALE it is conservative about.
+    p_design = _scenario_cfl_margin(scenario) * max(
+        [_impact_pressure(proj, materials.get(nm), v_tip) for nm in names]
+        + [_impact_pressure(proj, proj, v_tip)]
+    )
     c_max = 0.0
     j_design = 1.0
-    for name in {scenario.projectile.material, *(a.material for a in scenario.armor)}:
+    for name in names:
         mat = materials.get(name)
         mu, lam = _lame(mat.youngs_modulus, mat.poisson_ratio)
         K0 = lam + mu
-        # Deliberately conservative: EVERY material is sized by the projectile's
-        # own stagnation pressure. A target genuinely sees less (Tate's u < v),
-        # but the *impact shock* is more severe than steady stagnation — a
-        # steady-state estimate said the RHA plate would sit at J=0.75 and the
-        # measured value was 0.17 — so this is not a place to shave. An offline
-        # bake can afford the substeps (root §1); a NaN at frame 300 cannot.
         mgp_d = _mg_params(mat)
-        Jd = EOS_CFL_J_MARGIN * _eos_equilibrium_j(p_stag, K0, mgp_d)
+        Jd = _eos_equilibrium_j(p_design, K0, mgp_d)
         j_design = min(j_design, Jd)
         # Artificial viscosity raises the signal speed, so the bound has to carry
         # it too. A priori the worst compression rate is a shock resolved across
@@ -1985,7 +2033,7 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None,
         # two different states. Shock heating RAISES c, so the audit below measures
         # the real thing every frame and warns — predict cold, verify hot.
         c_eos = float(_eos_sound_speed(Jd, K0, mu, mat.density, mgp_d, 0.0))
-        div_v_design = -scenario.projectile.velocity / dx
+        div_v_design = -v_tip / dx
         c_max = max(
             c_max, _av_signal_speed(c_eos, div_v_design, dx, av_c_q, av_c_l)
         )
@@ -2000,8 +2048,9 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None,
         print(
             f"[mpm] deck dt={dt_deck_ms:.3e} ms exceeds CFL limit "
             f"{dt_cfl:.3e} ms (c_max={c_max:.0f} mm/ms at EOS design J="
-            f"{j_design:.3f}, dx={dx:.4f} mm); "
-            f"using dt={dt:.3e} ms, {substeps} substeps/frame"
+            f"{j_design:.3f}, from p_design={p_design:.0f} MPa = "
+            f"{_scenario_cfl_margin(scenario):.3g}x the impact shock, "
+            f"dx={dx:.4f} mm); using dt={dt:.3e} ms, {substeps} substeps/frame"
         )
     print(
         f"[mpm] {n} particles, grid {grid_res} (dx={dx:.4f} mm), "
@@ -2128,7 +2177,7 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None,
                       inputs=[v, F, e, nan_step[0], nan_out])
             nan_step[0] += 1
 
-    # --- CFL audit state (see EOS_CFL_J_MARGIN) -----------------------------
+    # --- CFL audit state (see EOS_CFL_P_MARGIN) -----------------------------
     # `dt` was sized for c_max, derived from a *predicted* compression. F comes
     # back to the host every frame for the stress readout anyway, so measuring the
     # sound speed actually reached is nearly free — and it turns "is the margin
@@ -2453,7 +2502,7 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None,
             f"{c_max:.0f} mm/ms (EOS design J={j_design:.3f}), but live material "
             f"reached J={audit['J']:.4f}, div_v={audit['div_v']:.3e} /ms -> "
             f"c_eff={audit['c']:.0f} mm/ms ({audit['c']/c_max:.2f}x the budget). "
-            f"The bake may be unstable past that point; lower EOS_CFL_J_MARGIN "
+            f"The bake may be unstable past that point; raise EOS_CFL_P_MARGIN "
             f"(or av_c_q/av_c_l, if the AV term is what pushed it over) and rebake."
         )
     elif audit["nan_frame"] < 0:

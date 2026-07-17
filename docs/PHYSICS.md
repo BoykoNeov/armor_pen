@@ -917,6 +917,15 @@ compression the deck's own stagnation pressure predicts, with `EOS_CFL_J_MARGIN`
 of headroom for the ring above — and then **measures**, every frame, the sound
 speed actually reached, warning if the margin was breached.
 
+> **⚠️ MILESTONE 14 REPLACED THAT BOUND, AND EVERY `EOS_CFL_J_MARGIN` NUMBER IN
+> §3.5/§3.6/§3.9/§3.10 IS FROM THE SUPERSEDED FORMULA.** The margin multiplied `J`
+> — a volume *ratio* — which is violently nonlinear and put the design state past
+> every material's MG pole on **all 30 decks**, sizing `dt` from the guard's
+> extrapolated backstop. The scale was wrong too: `½ρv²` is *steady stagnation*,
+> not the *contact shock* the substep has to survive. Both are fixed in **§3.11**,
+> which is the section to read; the tables below are kept as the record of how the
+> old constant was cut, not as guidance.
+
 That audit is not decoration; it caught two things a clean-looking bake hid.
 **Margin 0.8** survived `heat_vs_composite` only because the deck's ceramic
 (stiffer, so a higher design sound speed) donated global headroom the copper tip
