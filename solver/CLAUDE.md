@@ -19,9 +19,9 @@ first** — this file only adds solver-local notes.
 | File | Role | Status |
 |---|---|---|
 | `config.py` | Scenario schema (dataclasses), YAML loader | working |
-| `materials.py` | Material library, all constants in mm-ms-g | data (all fields now consumed: elasticity, yield, ductile `damage_threshold`, `brittle`, reactive block) |
+| `materials.py` | Material library, all constants in mm-ms-g | data (all fields now consumed: elasticity, yield, ductile `damage_threshold`, `brittle`, reactive block, and the `shock` Hugoniot block `s`/`Γ₀` — milestone 13) |
 | `cache_writer.py` | Writes manifest.json + frames.bin (the contract) | working |
-| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + Murnaghan EOS + von Mises plasticity + ductile & brittle damage + multi-material stack + reactive ERA/NERA layer + oblique rod seeding + velocity-graded shaped-charge jet + artificial viscosity, default OFF (last touched by milestone 11)** — see below. Milestones 9 and 10 are decks + `tools/` only: they added **zero** kernel code, which is the point — the scenario schema already carried `velocity` and `standoff`. |
+| `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + Mie-Grüneisen EOS with an energy equation + von Mises plasticity + ductile & brittle damage + multi-material stack + reactive ERA/NERA layer + oblique rod seeding + velocity-graded shaped-charge jet + artificial viscosity (default ON) + working free-slip walls on all four sides — last touched by milestone 13** — see below. Milestones 9 and 10 are decks + `tools/` only: they added **zero** kernel code, which is the point — the scenario schema already carried `velocity` and `standoff`. |
 | `run.py` | CLI: scenario.yaml → cache dir | working (Warp init + GPU assert + bake) |
 
 ## Build order (root §9) — where we are
@@ -400,15 +400,100 @@ Grow the reference MLS-MPM incrementally, validating visually with
      Mie-Grüneisen milestone can switch it on for the jet without re-tuning the KE
      decks — which is the reason it is kept at all.
 
-Don't rewrite from scratch. The full solver arc (milestones 1–12) is done.
+11. **Milestone 13 — Mie-Grüneisen, the EOS gets an energy equation (PHYSICS §3.10).**
+   `p(J,e) = p_cold(J) + Γ₀ρ₀e`, two new per-material constants (`s`, `Γ₀` in
+   `ShockEOS`, **required, no default** — a new material must state its Hugoniot
+   rather than silently inherit copper's). Closes the limit §3.5 named for itself.
+   Read §3.10 before touching any of it; five things to know:
+   - **There is NO cheap MG — the cold curve alone is a REGRESSION** (0.63× copper's
+     Hugoniot at jet stagnation, *below* Murnaghan's 0.73×; the `(1−Γη/2)` factor
+     subtracts pressure). **The whole benefit lives in the ENERGY EQUATION**, solved
+     in closed form because MG is linear in `e`. That vindicates §3.9's
+     AV-before-MG ordering: AV work is what feeds `e`. **AV is therefore ON by
+     default now**, reversing M11's measured "off" — its reason (the work dissipated
+     to nothing) no longer exists. `c₀` needs **zero** new constants (`√(K₀/ρ₀)`,
+     within 1–10 % of public shock data).
+   - **`p(J,e_H)=p_H` is a TAUTOLOGY** — built into the MG algebra, true for any Γ.
+     It validates the algebra, not the scheme. The **1-D piston** earns the
+     milestone: `p/p_H` = 1.000/1.000/0.999 and `u_s = c₀+s·u_p` matched to <2 %
+     having been fitted to nothing. **The falsifier is the point:** no AV work fed
+     to `e` → 0.923 (the isentrope); no `e` at all → 0.755 (the cold curve).
+   - **The pole guard IS load-bearing on nera** (worst live J **0.5434** vs
+     `J_sw`=0.55 — inside the fallback, 2 live particles), exactly as §3.6.2
+     predicted a priori. An interim AV-off bake saw 1 particle and was briefly read
+     as "a backstop"; that did not survive the shipped config. **Never silence it by
+     lowering `MG_F_SWITCH`.** It naming `copper_jet` or `rha` = M13 quietly not in
+     effect where it matters.
+   - **MG relieved the NERA crush M12 could not:** worst live J **0.2421 → 0.5434**.
+     §3.6.2 said relief "needs a VOLUMETRIC criterion, not a deviatoric one" — MG's
+     thermal pressure `Γρ₀e` **is** that criterion. M12 was right about the *kind* of
+     mechanism and wrong that MG would not supply it.
+   - **`EOS_CFL_J_MARGIN` STAYS 0.35.** Decks use 5–22 % of budget, so it is
+     conservative = **correct, merely slow** (root §1: bake cost is irrelevant).
+     Recalibrating a *global* stability constant inside a change that already moves
+     the EOS **and** the boundary condition is three variables at once. Those
+     percentages are the evidence base for doing it later, as its own A/B.
+   - Schema **v1 → v2**: `internal_energy`, **specific, per unit MASS (J/kg)**. NOT
+     `temperature` — that needs a per-material `c_v` *and* would under-read exactly
+     in the shear zones a viewer most wants (the `e` update drops plastic
+     dissipation; stated in §3.10 and CACHE_FORMAT §2, not discovered later).
+   - **The `e ≥ 0` clamp: judge it RELATIVE to `e`, never in absolute J/kg.** The
+     bake report's verdict was `abs(e_worst) < 1.0` and it is *anti-correlated* with
+     the risk — cancellation scales with `e` and the threshold does not, so it
+     condemned `apfsds_vs_era_oblique` (e_max 1.07e6, a 9-eps violation on a clean
+     700-frame bake) while clearing `apfsds_vs_nera` (e_max 1.00e7, 9.4× larger).
+     A negative `e` is a **TRACER, not a cause** — it is universal, born at roundoff
+     in every deck, and clamping it did **not** fix the ERA divergence.
 
-**Stale-number correction (measured 2026-07-16):** the "~16 % RHA spall" quoted in
-the milestone 3/4 notes above and the 15.6 % in milestone 6 were measured at
-**96 637 particles**, before the plate-not-block geometry change. `apfsds_vs_rha`
-now seeds **135 557** particles and spalls **18.2 %**. The ordering and every
-conclusion those milestones drew are unaffected; only the absolute moved. Do not
-compare a figure across geometries — see the memory note on rebakes invalidating
-documented results.
+### The free-slip HIGH walls never fired — a BC fix, not a milestone (done)
+
+Found while chasing what looked like an M13 EOS bug and was not. `_grid_op` tested
+`i > nx - bound`, but `nx` is the **allocated** width, carrying 3 pad nodes past the
+domain for the stencil — so the high band sat in the pad, where `_g2p`'s position
+clamp guarantees nothing goes. **8 of 8 high walls unreachable across four deck
+shapes. Since milestone 1.** The low walls worked the whole time (indices count from
+0), which is why nobody noticed: every deck ran a working mirror on its low edges and
+no wall at all on its high ones.
+
+The position clamp became the BC instead, and it is a **vice**: infinitely rigid,
+arresting *displacement* while leaving *velocity* untouched. 2342 particles sat
+welded to `y=119.61` at 1699 m/s for 130 frames. M13 only made it visible, by giving
+the crush an energy equation to blow up (`e` on the pinned set: **24 → 7.1e5 J/kg in
+exactly the frames it reached the clamp**). Fixing it took the J floor **269 509 → 0**
+and the resolution guard **217 829 → 0** — neither was ever an EOS problem.
+
+- **Never assert a boundary quantity against an ARRAY SHAPE. The pad is not the
+  domain.** `tests/test_boundary_walls.py` derives reachability from the position
+  clamp, not from `_grid_op`, so it cannot be satisfied by copying the kernel's own
+  mistake — and it was verified to FAIL on the old band before being trusted.
+- **The cheap check, reusable:** the decks are symmetric about y=60 *by
+  construction*, so the material must be. Dead walls: `rha` `pos_y` 0.88…**119.61**.
+  Live: 0.88…119.12 — mirrors to **0.88 vs 0.88, exact**.
+- **Armor touching the walls is NOT the defect** — `_seed` spans the full height
+  *precisely so* the mirror makes a plate that continues beyond the frame.
+- **It invalidated every boundary-adjacent figure** (see the stale-number note
+  below, and PHYSICS §1.1.1). All re-measured; all conclusions held.
+
+Don't rewrite from scratch. The full solver arc (milestones 1–13) is done.
+
+**Stale-number correction (measured 2026-07-16, updated 2026-07-17):** the "~16 %
+RHA spall" quoted in the milestone 3/4 notes above and the 15.6 % in milestone 6
+were measured at **96 637 particles**, before the plate-not-block geometry change.
+`apfsds_vs_rha` then seeded **135 557** particles and spalled **18.2 %**.
+
+**Milestone 13 moved it again — to 25.1 %** (rod tip 232.33 → **228.27 mm**), at the
+*same* 135 557 particles, so this one is physics rather than geometry: Mie-Grüneisen
+(PHYSICS §3.10) resists the shock harder and does more plastic work, artificial
+viscosity is now ON by default, and the §1.1.1 boundary fix gave the plate a working
+mirror at its top edge for the first time. **+38 % is the largest single move any
+headline figure in this repo has taken.** The ordering and every conclusion those
+milestones drew are still unaffected; only the absolute moved — again.
+
+**The pattern is now the point, and it is worth more than any of the values:** this
+number has read 16 % → 18.2 % → 25.1 % across three changes, and every time the
+conclusions held. Do not compare a figure across geometries, EOS laws, or boundary
+conditions; treat every absolute here as a reading of one configuration. See the
+memory note on rebakes invalidating documented results.
 
 ### Rod nose — geometry fix, not a milestone (done)
 

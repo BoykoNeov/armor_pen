@@ -1143,6 +1143,29 @@ computed beforehand from density could not. And the bound has a direction: stren
 can only hold `u` **below** the ideal limit, never past it — so exceeding the
 asymptote is not "inaccurate", it is impossible.
 
+> **⚠️ RE-MEASURED 2026-07-17 (milestone 13). The claim survived and got BETTER —
+> the tables below are the Murnaghan-era measurement, kept for the comparison.**
+> Under Mie-Grüneisen (§3.10) + the §1.1.1 boundary fix, at v=7000:
+>
+> | | M9 (Murnaghan) | **M13 (MG)** |
+> |---|---|---|
+> | tungsten, fraction of its own asymptote | 0.937× | **0.9609×** |
+> | copper, fraction of its own asymptote | 0.937× | **0.9622×** |
+> | measured ratio vs the 1.1608 density prediction | 1.1614 (+0.04 %) | **1.1593 (−0.13 %)** |
+>
+> **MG moved BOTH arms closer to the hydrodynamic asymptote** (0.937 → 0.961),
+> which is exactly the direction a stiffer, Hugoniot-calibrated EOS should move
+> them — strength holds `u` below the ideal limit, and a better-resisting EOS
+> approaches it. The two arms still land within **0.14 %** of *each other*, so the
+> shortfall is still the model's rather than the material's, and still cancels in
+> the ratio. The ratio agreement loosened 0.04 % → 0.13 %; **do not read that as a
+> regression** — 0.04 % was always finer than the metric deserves (`u/v` is not
+> dt-converged; see the caveats below), and both figures are far inside it.
+>
+> `sweep_tungsten_v1500` still reads **R²=0.9855, steady=False** — the deck M9
+> excluded, reproducing its 0.985 exactly. That is Tate deceleration, i.e. physics,
+> and it is still correctly refused rather than re-tuned.
+
 **Measured** (`tools/measure_penetration.py`, which identifies the penetrator as
 whatever is moving at t=0, measures `v` from frame 0 rather than being told it, and
 derives its fit window from the erosion curve):
@@ -1233,14 +1256,27 @@ decimal**.)
 
 ### 3.8 Standoff — the jet's energy-neutral depth experiment (milestone 10)
 
-**Read this first: the shipped decks under-read the effect they measure, by ~2.3×
+**Read this first: the shipped decks under-read the effect they measure, by ~1.7×
 on the excess, and they are not grid-converged.** `standoff_s00/s30/s60/s90` measure
-a depth ratio of **1.23** between S=90 and S=0 where the a-priori prediction is
+a depth ratio of **1.31** between S=90 and S=0 where the a-priori prediction is
 **1.536**. The cause is resolution, not physics: the jet is 3 mm across = **8 cells**
 at the shipped `dx=0.375`, and it *thins as it stretches* to ~1.1 mm ≈ **3 cells** by
 the end of the window. The quantitative claim below rests on the six
 `standoff_conv_*` decks, **not** on the four shipped ones. Same posture as §3.5's
 tip-`J`: quote the trend, never the value.
+
+> **⚠️ RE-MEASURED 2026-07-17 (milestone 13); the tables below are the
+> Murnaghan-era measurement.** Under Mie-Grüneisen (§3.10) + the §1.1.1 boundary
+> fix the shipped family reads **S90/S0 = 1.312** (was 1.229) against the unchanged
+> a-priori **1.536** — so the under-read on the *excess* improved from **~2.3× to
+> ~1.7×** (0.536 predicted vs 0.312 measured). MG resists the jet tip harder, which
+> is the same direction §3.7's sweep moved.
+> **This does not rescue the shipped decks and must not be read as convergence:**
+> the deficit is `cells across the jet`, and no EOS can add resolution. The
+> `standoff_conv_*` decks still carry the quantitative claim. The matched-fraction
+> trend (17.5 → 23.1 mm at f=0.15, 37.6 → 48.9 at f=0.30) and the lab-time trap
+> below (94.2 → 72.5 mm, *falling* with standoff) both reproduce unchanged in
+> shape.
 
 **Why this experiment exists.** §3.4 built the jet but deliberately **refused to
 compare its penetration depth** to anything, because every comparison available was
