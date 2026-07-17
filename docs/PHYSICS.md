@@ -324,13 +324,18 @@ source would otherwise accelerate unconfined light debris to a CFL-breaking
 filler detonates and the sandwich plates fly apart at a few hundred m/s. But at
 **0° (normal incidence) the reactive layer does not degrade the penetrator** —
 measured against an *equal-areal-mass inert twin* (`era_filler_inert`: identical
-density/stiffness/thickness, reactivity off), the rod is untouched: penetration
-past the main-plate face differs by **+0.3 %** (69.2 vs 69.0 mm — both decks
-perforate and the residual flies clear), rod damage by +2.3 %, residual velocity
-by +2.2 %. If anything the reactive rod is marginally *faster* and *deeper* — the
-opposite of protection, and coherent: the detonation clears filler off-axis, so
-the reactive rod pushes through slightly less on-path material than the inert rod
-that keeps its filler in the channel.
+density/stiffness/thickness, reactivity off), the rod is untouched: rod damage
+differs by **−0.9 %** and residual velocity by **+0.9 %** (1022.7 vs 1013.8 m/s),
+with the rod tip **+0.3 %** downrange — both decks perforate and the residual flies
+clear, so that last one is a free-flight position, not resistance. If anything the
+reactive rod is marginally *faster* — the opposite of protection, and coherent: the
+detonation clears filler off-axis, so the reactive rod pushes through slightly less
+on-path material than the inert rod that keeps its filler in the channel.
+*(Re-measured 2026-07-17 under M13 by `tools/measure_reactive_ab.py`. The rod null
+is the most robust claim in §3.1/§3.2: it has now read +2.2 % and +0.9 % across
+three physics changes and stayed inside the noise every time. The old
+"penetration 69.2 vs 69.0 mm" figures came from M5's uncommitted probe and are
+**not reproducible** — do not quote them.)*
 
 This is **correct physics, not a bug**: at 0° the detonation flings the plates
 *laterally, symmetric about the rod axis*, so the debris sweeps sideways and
@@ -338,10 +343,12 @@ never crosses the rod path to cut it. Real reactive armor gets its effectiveness
 from **obliquity** (§3.2).
 
 **The backing plate is a separate question from the rod, and the answer differs.**
-At 0° the main plate does spall **~13 % less** in the reactive deck (**0.246 vs
-0.282**, re-measured post-EOS; it was 0.220 vs 0.242, ~9 %, under the pre-EOS law —
-the *conclusion* survived milestone 8, the *magnitude* moved and both arms'
-absolute damage rose),
+At 0° the main plate does spall **~17 % less** in the reactive deck (**0.2732 vs
+0.3297**, re-measured 2026-07-17 by `tools/measure_reactive_ab.py` under M13 —
+Mie-Grüneisen (§3.10) plus the §1.1.1 boundary fix; it read 0.246 vs 0.282 (~13 %)
+post-EOS and 0.220 vs 0.242 (~9 %) under the pre-EOS law — **the conclusion has now
+survived three physics changes and the magnitude has moved on every one of them**,
+9 → 13 → 17 %, with both arms' absolute damage rising each time),
 driven by the same forward-shove mechanism §3.2 documents at 55°: the detonation
 pushes the plate body **1.58 mm** further downrange than the inert twin's
 (re-measured post-EOS; +1.44 mm under the pre-EOS law, same probe). That margin
@@ -387,31 +394,62 @@ buy headroom the rod never uses.
 
 **Verified result — protection, but not rod-cutting.** Measured against the
 equal-areal-mass inert twin (both decks seed at **286 355** particles), at 55° the
-reactive layer **measurably protects the backing plate**:
+reactive layer **measurably protects the backing plate**.
 
-- **Main-plate spall ≈ 16 % lower** for the reactive deck (0.137 vs 0.163 at the
-  final frame) — roughly **double the ~8 % the same mechanism buys at 0°** (§3.1).
+> **⚠️ RE-MEASURED 2026-07-17 (milestone 13). Every conclusion below survived;
+> every NUMBER moved.** The figures are now from `tools/measure_reactive_ab.py` — a
+> **committed** tool, which this A/B did not have before: M5/M6 used an ad-hoc probe
+> that was never checked in, so its numbers could only be quoted, never re-derived
+> (the same defect §3.3 records for the plate-separation figures). Two changes
+> invalidated the old values: Mie-Grüneisen (§3.10) and the boundary-condition fix
+> (§1.1.1), which hits *these* decks hardest — the detonation drives filler straight
+> into a ceiling that, until now, was not there.
+>
+> | | reactive | inert | delta | M6 quoted |
+> |---|---|---|---|---|
+> | 0° main-plate spall | 0.2732 | 0.3297 | **−17.1 %** | ~−8 % |
+> | 0° rod residual v | 1022.7 | 1013.8 | +0.9 % (null) | +2.2 % (null) |
+> | 55° main-plate spall | 0.1033 | 0.1741 | **−40.7 %** | −16 % |
+> | 55° rod residual v | 540.5 | 579.0 | **−6.7 %** | −8.5 % |
+> | 55° rod damage | 0.7267 | 0.7172 | +1.3 % (not cut) | −0.5 % (not cut) |
+>
+> **Absolute values are NOT comparable to M6's** (540/579 m/s vs 679/741): its probe
+> is gone, so its metric definitions are unknown. Quote the tool, not M6.
+>
+> This is the "model sensitivity" error bar below doing exactly what it warns of —
+> 40.7 % is back inside the 40/21/16 % range this same A/B has already read. The
+> *structure* is what is robust: protection at both angles, roughly doubling with
+> obliquity (17 → 41 %, where M6 had 8 → 16 % — both ~2.4×), rod not cut at either,
+> 0° a rod null and 55° a real modest slowing.
+
+- **Main-plate spall ≈ 41 % lower** for the reactive deck (0.1033 vs 0.1741 at the
+  final frame) — roughly **double the ~17 % the same mechanism buys at 0°** (§3.1).
 - **The rod is not cut or deflected — but it *is* slowed. Do not conflate those.**
-  Rod damage differs by −0.5 % (no effect) and the rod is not severed or turned:
+  Rod damage differs by +1.3 % (no effect) and the rod is not severed or turned:
   thin few-hundred-m/s flyers cannot cut a tough long rod, and the *a priori*
   "flyer sweep erodes the rod" expectation is what failed here — reported as it
-  came out. But residual velocity **is 8.5 % lower** (679 vs 741 m/s), ~75× the
+  came out. But residual velocity **is 6.7 % lower** (540.5 vs 579.0 m/s), ~60× the
   numerical floor below: that is a real, modest degradation. "Not cut" ≠ "not
   affected"; only the first is a null.
-  *(Penetration past the plate face reads +0.8 % — reactive marginally deeper — but
-  do not lean on it: both rods fully perforate, so at the final frame that number is
-  a free-flight **position**, not penetration resistance. A rod 8.5 % slower sitting
-  at the same position is diverging, and given more window would fall short.
-  Velocity is the leading rod-degradation indicator; the position is a snapshot.)*
+  *(Rod tip position reads −2.2 % — but do not lean on it in either direction: both
+  rods fully perforate, so at the final frame that number is a free-flight
+  **position**, not penetration resistance. Velocity is the leading rod-degradation
+  indicator; the position is a snapshot.)*
 - **Mechanism — and it scales with angle, which is the real evidence.** The
   detonation **shoves the main plate forward**: the plate body ends 7.7 mm further
   downrange than the inert twin's, and its front face 18.2 mm further (the inert
   plate's face travels *backward*, cratering and throwing lips upstream). A plate
   moving *with* the rod reduces effective (rod-relative) penetration — the textbook
   "moving / standoff plate defeats less penetrator." The shove grows 1.6 mm → 7.7 mm
-  from 0° to 55°, and the spall protection tracks it 8 % → 16 %. **One mechanism,
+  from 0° to 55°, and the spall protection tracks it 17 % → 41 %. **One mechanism,
   monotone in obliquity, consistent across both decks** — a far stronger argument
   than any single number.
+  *(**The two plate-shove distances — 1.6 mm and 7.7 mm — are NOT re-measured** and
+  predate both M13 and the §1.1.1 boundary fix; `measure_reactive_ab.py` does not
+  compute them. Stated, not buried: the protection ratio they are paired with was
+  re-measured and moved 8→17 % and 16→41 %, so assume these moved too. What survives
+  is that the shove grows with obliquity and the protection tracks it — the
+  *monotone relationship*, not the millimetres.)*
 
 Honesty caveats (root §1/§10): a steeper angle was **not** chased (it only moves
 `sin θ` 0.82→0.91 and worsens domain fit), and `detonation_pressure` was **not**
@@ -422,19 +460,30 @@ defeating a system — off-limits per §10).
 
 1. **Numerical (run-to-run) scatter: ≤ 0.11 %.** Measured directly, by re-baking
    identical decks and re-measuring: every aggregate metric above reproduces to
-   ≤0.11 % (the 55 % protection figure lands on 15.8 % both times). MPM grid
-   `atomic_add` ordering is non-deterministic, but at this level it is negligible.
-   The ~16 % protection is therefore **~150× the numerical noise floor** — this is
-   signal, full stop. (This measurement replaces an earlier, weaker argument from
+   ≤0.11 % (the 55° protection figure landed on 15.8 % both times when it *was*
+   ~16 %; the repeat bake has not been redone since M13 moved it to 40.7 %, and the
+   scatter is a property of the solver's `atomic_add` ordering rather than of the
+   value, so it carries — but it is an inherited measurement, not a fresh one). MPM
+   grid `atomic_add` ordering is non-deterministic, but at this level it is
+   negligible. The ~41 % protection is therefore **hundreds of times the numerical
+   noise floor** — this is signal, full stop. (This measurement replaces an earlier, weaker argument from
    "the A/B gap grows monotonically over the event". That trend held for the
    blunt rod, +0.023 → +0.032 → +0.035 at the 50/75/100 % marks, but does **not**
    survive the pointed nose: +0.021 → +0.027 → +0.026. The conclusion is unchanged
    and now rests on the repeat bake, which is what should have carried it.)
 2. **Model sensitivity: large, and the honest limit on all of this.** The *same*
-   A/B has read ≈ 40 % (old floating-block geometry), ≈ 21 % (plate geometry,
-   blunt rod) and ≈ 16 % (plate geometry, pointed rod). The **sign is robust across
-   every condition tried; the magnitude is not portable.** Quote it as "roughly
-   10–20 %, sign-stable", never as a figure. At 0° the margin's sign has actually
+   A/B has now read ≈ 40 % (old floating-block geometry), ≈ 21 % (plate geometry,
+   blunt rod), ≈ 16 % (plate geometry, pointed rod) and **≈ 41 %** (M13: MG + the
+   §1.1.1 boundary fix). The **sign is robust across every condition tried; the
+   magnitude is not portable** — and the M13 value landing back on the *first*
+   figure in that list, after four intervening changes, is the sharpest available
+   demonstration that the magnitude carries no information. Quote it as **"tens of
+   percent, sign-stable"**, never as a figure.
+   *(This entry used to advise quoting "roughly 10–20 %". That was itself a
+   magnitude claim dressed as a range, and M13 walked straight out of it. The
+   lesson is not to widen the band each time — it is that the band is not the
+   result.)*
+   At 0° the margin's sign has actually
    flipped across a geometry change (§3.1) — which is why 55° earns confidence and
    0° does not, despite both clearing the numerical floor.
 
