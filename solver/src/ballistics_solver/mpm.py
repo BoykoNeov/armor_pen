@@ -194,6 +194,23 @@ EOS_CFL_J_MARGIN: float = 0.35
 # mean the saturation had become load-bearing.
 J_FLOOR: float = 0.05
 
+# --- Mie-Grueneisen energy-equation resolution guard (milestone 13) ---------
+# Smallest value of the closed-form solve's denominator FACTOR, (1 + Gamma0*dJ/2),
+# at which that solve is still trusted. See the energy block in ``_g2p``.
+#
+# A RESOLUTION TEST, NOT A PHYSICAL LIMIT — the J_FLOOR posture again. The factor
+# is 1 for dJ=0 and falls as a substep compresses; it vanishes at dJ = -2/Gamma0
+# (~-1.04 for rha, i.e. a >100 % volume change in ONE substep) and goes negative
+# past it, which flips the sign of e and is how the ERA deck reached e = -1.7e6
+# and then NaN. In band the factor sits at ~0.97, so 0.1 is ~30x clear of any
+# resolved substep and inert on every deck that is behaving.
+#
+# It is deliberately NOT tiny. A threshold of, say, 1e-6 would technically avoid
+# the division blowing up while still letting e through amplified ~1e6x — passing
+# the "no NaN" test and failing the only test that matters. The point is not to
+# dodge an inf; it is to refuse a number the linearization cannot support.
+MG_E_FACTOR_MIN: float = 0.1
+
 # --- Mie-Grueneisen pole guard (milestone 13, PHYSICS §3.10) ----------------
 # Fraction of the way to the Hugoniot's pole at which the EOS hands over to its
 # Murnaghan fallback branch: handover at eta = MG_F_SWITCH/s, i.e. J_sw = 1 -
@@ -361,6 +378,7 @@ def _polar_r(F: wp.mat22):
 EOS_KP = wp.constant(materials.EOS_KP)
 _J_FLOOR = wp.constant(J_FLOOR)
 _MG_F_SWITCH = wp.constant(MG_F_SWITCH)
+_MG_E_FACTOR_MIN = wp.constant(MG_E_FACTOR_MIN)
 
 
 @wp.struct
@@ -1097,6 +1115,13 @@ def _g2p(
     lam: wp.array(dtype=float),
     mgp: wp.array(dtype=MGParams),
     rho0: wp.array(dtype=float),
+    # Energy-equation diagnostics, atomically accumulated over the whole bake:
+    #   [0] resolution guard fired (substep too coarse for this particle's dJ)
+    #   [1] e came out NEGATIVE (should be unreachable — see the energy block)
+    #   [2] J floor engaged (raw det F left the EOS's range)
+    # Counted, never silently swallowed: these say WHICH mechanism a bad bake hit,
+    # and a zero here is the evidence that the guards are inert on a good one.
+    ediag: wp.array(dtype=float),
     grid_v: wp.array2d(dtype=wp.vec2),
     origin: wp.vec2,
     inv_dx: float,
@@ -1207,19 +1232,66 @@ def _g2p(
     if damage[p] >= 0.5:
         return
 
-    J_old = wp.determinant(F_old)
-    J_new = wp.determinant(F_new)
+    # J IS FLOORED HERE, and that is a CORRECTNESS FIX, not defensive padding.
+    # Every pressure path floors J at J_FLOOR internally (`_mg_p_cold`), so `p` is
+    # the pressure of the FLOORED state. Taking `dJ` from the RAW determinant then
+    # charges the work -p*dJ at a pressure the model never had: below the floor the
+    # cold curve saturates while dJ keeps counting real volume change, and the two
+    # are no longer conjugate. Measured, driving this exact algebra by hand
+    # (temp/m13_nera/sandbox_energy.py): a raw-J excursion under the floor and back
+    # runs e to +4.5e11 J/kg and then FLIPS it to -5.1e11, against a physical ~1e5.
+    #
+    # e < 0 is the falsifier, and it is a theorem rather than a judgement call. From
+    # rest, compression gives dJ<0 with p_cold>0, and tension gives dJ>0 with
+    # p_cold<0 — both make rho0*de = -p*dJ POSITIVE — and q >= 0 only ever adds. So
+    # e >= 0 always, and any negative e is discretization error. The ERA deck reached
+    # e = -1.7e6 and then NaN; that is what this floor and the guard below are for.
+    J_old_raw = wp.determinant(F_old)
+    J_new_raw = wp.determinant(F_new)
+    J_old = wp.max(J_old_raw, _J_FLOOR)
+    J_new = wp.max(J_new_raw, _J_FLOOR)
+    if J_old_raw < _J_FLOOR or J_new_raw < _J_FLOOR:
+        wp.atomic_add(ediag, 2, 1.0)  # floor engaged: raw J left the EOS's range
     dJ = J_new - J_old
     K0 = lam[p] + mu[p]
     mg = mgp[p]
     q = _av_q(F_old, C_old, mu[p], lam[p], e[p], mg, rho0[p], dx, av_c_q, av_c_l)
     p0 = _mg_pressure(J_old, e[p], K0, mg)
     pc1 = _mg_p_cold(J_new, K0, mg)
-    denom = rho0[p] * (1.0 + mg.g0 * dJ * 0.5)
-    # denom vanishes only for a physically impossible one-substep volume change
-    # (dJ = -2/Gamma0, i.e. a >100% jump); guard it rather than emit inf.
-    if wp.abs(denom) > 1.0e-12:
-        e[p] = (rho0[p] * e[p] - ((pc1 + p0) * 0.5 + q) * dJ) / denom
+    # GUARD THE FACTOR, NOT THE rho0-SCALED PRODUCT. The previous form tested
+    # `|rho0*(1 + Gamma0*dJ/2)| > 1e-12`; with rho0 = 7.85e-3 for steel that only
+    # fires once the FACTOR is below 1.27e-10, so it could not catch the sign flip
+    # it was written for. Driven down nine pathological substeps it fired ZERO
+    # times and returned e = -6.0e13 — it emitted garbage where its own comment
+    # promised it would prevent an inf, which is strictly worse, because an inf
+    # would have been caught downstream.
+    #
+    # The factor vanishes at dJ = -2/Gamma0 (~-1.04 for rha) and goes NEGATIVE past
+    # it, flipping e's sign. Flooring J above bounds J_new but does NOT close this:
+    # a particle at J_old=2.0 crushed to the floor still gives dJ=-1.95, factor
+    # -0.88. The floor bounds one side; this catches the rest.
+    #
+    # MG_E_FACTOR_MIN is a resolution test, not a physical limit (the J_FLOOR
+    # posture). In band the factor sits at ~0.97 — an in-band substep is dJ~-0.036
+    # — so this is inert on a resolved bake and the 1-D piston is untouched. When it
+    # fires, the substep is too coarse for this particle's volume change and the
+    # closed-form solve cannot be trusted; e is left UNCHANGED rather than updated
+    # with a number the linearization does not support. That drops the substep's
+    # compression work, so it is not conservative — which is why it is COUNTED and
+    # reported at the end of the bake rather than silently swallowed. A guard that
+    # fires often is a bake to distrust, and the count is how you find out.
+    factor = 1.0 + mg.g0 * dJ * 0.5
+    if factor > _MG_E_FACTOR_MIN:
+        e[p] = (rho0[p] * e[p] - ((pc1 + p0) * 0.5 + q) * dJ) / (rho0[p] * factor)
+    else:
+        wp.atomic_add(ediag, 0, 1.0)  # guard fired: unresolved dJ
+    if e[p] < 0.0:
+        # Residual negative energy. Should be unreachable once the two fixes above
+        # hold; counted rather than clamped so that "unreachable" stays a MEASURED
+        # claim. If this reads nonzero, the fixes are insufficient — do not reach
+        # for a clamp before finding out why (root §10: a clamp here would hide the
+        # mechanism, and the bake would look clean while being wrong).
+        wp.atomic_add(ediag, 1, 1.0)
 
 
 @wp.kernel
@@ -1777,8 +1849,12 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
     ign_comp = wp.array(seed["ign_comp"], dtype=float, device=device)  # det(F) ignition thresh
     # Mie-Grueneisen state + constants (milestone 13). `e` is specific internal
     # energy, evolved in `_g2p`; it starts at 0 = the reference state, so a deck at
-    # rest is exactly the pre-M13 solver. NOT a cache column (see PHYSICS §3.10).
+    # rest is exactly the pre-M13 solver. It IS a cache column as of schema v2
+    # (`internal_energy`; CACHE_FORMAT §2 states what a reader may assume of it).
     e = wp.zeros(n, dtype=float, device=device)
+    # Energy-equation diagnostic counters — see `_g2p`'s `ediag` and the report at
+    # the end of this function. Three floats, atomically accumulated on the device.
+    ediag = wp.zeros(3, dtype=float, device=device)
     rho0_a = wp.array(seed["mass"] / np.maximum(seed["vol0"], 1e-30),
                       dtype=float, device=device)
     _mgp_h = MGParams()
@@ -1810,8 +1886,8 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
         wp.launch(_grid_op, dim=(nx, ny), device=device, inputs=[
             grid_v, grid_m, nx, ny])
         wp.launch(_g2p, dim=n, device=device, inputs=[
-            x, v, C, F, e, damage, mu, lam, mgp, rho0_a, grid_v, origin, inv_dx,
-            dx, dt, clamp_lo, clamp_hi, av_c_q, av_c_l])
+            x, v, C, F, e, damage, mu, lam, mgp, rho0_a, ediag, grid_v, origin,
+            inv_dx, dx, dt, clamp_lo, clamp_hi, av_c_q, av_c_l])
         # Bound the reactive filler's post-transfer speed so the F-independent
         # detonation source can't accelerate unconfined debris to a CFL-breaking
         # ~14 km/s (reactive particles only; see REACTIVE_VMAX / _clamp_reactive_v).
@@ -1844,7 +1920,11 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
     # frame boundaries, so a shorter-than-a-frame excursion stays invisible.
     K0_h = seed["lam"] + seed["mu"]
     rho_h = seed["mass"] / np.maximum(seed["vol0"], 1e-30)
-    audit = {"c": 0.0, "J": 1.0, "div_v": 0.0, "guard_n": 0, "guard_mats": []}
+    # `nan_frame` = the first frame at which any LIVE particle went non-finite, or
+    # -1 for never. Tracked explicitly because none of the other accumulators can
+    # see it (see the finiteness note in `dump_frame`).
+    audit = {"c": 0.0, "J": 1.0, "div_v": 0.0, "guard_n": 0, "guard_mats": [],
+             "frames": 0, "nan_frame": -1, "nan_n": 0}
 
     # --- per-substep J trace (debug hook; see `_trace_j` and the AV block) ----
     tr = None
@@ -1893,6 +1973,25 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
         live = dmg < 0.5
         if live.any():
             J_raw = np.linalg.det(Fn[live])
+            # NON-FINITE FIRST, because every accumulator below is BLIND to it and
+            # would otherwise report a healthy bake on a diverged one. `min` and
+            # `max` silently DROP NaN — `nan < x` and `nan > x` are both False, so
+            # `min(0.7167, nan)` is 0.7167 — which freezes each accumulator at its
+            # last pre-divergence value forever. That is not hypothetical: this
+            # audit printed "OK: worst live J=0.7167, 2% of the c_max budget" on an
+            # ERA bake whose cache was 98 % NaN from frame 190 on. It was reading
+            # frame 189 and reporting it as a verdict on all 550.
+            #
+            # Same defect, same shape, as CACHE_FORMAT §6.8: the structure survives
+            # a divergence untouched, so only an explicit finiteness test sees it.
+            # There it let a broken cache validate; here it let a broken bake
+            # certify itself. Record the FIRST bad frame — in a divergence, "when"
+            # is the whole diagnostic.
+            n_bad = int((~np.isfinite(J_raw)).sum()) + int(
+                (~np.isfinite(vel_mag[live])).sum())
+            if n_bad and audit["nan_frame"] < 0:
+                audit["nan_frame"] = audit["frames"]
+                audit["nan_n"] = n_bad
             audit["J"] = min(audit["J"], float(J_raw.min()))  # raw: J_FLOOR must be visible
             Jl = np.maximum(J_raw, J_FLOOR)
             # Measure the sound speed the MG law ACTUALLY reached, heating included
@@ -1941,6 +2040,7 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
             e_h,
         ]).astype(np.float32)
         writer.write_frame(frame)
+        audit["frames"] += 1
 
     # Frame 0 is the seeded state at t=0; then step and dump for the rest.
     dump_frame()
@@ -1981,6 +2081,35 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
         print(f"[mpm] J-trace written: {tr['path']}")
 
     # --- did the a-priori substep sizing actually hold? ---------------------
+    # DIVERGENCE FIRST. Everything below reads an accumulator that cannot see a
+    # NaN, so on a diverged bake they all describe the last healthy frame — and
+    # the `else` branch at the bottom would sign it off as "OK". Report the
+    # divergence and say plainly that the rest of the numbers are stale.
+    ed = ediag.numpy()
+    if audit["nan_frame"] >= 0:
+        print(
+            f"[mpm] *** DIVERGED *** LIVE material went non-finite at frame "
+            f"{audit['nan_frame']} (t={audit['nan_frame'] * frame_dt_ms * 1e3:.2f} us), "
+            f"{audit['nan_n']} particle(s) at first sight. The cache is structurally "
+            f"perfect and physically meaningless — do not ship it "
+            f"(CACHE_FORMAT §6.8). Every figure below this line is from BEFORE that "
+            f"frame: min/max silently drop NaN, so the accumulators froze there."
+        )
+    # Energy-equation guards. A zero here is the evidence that they are inert on a
+    # resolved bake; a nonzero one names the mechanism rather than leaving "it blew
+    # up" as the whole diagnosis.
+    if ed[0] or ed[1] or ed[2]:
+        print(
+            f"[mpm] NOTE: energy-equation guards fired — resolution guard "
+            f"{int(ed[0])}, negative e {int(ed[1])}, J floor {int(ed[2])} "
+            f"(particle-substeps, over {audit['frames']} frames x {substeps} "
+            f"substeps x {n} particles). The resolution guard DROPS that substep's "
+            f"compression work, so a large count means the bake is not conserving "
+            f"energy where it fired. A nonzero 'negative e' means the floor and the "
+            f"guard did NOT close the mode that broke the ERA deck — read it before "
+            f"trusting `internal_energy`, and do not reach for a clamp on e until "
+            f"you know why."
+        )
     if audit["guard_n"] > 0:
         names = materials.id_to_name()
         who = ", ".join(names.get(str(m), f"id{m}") for m in audit["guard_mats"])
@@ -2011,7 +2140,10 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None) -> None:
             f"The bake may be unstable past that point; lower EOS_CFL_J_MARGIN "
             f"(or av_c_q/av_c_l, if the AV term is what pushed it over) and rebake."
         )
-    else:
+    elif audit["nan_frame"] < 0:
+        # "OK" is only sayable when the bake stayed finite. Gating this on
+        # `nan_frame` is the point: the CFL arm cannot reach a diverged bake's
+        # numbers, so without the gate silence reads as a pass.
         print(
             f"[mpm] CFL audit OK: worst live J={audit['J']:.4f}, "
             f"div_v={audit['div_v']:.3e} /ms -> c_eff={audit['c']:.0f} mm/ms, "
