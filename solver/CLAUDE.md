@@ -19,10 +19,10 @@ first** — this file only adds solver-local notes.
 | File | Role | Status |
 |---|---|---|
 | `config.py` | Scenario schema (dataclasses), YAML loader | working |
-| `materials.py` | Material library, all constants in mm-ms-g | data (all fields now consumed: elasticity, yield, ductile `damage_threshold`, `brittle`, reactive block, and the `shock` Hugoniot block `s`/`Γ₀` — milestone 13) |
-| `cache_writer.py` | Writes manifest.json + frames.bin (the contract) | working |
+| `materials.py` | Material library, all constants in mm-ms-g | data (all fields now consumed: elasticity, yield, ductile `damage_threshold`, `brittle`, reactive block, the `shock` Hugoniot block `s`/`Γ₀` — milestone 13 — and `description`, required, carried to the cache for the viewer's caption) |
+| `cache_writer.py` | Writes manifest.json + frames.bin (the contract) | working. `build_manifest` is the ONE definition of manifest shape; `write_manifest` is separate from `CacheWriter` because constructing a writer opens `frames.bin` `"wb"` and **truncates an existing cache before writing a byte** |
 | `mpm.py` | MLS-MPM transfer kernels + substep loop (Warp) | **elastic + Mie-Grüneisen EOS with an energy equation + von Mises plasticity + ductile & brittle damage + multi-material stack + reactive ERA/NERA layer + oblique rod seeding + velocity-graded shaped-charge jet + artificial viscosity (default ON) + working free-slip walls on all four sides — last touched by milestone 13** — see below. Milestones 9 and 10 are decks + `tools/` only: they added **zero** kernel code, which is the point — the scenario schema already carried `velocity` and `standoff`. |
-| `run.py` | CLI: scenario.yaml → cache dir | working (Warp init + GPU assert + bake) |
+| `run.py` | CLI: scenario.yaml → cache dir | working (Warp init + GPU assert + bake). Also `--remanifest`: rewrite an existing cache's manifest in place, no GPU, `frames.bin` untouched (CACHE_FORMAT §2.2) |
 
 ## Build order (root §9) — where we are
 
@@ -551,6 +551,39 @@ Grow the reference MLS-MPM incrementally, validating visually with
      `p_impact > p_stag` claim fails on rha/copper at 7 km/s, because a lower-impedance
      target genuinely cannot sustain the striker's stagnation pressure. Only the
      **deck-wide max** (which includes the symmetric self-impact) carries the claim.
+
+### Schema v3 — the cache says what it IS (a format change, not a milestone; done)
+
+The viewer knows only the cache format (root §2), so it could draw a tungsten rod
+hitting steel and had no way to caption it — and every scalar color mode dropped
+even the material *names*, because the legend becomes a ramp. v3 adds the
+**scenario block**: `projectile`, `armor`, `material_descriptions`
+(CACHE_FORMAT §2.1). `Material.description` is required with no default, for the
+same reason `shock` is: a new material must say what it is.
+
+- **Provenance, NOT data — the one rule to carry.** The block says what was
+  *seeded*. `projectile.velocity` is the tip's speed at **t=0**, an input to the
+  bake; the live one is the `vel_mag` column, which is what
+  `measure_penetration.py` already reads and must keep reading. A label is not a
+  measurement, and this block is exactly the shortcut that would blur the two.
+- **Manifest-only ⇒ migrated, not rebaked** (`--remanifest`, §2.2). No byte of
+  `frames.bin` moved — verified: all 30 caches, 84.8 GiB, **zero** files changed
+  size or mtime. Rebaking would have re-rolled every documented figure here within
+  its ~0.11 % scatter (`atomic_add` ordering is not deterministic) to change a text
+  label. **Two things a rebake and a migration do NOT share: cost, and whether the
+  numbers stay put.**
+- **The drift guard is the point of the path being allowed to exist.** A deck can
+  change after its bake; stamping today's deck onto last week's cache yields a
+  manifest that confidently describes the wrong scenario and is *structurally
+  perfect*, so nothing downstream can catch it. `--remanifest` refuses unless the
+  deck still agrees on `scenario`, `domain`, and the material-id set.
+- **`CacheWriter` truncates.** Its `__init__` opens `frames.bin` `"wb"`, so merely
+  CONSTRUCTING one over an existing cache zeroes the blob before a frame is
+  written (measured: 40 → 0 bytes). Migration goes through `write_manifest`, never
+  the writer. `test_remanifest_does_not_touch_frames_bin` pins it.
+- **`materials` is the whole LIBRARY, not a guest list.** Every manifest carries
+  all seven ids regardless of deck, so a reader captioning from its keys puts ERA
+  fillers on an RHA deck. Key off the ids present in `material_id`.
 
 ### The free-slip HIGH walls never fired — a BC fix, not a milestone (done)
 

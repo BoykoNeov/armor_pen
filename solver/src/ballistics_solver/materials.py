@@ -97,6 +97,19 @@ class Material:
     """Illustrative material parameters in the mm-ms-g unit system."""
 
     name: str
+    # One-line human prose, carried to the cache as `material_descriptions`
+    # (CACHE_FORMAT §2.1) so the viewer can say what it is drawing — it knows only
+    # the cache format (root §2) and has no other way to find out.
+    #
+    # REQUIRED — no default, for the same reason `shock` has none: a new material
+    # must say what it is rather than inheriting silence. It is the cheapest field
+    # here to fill in and the only one a reader sees directly.
+    #
+    # Keep it to ~70 characters: this renders in a HUD panel beside a color
+    # swatch, not in a document. What it is and why it is in the deck — never a
+    # restatement of the constants below, which are right there, and never a real
+    # system's specification (root §10).
+    description: str
     material_id: int  # stored as float32 in the cache; see CACHE_FORMAT §2
     density: float  # g/mm^3
     youngs_modulus: float  # MPa
@@ -134,6 +147,7 @@ LIBRARY: dict[str, Material] = {
     # (root §10). Pole at J = 1 - 1/1.24 = 0.194, the deepest of any material here.
     "tungsten_rod": Material(
         name="tungsten_rod", material_id=0,
+        description="Tungsten heavy alloy: very dense, tough KE long-rod penetrator.",
         density=17.6e-3, youngs_modulus=3.9e5, poisson_ratio=0.28,
         yield_strength=1.5e3, damage_threshold=2.0,
         shock=ShockEOS(s=1.24, gamma0=1.54),
@@ -142,6 +156,7 @@ LIBRARY: dict[str, Material] = {
     # 1.49 is a mid-range steel value, not a spec-sheet number for any alloy.
     "rha": Material(
         name="rha", material_id=1,
+        description="Rolled homogeneous armor: the baseline steel plate.",
         density=7.85e-3, youngs_modulus=2.0e5, poisson_ratio=0.29,
         yield_strength=1.0e3, damage_threshold=0.8,
         shock=ShockEOS(s=1.49, gamma0=1.93),
@@ -185,6 +200,7 @@ LIBRARY: dict[str, Material] = {
     # past that, and the jet tip runs closest to its own pole of anything here.
     "copper_jet": Material(
         name="copper_jet", material_id=6,
+        description="Copper shaped-charge jet: soft enough to flow hydrodynamically.",
         density=8.96e-3, youngs_modulus=1.17e5, poisson_ratio=0.34,
         yield_strength=2.0e2, damage_threshold=1.5,
         shock=ShockEOS(s=1.489, gamma0=1.99),
@@ -197,12 +213,14 @@ LIBRARY: dict[str, Material] = {
     # that ceramic fails at J~0.98, where every monotone volumetric law agrees to <1 %.
     "ceramic": Material(
         name="ceramic", material_id=2,
+        description="Alumina-like ceramic: stiff and hard, shatters with little flow.",
         density=3.9e-3, youngs_modulus=3.7e5, poisson_ratio=0.22,
         yield_strength=3.0e3, damage_threshold=0.05, brittle=True,
         shock=ShockEOS(s=1.0, gamma0=1.30),
     ),
     "era_filler": Material(
         name="era_filler", material_id=3,
+        description="Explosive reactive filler: ignites on shock, flings the plates apart.",
         density=1.6e-3, youngs_modulus=5.0e3, poisson_ratio=0.40,
         yield_strength=0.05e3, damage_threshold=0.02,
         shock=ShockEOS(s=2.0, gamma0=1.0),
@@ -219,6 +237,7 @@ LIBRARY: dict[str, Material] = {
     # can be isolated from "there is simply more material in the path".
     "era_filler_inert": Material(
         name="era_filler_inert", material_id=4,
+        description="Inert ERA twin: same mass and stiffness, never detonates (A/B baseline).",
         density=1.6e-3, youngs_modulus=5.0e3, poisson_ratio=0.40,
         yield_strength=0.05e3, damage_threshold=0.02,
         shock=ShockEOS(s=2.0, gamma0=1.0),
@@ -287,6 +306,7 @@ LIBRARY: dict[str, Material] = {
     # predictive (root §1).
     "nera_filler": Material(
         name="nera_filler", material_id=5,
+        description="NERA elastomer interlayer: yields and flows, but stays cohesive.",
         density=1.6e-3, youngs_modulus=5.0e3, poisson_ratio=0.40,
         yield_strength=0.05e3, damage_threshold=3.0,  # both LIVE — see above
         shock=ShockEOS(s=2.0, gamma0=1.0),
@@ -307,3 +327,13 @@ def get(name: str) -> Material:
 def id_to_name() -> dict[str, str]:
     """Map stringified material_id -> name, for the manifest `materials` field."""
     return {str(m.material_id): m.name for m in LIBRARY.values()}
+
+
+def id_to_description() -> dict[str, str]:
+    """Map stringified material_id -> prose, for `material_descriptions`.
+
+    Keyed identically to :func:`id_to_name` — CACHE_FORMAT §2.1 requires the two
+    maps to share a key set, and building both from the same LIBRARY is what makes
+    that true by construction rather than by discipline.
+    """
+    return {str(m.material_id): m.description for m in LIBRARY.values()}

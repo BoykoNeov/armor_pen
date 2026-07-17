@@ -13,7 +13,13 @@ class_name CacheLoader
 ## the loader locates columns by name, so it needed only this number. That is the
 ## §2 openness rule paying out — but the gate still moves, because a v1 cache does
 ## not have the column and a reader must be able to tell before it looks.
-const SUPPORTED_SCHEMA_VERSION := 2
+##
+## v3 added the scenario block (§2.1) — `projectile`, `armor`,
+## `material_descriptions`. This one is FOR the viewer: it knows only the cache
+## format, so before v3 it could draw a tungsten rod hitting steel and had no way
+## to say so. Unlike v2 it does need reader code — the fields are new, not a new
+## name in an existing list — so they are exposed below.
+const SUPPORTED_SCHEMA_VERSION := 3
 
 var particle_count: int = 0
 var frame_count: int = 0
@@ -21,6 +27,15 @@ var attributes: PackedStringArray = PackedStringArray()
 var domain: Dictionary = {}
 var materials: Dictionary = {}
 var frame_dt: float = 0.0
+
+## The v3 scenario block (CACHE_FORMAT §2.1). PROVENANCE, NOT DATA: it says what
+## the solver SEEDED, so it is safe to label with and must never be measured from
+## — `projectile.velocity` is the tip's speed at t=0, not a live quantity. The
+## live one is the `vel_mag` column. Nothing in the viewer should compute from
+## these; they are strings on their way to a Label.
+var projectile: Dictionary = {}
+var armor: Array = []
+var material_descriptions: Dictionary = {}
 
 var _stride: int = 0                 # floats per particle record
 var _frame_bytes: int = 0            # bytes per full frame
@@ -50,6 +65,13 @@ func load_cache(dir_path: String) -> Variant:
 	domain = manifest["domain"]
 	materials = manifest.get("materials", {})
 	frame_dt = float(manifest["frame_dt"])
+	# Required in v3, but read with a default anyway: the version gate above has
+	# already rejected anything that could legitimately lack them, so a `.get`
+	# here costs nothing and keeps a hand-edited manifest from crashing the viewer
+	# on startup instead of just drawing without a caption.
+	projectile = manifest.get("projectile", {})
+	armor = manifest.get("armor", [])
+	material_descriptions = manifest.get("material_descriptions", {})
 
 	_stride = attributes.size()
 	_frame_bytes = particle_count * _stride * 4    # sizeof(float32)

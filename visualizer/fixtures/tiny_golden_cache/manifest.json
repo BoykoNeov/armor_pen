@@ -1,5 +1,5 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "scenario": "tiny_golden_cache",
   "particle_count": 20,
   "frame_count": 3,
@@ -24,5 +24,26 @@
   "materials": {
     "0": "tungsten_rod",
     "1": "rha"
+  },
+  "projectile": {
+    "kind": "kinetic",
+    "material": "tungsten_rod",
+    "length": 24.0,
+    "diameter": 8.0,
+    "velocity": 1600.0,
+    "tail_velocity": null,
+    "angle_deg": 0.0,
+    "nose_shape": "conical"
+  },
+  "armor": [
+    {
+      "material": "rha",
+      "thickness": 40.0,
+      "standoff": 0.0
+    }
+  ],
+  "material_descriptions": {
+    "0": "Tungsten heavy alloy: very dense, tough KE long-rod penetrator.",
+    "1": "Rolled homogeneous armor: the baseline steel plate."
   }
 }

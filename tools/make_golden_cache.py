@@ -23,12 +23,38 @@ import math
 import struct
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 ATTRIBUTES = ["pos_x", "pos_y", "vel_mag", "stress", "damage", "material_id",
               "internal_energy"]
 FRAME_COUNT = 3
 DOMAIN = {"xmin": 0.0, "xmax": 200.0, "ymin": 0.0, "ymax": 100.0}
 MATERIALS = {"0": "tungsten_rod", "1": "rha"}
+
+# The v3 scenario block (§2.1). Hand-written rather than imported from the
+# solver's materials.py / config.py — that is the whole point of this file (see
+# the module docstring): the fixture is an INDEPENDENT implementation of the
+# spec, so `validate_cache.py` passing on it cross-checks the contract instead of
+# testing the solver against itself. Importing the library here to save typing
+# three strings would quietly throw that away.
+#
+# It describes the toy scene below, which is illustrative and not a physics
+# result — same as every other number in this file.
+PROJECTILE = {
+    "kind": "kinetic",
+    "material": "tungsten_rod",
+    "length": 24.0,
+    "diameter": 8.0,
+    "velocity": 1600.0,
+    "tail_velocity": None,   # uniform — a rod, not a jet
+    "angle_deg": 0.0,
+    "nose_shape": "conical",
+}
+ARMOR = [{"material": "rha", "thickness": 40.0, "standoff": 0.0}]
+# Same key set as MATERIALS — §2.1 requires it, and rule 9 checks it.
+MATERIAL_DESCRIPTIONS = {
+    "0": "Tungsten heavy alloy: very dense, tough KE long-rod penetrator.",
+    "1": "Rolled homogeneous armor: the baseline steel plate.",
+}
 
 # 8 rod particles (material 0) + 12 plate particles (material 1) = 20 total.
 ROD = 8
@@ -86,6 +112,9 @@ def main() -> None:
         "domain": DOMAIN,
         "units": "mm-ms-g (see docs/PHYSICS.md)",
         "materials": MATERIALS,
+        "projectile": PROJECTILE,
+        "armor": ARMOR,
+        "material_descriptions": MATERIAL_DESCRIPTIONS,
     }
     with (OUT / "manifest.json").open("w", encoding="utf-8") as fh:
         json.dump(manifest, fh, indent=2)

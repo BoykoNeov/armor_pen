@@ -18,10 +18,11 @@ import struct
 import sys
 from pathlib import Path
 
-# v2 (milestone 13) appended the `internal_energy` column. v1 is deliberately NOT
-# kept: every cache the solver emits is rebaked to v2, so accepting v1 would only
-# let a stale pre-milestone-13 cache validate clean and look current.
-SUPPORTED_SCHEMA_VERSIONS = {2}
+# v3 added the scenario block (§2.1). Older versions are deliberately NOT kept:
+# every cache in the repo is migrated to v3, so accepting v2 would only let a
+# stale cache validate clean and look current. (v2 dropped v1 for the same
+# reason, and v1 for the same reason before that.)
+SUPPORTED_SCHEMA_VERSIONS = {3}
 REQUIRED_FIELDS = {
     "schema_version": int,
     "scenario": str,
@@ -33,6 +34,28 @@ REQUIRED_FIELDS = {
     "domain": dict,
     "units": str,
     "materials": dict,
+    "projectile": dict,
+    "armor": list,
+    "material_descriptions": dict,
+}
+
+# §2.1: `projectile` key -> accepted JSON type(s). `tail_velocity` is the odd one
+# — null means "uniform", which is what every KE deck is, so None is a legitimate
+# VALUE here and not a missing field.
+PROJECTILE_FIELDS = {
+    "kind": str,
+    "material": str,
+    "length": (int, float),
+    "diameter": (int, float),
+    "velocity": (int, float),
+    "tail_velocity": (int, float, type(None)),
+    "angle_deg": (int, float),
+    "nose_shape": str,
+}
+ARMOR_LAYER_FIELDS = {
+    "material": str,
+    "thickness": (int, float),
+    "standoff": (int, float),
 }
 
 
@@ -79,6 +102,68 @@ def _check_manifest(manifest: dict) -> None:
             raise CacheInvalid(f"domain missing {key!r}")
     if not (dom["xmax"] > dom["xmin"] and dom["ymax"] > dom["ymin"]):
         raise CacheInvalid(f"degenerate domain: {dom}")
+
+    _check_scenario_block(manifest)
+
+
+def _check_scenario_block(manifest: dict) -> None:
+    """Rule 9 — the v3 scenario block is present and well-formed (§2.1).
+
+    Structural only, and that is the honest ceiling: this file depends on neither
+    half (CLAUDE.md §3), so it cannot know that `tungsten_rod` is dense or that
+    1600 m/s is what the deck said. It checks the shape and the one cross-field
+    invariant it CAN see — that `material_descriptions` and `materials` agree on
+    their key set. The deck-vs-bake agreement that would catch a stale
+    description is guarded where the deck is in scope: `run.py --remanifest`.
+    """
+    proj = manifest["projectile"]
+    for key, typ in PROJECTILE_FIELDS.items():
+        if key not in proj:
+            raise CacheInvalid(f"projectile missing required key {key!r} (§2.1)")
+        if not isinstance(proj[key], typ):
+            raise CacheInvalid(
+                f"projectile[{key!r}] has type {type(proj[key]).__name__}, "
+                f"expected {typ}"
+            )
+    # bool is a subclass of int in Python, so the isinstance checks above would
+    # wave through `"velocity": true`. Nothing emits that, but a numeric field
+    # holding a bool is precisely the kind of thing a validator exists to refuse.
+    for key, typ in PROJECTILE_FIELDS.items():
+        if typ is not str and isinstance(proj[key], bool):
+            raise CacheInvalid(f"projectile[{key!r}] must be a number, not a bool")
+
+    armor = manifest["armor"]
+    if not armor:
+        raise CacheInvalid("armor must be a non-empty array (§2.1)")
+    for i, layer in enumerate(armor):
+        if not isinstance(layer, dict):
+            raise CacheInvalid(f"armor[{i}] must be an object, got {type(layer).__name__}")
+        for key, typ in ARMOR_LAYER_FIELDS.items():
+            if key not in layer:
+                raise CacheInvalid(f"armor[{i}] missing required key {key!r} (§2.1)")
+            if not isinstance(layer[key], typ) or (
+                typ is not str and isinstance(layer[key], bool)
+            ):
+                raise CacheInvalid(
+                    f"armor[{i}][{key!r}] has type {type(layer[key]).__name__}, "
+                    f"expected {typ}"
+                )
+
+    # The one invariant worth catching: both maps are emitted together from one
+    # LIBRARY, so they only fall out of step if something upstream is wrong.
+    descs = manifest["material_descriptions"]
+    if set(descs) != set(manifest["materials"]):
+        missing = sorted(set(manifest["materials"]) - set(descs))
+        extra = sorted(set(descs) - set(manifest["materials"]))
+        raise CacheInvalid(
+            f"material_descriptions must have the same key set as materials "
+            f"(§2.1); missing {missing}, unexpected {extra}"
+        )
+    for key, value in descs.items():
+        if not isinstance(value, str) or not value.strip():
+            raise CacheInvalid(
+                f"material_descriptions[{key!r}] must be a non-empty string"
+            )
 
 
 def _check_binary(cache_dir: Path, manifest: dict) -> None:

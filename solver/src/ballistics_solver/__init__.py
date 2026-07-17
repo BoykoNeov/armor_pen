@@ -11,4 +11,8 @@ __version__ = "0.0.1"
 # The cache format this solver emits. Must match docs/CACHE_FORMAT.md and the
 # validator/loader. Bumping this is a format change — follow CLAUDE.md §9.
 # v2 (milestone 13): appended the `internal_energy` column.
-CACHE_SCHEMA_VERSION = 2
+# v3: added the scenario block (`projectile` / `armor` / `material_descriptions`)
+#     so a reader can say what it is drawing. Manifest-only — no column moved, so
+#     the 30 shipped caches were migrated with `run.py --remanifest` rather than
+#     rebaked (CACHE_FORMAT §2.2).
+CACHE_SCHEMA_VERSION = 3

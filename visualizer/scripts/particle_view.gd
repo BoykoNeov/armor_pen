@@ -123,13 +123,25 @@ var _fit_zoom: float = 1.0     # zoom that frames the whole domain (the F-key re
 var _fit_center := Vector2.ZERO
 var _hud_info: Label
 var _legend_box: HBoxContainer
+var _materials_box: GridContainer
+var _materials_caption: Label
 var _timeline_fill: ColorRect
 var _speed_slider: HSlider
+var _fps_field: LineEdit
 var _hud_panel: PanelContainer
 
 # Color modes reachable with the C key: material_id plus every scalar
 # attribute in the manifest that isn't a position.
 var _color_modes: PackedStringArray = PackedStringArray()
+
+# Material ids that ACTUALLY occur in the data, ascending.
+#
+# Not the manifest's `materials` keys: the solver emits its entire library there,
+# so those are seven ids on every deck, and CACHE_FORMAT §2.1 says so in as many
+# words — "a reader must key off the ids actually present in `material_id` rather
+# than assuming the map is a guest list". Listing the keys would caption an RHA
+# deck with the ERA and NERA fillers it does not contain.
+var _present_ids: Array = []
 
 
 func _ready() -> void:
@@ -152,6 +164,7 @@ func _ready() -> void:
 		return
 
 	_collect_color_modes()
+	_collect_present_materials()
 
 	multimesh = MultiMesh.new()
 	multimesh.transform_format = MultiMesh.TRANSFORM_2D
@@ -218,7 +231,12 @@ func _unhandled_input(event: InputEvent) -> void:
 		# retunes the speed AND zooms the camera 1.15x (measured). Guarding the
 		# whole panel, not just the slider, also stops scroll-over-legend from
 		# yanking the view.
-		if _hud_panel != null and _hud_panel.get_global_rect().has_point(event.position):
+		#
+		# `visible` is load-bearing, not a tidy-up: a hidden panel still HAS a
+		# rect, so without it H would leave an invisible dead zone over the
+		# top-left of the field that silently eats the wheel.
+		if _hud_panel != null and _hud_panel.visible \
+				and _hud_panel.get_global_rect().has_point(event.position):
 			return
 		match event.button_index:
 			MOUSE_BUTTON_WHEEL_UP:
@@ -273,6 +291,12 @@ func _unhandled_input(event: InputEvent) -> void:
 			var i := (_color_modes.find(color_by) + 1) % _color_modes.size()
 			_set_color_mode(_color_modes[i])
 			_show_frame(_frame)
+		KEY_H:
+			# The caption is deliberately dense — it is the only place the viewer
+			# can say what it is drawing — and dense means it covers part of the
+			# field. Rather than trim it back to fit, let it move: the panel is
+			# worth reading once and then wanting gone.
+			_hud_panel.visible = not _hud_panel.visible
 		KEY_ESCAPE:
 			get_tree().quit(0)
 
@@ -373,6 +397,23 @@ func _inferno(t: float) -> Color:
 
 # --- color modes -------------------------------------------------------------
 
+## Which materials this deck actually contains. Frame 0 is enough and is not a
+## sample: particle count is fixed and a particle never changes material
+## (CACHE_FORMAT §5 — spall is a `damage` flag, not a new material), so the set of
+## ids present at t=0 is the set present for the whole bake.
+func _collect_present_materials() -> void:
+	_present_ids.clear()
+	if _mat_col < 0:
+		return
+	var data := _loader.read_frame(0)
+	var stride := _loader.attributes.size()
+	var seen := {}
+	for p in _loader.particle_count:
+		seen[int(round(data[p * stride + _mat_col]))] = true
+	_present_ids = seen.keys()
+	_present_ids.sort()
+
+
 func _collect_color_modes() -> void:
 	_color_modes.clear()
 	if _mat_col >= 0:
@@ -394,6 +435,7 @@ func _set_color_mode(mode: String) -> void:
 		if not _color_hi.has(mode):
 			_color_hi[mode] = _scan_color_range(_color_col)
 		_color_span = maxf(_color_hi[mode], 1e-6)
+	_rebuild_materials()
 	_rebuild_legend()
 	_update_hud()
 
@@ -571,13 +613,26 @@ func _setup_hud() -> void:
 
 	box.add_child(_make_speed_row())
 
+	_rule(box)
+	_build_scenario_block(box)
+
+	_materials_caption = _caption(box, "MATERIALS")
+	# A grid, not a row of HBoxes: three real columns keep the names aligned so the
+	# descriptions read as a list rather than as ragged prose.
+	_materials_box = GridContainer.new()
+	_materials_box.columns = 3
+	_materials_box.add_theme_constant_override("h_separation", 7)
+	_materials_box.add_theme_constant_override("v_separation", 3)
+	box.add_child(_materials_box)
+
 	_legend_box = HBoxContainer.new()
 	_legend_box.add_theme_constant_override("separation", 10)
 	box.add_child(_legend_box)
 
+	_rule(box)
 	var keys := Label.new()
-	keys.text = "space play/pause   ←/→ step   slider or ↑/↓ speed   C color   " \
-		+ "R restart   wheel/±  zoom   drag pan   F fit   Esc quit"
+	keys.text = "space play/pause   ←/→ step   slider/field or ↑/↓ speed   C color   " \
+		+ "R restart   wheel/±  zoom   drag pan   F fit   H hide   Esc quit"
 	keys.add_theme_font_size_override("font_size", 11)
 	keys.add_theme_color_override("font_color", Color(0.55, 0.58, 0.64))
 	box.add_child(keys)
@@ -600,8 +655,13 @@ func _setup_hud() -> void:
 
 # --- playback speed ----------------------------------------------------------
 
-## The HUD's "stop ← → fast" row. The slider writes only frames_per_second; SPACE
-## still owns _playing, so the two stops compose instead of fighting.
+## The HUD's "stop ← → fast" row: a slider to sweep the range and a field to type
+## an exact rate. The slider is for finding a speed by feel; the field is for
+## saying "24" and getting 24 — its 100 log-spaced notches cannot land on a round
+## number, and a rate you can read but not enter is a readout, not a control.
+##
+## Both write only frames_per_second. SPACE still owns _playing, so the two stops
+## compose instead of fighting.
 func _make_speed_row() -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 7)
@@ -621,26 +681,95 @@ func _make_speed_row() -> HBoxContainer:
 	# ←/→ are frame-stepping. A focused slider treats them as its own decrement /
 	# increment and would swallow them the moment the slider is clicked.
 	_speed_slider.focus_mode = Control.FOCUS_NONE
-	_speed_slider.set_value_no_signal(_fps_to_slider(frames_per_second))
 	_speed_slider.value_changed.connect(_on_speed_changed)
 	row.add_child(_speed_slider)
 
+	_fps_field = LineEdit.new()
+	_fps_field.custom_minimum_size = Vector2(54, 0)
+	_fps_field.alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	_fps_field.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	_fps_field.add_theme_font_size_override("font_size", 12)
+	_fps_field.tooltip_text = ("frames of the bake per wall second.\n"
+		+ "enter to apply — above ~10 the viewer starts skipping baked frames")
+	# Unlike the slider this one MUST take focus (you cannot type into a widget
+	# that will not hold the caret), so while it is focused it swallows SPACE and
+	# ←/→. That is why submitting hands focus straight back — see _on_fps_submitted.
+	_fps_field.text_submitted.connect(_on_fps_submitted)
+	# Clicking away mid-edit abandons the edit rather than committing half a
+	# number: the field re-reads whatever frames_per_second actually is.
+	_fps_field.focus_exited.connect(_sync_speed_widgets)
+	row.add_child(_fps_field)
+
+	var suffix := Label.new()
+	suffix.text = "fps"
+	suffix.add_theme_font_size_override("font_size", 12)
+	suffix.add_theme_color_override("font_color", Color(0.55, 0.58, 0.64))
+	suffix.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(suffix)
+
+	_sync_speed_widgets()
 	return row
 
 
 func _on_speed_changed(v: float) -> void:
 	frames_per_second = _slider_to_fps(v)
+	_sync_speed_widgets()
 	_update_hud()
 
 
-## Write the speed from code (↑/↓) and mirror it onto the slider.
-## set_value_no_signal, or the slider's value_changed would call straight back
-## into _slider_to_fps and quantize the value a second time.
+## Enter in the fps field. Note what is NOT here: any touch of _playing. Typing a
+## rate sets the rate; SPACE owns pause. Keeping them independent is what lets
+## resume just pick the field back up with no saved-speed variable.
+func _on_fps_submitted(text: String) -> void:
+	var t := text.strip_edges()
+	if t.is_valid_float():
+		_apply_fps(t.to_float(), true)
+	# Garbage is REVERTED, never obeyed. `"abc".to_float()` is 0.0, and 0.0 here
+	# means "hard stop" — so parsing without checking would turn a typo into a
+	# frozen viewer and look like a bug in playback rather than a bad keystroke.
+	_sync_speed_widgets()
+	# Hand ←/→ and SPACE back to the viewer; otherwise the field keeps eating them
+	# and the keyboard silently stops working after one edit.
+	_fps_field.release_focus()
+
+
+## The ONE writer of frames_per_second, so the two widgets cannot disagree.
+## `allow_stop` is the difference between the field (0 = freeze, deliberate) and
+## ↑/↓ (which must never land on the stop — see the maxf guard at their callsite).
+func _apply_fps(fps: float, allow_stop: bool) -> void:
+	var v := clampf(fps, 0.0 if allow_stop else MIN_FPS, MAX_FPS)
+	# Nothing lives between the hard stop and the slider's first notch: position 0
+	# is 0 fps and position 1 is MIN_FPS. A value in between is unrepresentable, so
+	# the slider would round it and then the field and the slider would be showing
+	# different speeds. Snap up — 0 stays the only stop.
+	if v > 0.0 and v < MIN_FPS:
+		v = MIN_FPS
+	frames_per_second = v
+	_sync_speed_widgets()
+	_update_hud()
+
+
+## Write the speed from code (↑/↓).
 func _set_fps(fps: float) -> void:
-	frames_per_second = clampf(fps, MIN_FPS, MAX_FPS)
+	_apply_fps(fps, false)
+
+
+## Mirror frames_per_second onto both widgets. set_value_no_signal, or the
+## slider's value_changed would call straight back in and quantize the value a
+## second time.
+func _sync_speed_widgets() -> void:
 	if _speed_slider != null:
 		_speed_slider.set_value_no_signal(_fps_to_slider(frames_per_second))
-	_update_hud()
+	# Never clobber the text under a caret — that would rewrite what is being
+	# typed, mid-keystroke.
+	if _fps_field != null and not _fps_field.has_focus():
+		_fps_field.text = _fps_text()
+
+
+## Below 10 fps a whole-number readout would show the bottom of the slider's
+## travel as a run of identical "1" steps, so keep a decimal down there.
+func _fps_text() -> String:
+	return String.num(frames_per_second, 0 if frames_per_second >= 10.0 else 1)
 
 
 func _slider_to_fps(v: float) -> float:
@@ -656,18 +785,157 @@ func _fps_to_slider(fps: float) -> float:
 	return clampf(1.0 + t * (SPEED_NOTCHES - 1.0), 1.0, SPEED_NOTCHES)
 
 
+# --- the scenario caption (CACHE_FORMAT §2.1) --------------------------------
+#
+# What the deck FIRED and what it fired AT, in words, always on screen — the
+# viewer knows only the cache format, so before v3 it drew a tungsten rod hitting
+# steel and could not say so, and every scalar color mode dropped even the
+# material names because the legend became a ramp.
+#
+# Everything here is PROVENANCE: it is what the solver seeded, not what the bake
+# did. `velocity` is the tip's speed at t=0 and nothing more — the live one is the
+# `vel_mag` column and the timeline. These strings are labels; nothing computes
+# from them (§2.1 forbids it, and it is exactly the shortcut that would make the
+# caption look like a measurement).
+
+## "tungsten_rod — KE long rod, 60.0 × Ø8.0 mm"
+func _penetrator_headline() -> String:
+	var p := _loader.projectile
+	if p.is_empty():
+		return ""
+	var what := "shaped-charge jet" if String(p.get("kind", "")) == "heat_jet" \
+		else "KE long rod"
+	return "%s — %s, %s × Ø%s mm" % [
+		String(p.get("material", "?")), what,
+		String.num(float(p.get("length", 0.0)), 1),
+		String.num(float(p.get("diameter", 0.0)), 1),
+	]
+
+
+## "1600 m/s · 0° obliquity · conical nose"
+func _penetrator_detail() -> String:
+	var p := _loader.projectile
+	if p.is_empty():
+		return ""
+	var parts := PackedStringArray()
+	var v := float(p.get("velocity", 0.0))
+	var tail = p.get("tail_velocity")     # JSON null -> null; `:=` cannot type this
+	if tail == null:
+		parts.append("%s m/s" % String.num(v, 0))
+	else:
+		# Say the gradient out loud. It is the entire difference between a rod and
+		# a jet — a jet STRETCHES because each element flies at its own speed —
+		# and it is invisible in the geometry, so a caption that dropped it would
+		# describe the two decks identically.
+		parts.append("%s → %s m/s graded" % [String.num(v, 0), String.num(float(tail), 0)])
+	parts.append("%s° obliquity" % String.num(float(p.get("angle_deg", 0.0)), 0))
+	parts.append("%s nose" % String(p.get("nose_shape", "?")))
+	return " · ".join(parts)
+
+
+## The armor stack, front to back, one row per layer plus a row per air gap.
+func _armor_rows() -> PackedStringArray:
+	var rows := PackedStringArray()
+	for layer in _loader.armor:
+		var standoff := float(layer.get("standoff", 0.0))
+		if standoff > 0.0:
+			rows.append("     ⌇ %s mm air" % String.num(standoff, 0))
+		rows.append("%s — %s mm" % [
+			String(layer.get("material", "?")),
+			String.num(float(layer.get("thickness", 0.0)), 1),
+		])
+	return rows
+
+
+func _caption(parent: Node, text: String) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", 10)
+	l.add_theme_color_override("font_color", Color(0.48, 0.52, 0.60))
+	parent.add_child(l)
+	return l
+
+
+func _body(parent: Node, text: String, col: Color) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", 12)
+	l.add_theme_color_override("font_color", col)
+	parent.add_child(l)
+	return l
+
+
+func _rule(parent: Node) -> void:
+	var r := ColorRect.new()
+	r.color = Color(1, 1, 1, 0.09)
+	r.custom_minimum_size = Vector2(0, 1)
+	parent.add_child(r)
+
+
+## Penetrator + armor. Built once: unlike the material list it does not depend on
+## the color mode, and unlike the info line it does not depend on the frame.
+func _build_scenario_block(box: VBoxContainer) -> void:
+	var head := _penetrator_headline()
+	if head != "":
+		_caption(box, "PENETRATOR")
+		_body(box, head, Color(0.88, 0.86, 0.80))
+		_body(box, _penetrator_detail(), Color(0.62, 0.66, 0.74))
+		# No material description here: the headline names the material and the
+		# MATERIALS list below describes every material in the deck, this one
+		# included. Printing it in both places says the same sentence twice.
+	var rows := _armor_rows()
+	if not rows.is_empty():
+		_caption(box, "ARMOR  (front to back)")
+		for r in rows:
+			_body(box, r, Color(0.78, 0.81, 0.87))
+
+
+## The material list. Always present — that is the point of it — but it is only a
+## COLOR KEY when material_id is the active color mode. In a scalar mode the
+## particles are on the inferno ramp and nothing on screen is tungsten-gold, so
+## showing gold swatches would be inventing a legend for colors that are not
+## there. The swatches go neutral and the caption says which it is.
+func _rebuild_materials() -> void:
+	if _materials_box == null:
+		return
+	for c in _materials_box.get_children():
+		c.queue_free()
+	var is_key := color_by == "material_id" and _mat_col >= 0
+	_materials_caption.text = "MATERIALS  (color key)" if is_key \
+		else "MATERIALS  (in this deck — colored by %s, see ramp)" % color_by
+	for mid in _present_ids:
+		var sq := ColorRect.new()
+		sq.color = MATERIAL_COLORS.get(mid, FALLBACK_COLOR) if is_key \
+			else Color(0.34, 0.36, 0.42)
+		sq.custom_minimum_size = Vector2(11, 11)
+		sq.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		_materials_box.add_child(sq)
+		_body(_materials_box, String(_loader.materials.get(str(mid), "id %d" % mid)),
+			Color(0.86, 0.84, 0.79) if is_key else Color(0.74, 0.77, 0.83))
+		_body(_materials_box, String(_loader.material_descriptions.get(str(mid), "")),
+			Color(0.55, 0.58, 0.66))
+	# Spall is a color-mode artifact, not a material: `damage > 0.5` tints a
+	# particle toward the spark tone, and only when material_id is doing the
+	# coloring. It has no id and belongs in the key only when the key is live.
+	if is_key:
+		var sq := ColorRect.new()
+		sq.color = SPARK_COLOR
+		sq.custom_minimum_size = Vector2(11, 11)
+		sq.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		_materials_box.add_child(sq)
+		_body(_materials_box, "spall", Color(0.86, 0.84, 0.79))
+		_body(_materials_box, "detached fragments (any material, damage > 0.5)",
+			Color(0.55, 0.58, 0.66))
+
+
 func _rebuild_legend() -> void:
 	if _legend_box == null:
 		return
 	for c in _legend_box.get_children():
 		c.queue_free()
-	if color_by == "material_id":
-		for key in _loader.materials:
-			var mid := int(key)
-			_legend_box.add_child(_swatch(MATERIAL_COLORS.get(mid, FALLBACK_COLOR),
-				String(_loader.materials[key])))
-		_legend_box.add_child(_swatch(SPARK_COLOR, "spall"))
-	else:
+	# Material mode needs nothing here: the always-on materials block above IS the
+	# key, and drawing a second swatch row would just say it twice.
+	if color_by != "material_id":
 		var grad := Gradient.new()
 		grad.offsets = PackedFloat32Array([0.0, 0.25, 0.5, 0.75, 1.0])
 		grad.colors = PackedColorArray([_inferno(0.0), _inferno(0.25), _inferno(0.5),
@@ -693,22 +961,6 @@ func _rebuild_legend() -> void:
 		_legend_box.add_child(hi)
 
 
-func _swatch(col: Color, label_text: String) -> HBoxContainer:
-	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", 4)
-	var sq := ColorRect.new()
-	sq.color = col
-	sq.custom_minimum_size = Vector2(11, 11)
-	sq.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	h.add_child(sq)
-	var l := Label.new()
-	l.text = label_text
-	l.add_theme_font_size_override("font_size", 12)
-	l.add_theme_color_override("font_color", Color(0.78, 0.80, 0.85))
-	h.add_child(l)
-	return h
-
-
 func _update_hud() -> void:
 	if _hud_info == null:
 		return
@@ -716,12 +968,11 @@ func _update_hud() -> void:
 	# Zoom reads as a percentage of the fit-the-domain baseline, so 100% is
 	# always "the whole field" no matter how big the scenario's domain is.
 	var zoom_pct := 100.0 if _camera == null else _camera.zoom.x / _fit_zoom * 100.0
-	# Below 10 fps a whole-number readout would show the bottom of the slider's
-	# travel as a run of identical "1 fps" steps, so keep a decimal down there.
-	var fps_txt := String.num(frames_per_second, 0 if frames_per_second >= 10.0 else 1)
+	# No fps here: the speed row's field is the readout now, and two live displays
+	# of one variable is one more than can be kept honest.
 	var stopped := "" if _playing and frames_per_second > 0.0 else "    ⏸ paused"
-	_hud_info.text = "frame %d / %d    t = %.3f ms    %s fps    zoom %.0f%%%s" % [
-		_frame, _loader.frame_count - 1, t_ms, fps_txt, zoom_pct, stopped,
+	_hud_info.text = "frame %d / %d    t = %.3f ms    zoom %.0f%%%s" % [
+		_frame, _loader.frame_count - 1, t_ms, zoom_pct, stopped,
 	]
 	if _timeline_fill != null and _loader.frame_count > 1:
 		_timeline_fill.anchor_right = float(_frame) / float(_loader.frame_count - 1)

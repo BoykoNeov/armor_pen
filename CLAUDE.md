@@ -86,16 +86,22 @@ caches/apfsds_vs_rha/
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 3,
   "scenario": "apfsds_vs_rha",
   "particle_count": 240000,
   "frame_count": 90,
-  "attributes": ["pos_x", "pos_y", "vel_mag", "stress", "damage", "material_id"],
+  "attributes": ["pos_x", "pos_y", "vel_mag", "stress", "damage", "material_id", "internal_energy"],
   "dtype": "float32",
   "frame_dt": 2.0e-6,
   "domain": {"xmin": 0, "xmax": 200, "ymin": 0, "ymax": 100},
   "units": "mm-ms-g (see docs/PHYSICS.md)",
-  "materials": {"0": "tungsten_rod", "1": "rha", "2": "ceramic", "3": "era_filler"}
+  "materials": {"0": "tungsten_rod", "1": "rha", "2": "ceramic", "3": "era_filler"},
+
+  "projectile": {"kind": "kinetic", "material": "tungsten_rod", "length": 60.0,
+                 "diameter": 8.0, "velocity": 1600.0, "tail_velocity": null,
+                 "angle_deg": 0.0, "nose_shape": "conical"},
+  "armor": [{"material": "rha", "thickness": 40.0, "standoff": 0.0}],
+  "material_descriptions": {"0": "Tungsten heavy alloy: very dense, tough...", "1": "..."}
 }
 ```
 
@@ -107,8 +113,11 @@ Design commitments that keep this loosely coupled:
 - **The visualizer reads the attribute layout from the manifest** — it must NOT hardcode column offsets. The solver can add a new attribute (e.g. `temperature`) by appending to `attributes` and the viewer keeps working, coloring by whatever it's told to.
 - **Substeps ≠ frames.** The solver runs thousands of tiny physics substeps but dumps only every Nth as a render frame. `frame_dt` documents the spacing. **Target a uniform `frame_dt` (currently `2.0e-7` s), not a frame count**: smoothness is frames-per-simulated-microsecond, so a fixed frame budget makes long decks jerkier than short ones — the oblique decks used to be the least smooth precisely because they were the longest. Set `total_time` per deck to cover the whole event, then derive `frame_count = total_time / frame_dt`. Decks currently run 200–700 frames; frame count drives cache size and viewer cost, **not** solver cost (substeps are derived from `frame_dt` and the CFL bound).
 - Alternative per-frame files (`frame_00042.bin`) are allowed by the spec for crash-resilient/streamable bakes; v1 uses a single blob for simplicity. Either way the manifest is authoritative.
+- **The scenario block is provenance, NOT data** (v3, CACHE_FORMAT §2.1). `projectile` / `armor` / `material_descriptions` exist because the viewer knows only this format and could otherwise draw a tungsten rod hitting steel without being able to say so. They describe what was **seeded**: `projectile.velocity` is the tip's speed at t=0, an input. **Never measure from them** — the live velocity is the `vel_mag` column, and that is the only honest place to read one.
 
 **Rule: any change to what's in a cache is a change to `docs/CACHE_FORMAT.md` and a bump of `schema_version`.** `tools/validate_cache.py` must pass on every cache the solver emits.
+
+**A manifest-only change does not need a rebake.** v3 moved no byte of `frames.bin`, so the 30 caches were migrated in place with `python -m ballistics_solver.run <deck> --out <cache> --remanifest` (seconds, vs hours of GPU) — and, more importantly, re-running the physics would have re-rolled every documented figure in this repo within its ~0.11 % scatter for a text label, since MPM `atomic_add` ordering is not deterministic. `--remanifest` refuses if the deck has drifted from the bake. See CACHE_FORMAT §2.2.
 
 ---
 
