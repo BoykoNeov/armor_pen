@@ -207,11 +207,20 @@ damp ~1 %, so it stays off; it is kept because it is the prerequisite for
 Mie-Grüneisen (AV work currently dissipates to *nothing*). It is inert on KE decks
 (≤0.20 %, at the scatter floor). See PHYSICS §3.9.
 
-**Next:** **Mie-Grüneisen** (the thermal term Murnaghan lacks — it is what still
-makes the pressure error velocity-dependent, and the one thing that would give AV
-somewhere to put its energy), a **dissipation path for `nera_filler`**
-(PHYSICS §3.6), and **domain/BC** work so oblique-deck debris never reaches a
-wall. See the per-directory `CLAUDE.md` files for the build order.
+**Since shipped:** **Mie-Grüneisen** with an energy equation (§3.10 — and AV is
+default-**on** now, because carrying shock heating into `e` is its real job, not
+damping the ring above), a **dissipation path for `nera_filler`** (§3.6.1 — which
+falsified the "79 % volume loss" this repo had believed for two milestones), a
+**boundary fix** (§1.1.1 — the free-slip *high* walls had never fired, since
+milestone 1), and a **recalibrated CFL bound** (§3.11 — the margin had been
+multiplying a volume *ratio*, which put the design state past every material's EOS
+pole on all 30 decks).
+
+**Next:** **domain/BC** work so oblique-deck debris never reaches a wall (the
+standoff family's wall reflections are also not common-mode at matched fraction),
+a **volumetric/compaction criterion** for confined fillers, and the **jet's grid
+resolution** — it is only 8 cells across, which limits every jet *depth* claim here
+(§3.8). See the per-directory `CLAUDE.md` files for the build order.
 
 ## Quick start
 
