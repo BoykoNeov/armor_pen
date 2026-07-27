@@ -2296,6 +2296,13 @@ Textbook / public-domain sources this backbone draws on:
 - **Plasticity:** von Mises yield criterion and radial-return mapping — any
   computational plasticity text (e.g. Simo & Hughes, *Computational
   Inelasticity*).
+- **Porous compaction (P-α):** Herrmann, *"Constitutive equation for the dynamic
+  compaction of ductile porous materials"* (1969); Carroll & Holt, *"Static and
+  dynamic pore-collapse relations for ductile porous materials"* (1972). Cited
+  even though **nothing was built from them** — §3.12 closes milestone 15 as a
+  negative, and the argument that pore collapse is inert here rests on what these
+  two papers say a crush-up curve *is*. A reason not to build something is a
+  public-physics claim like any other and gets a citation like any other.
 
 Nothing classified or export-controlled enters this repo; public physics is the
 ceiling here by construction (CLAUDE.md §10).

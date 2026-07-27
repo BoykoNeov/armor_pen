@@ -65,6 +65,15 @@ def _deck_contact_pressure(scenario) -> float:
     physical shock, and multiplying by a stability constant that has shipped at 3
     and 4 would make a physics test depend on a tunable. The margin only makes the
     gap larger, so dropping it is the conservative direction.
+
+    YES, THIS RE-IMPLEMENTS ``bake``'s deck-wide arithmetic, which
+    ``test_cfl_sizing.py`` warns against ("a test that recomputed ``Jd`` the way
+    ``bake`` does would be satisfied by copying the bug"). That warning is about
+    tests CHECKING THE SIZING CODE, where re-running the formula is circular. These
+    tests check a MATERIAL-AND-DECK relation — is any shock in this repo near a
+    crush-up pressure — and would hold whatever ``bake`` did with the number. If the
+    deck-wide posture ever changes, ``test_cfl_sizing.py`` is the file that should
+    notice; this one only needs a defensible upper bound on what the filler sees.
     """
     proj = materials.get(scenario.projectile.material)
     names = {scenario.projectile.material, *(a.material for a in scenario.armor)}
@@ -101,6 +110,18 @@ def test_era_filler_ignites_before_its_pores_could_finish_collapsing():
     hands off to the detonation state machine, and that happens BELOW the pressure
     at which a pressed powder's pores finish collapsing. So the compaction branch
     would act over a sliver and then be overwritten.
+
+    THE 191.8-vs-500 GAP IS NOT THE SAFETY MARGIN — do not read it as one. ``p_ign``
+    here is a COLD pressure (``_mg_p_cold_host`` omits the thermal term ``Gamma0*rho0*e``),
+    and ignition is a shock event, so the real pressure at handoff is HIGHER than this
+    and the apparent 2.6x is thinner than it looks. That is the one direction a guard
+    should not err in, so the argument is deliberately NOT the pressure ordering.
+
+    THE LOAD-BEARING FACT IS THE HANDOFF ITSELF: ``_update_reactive`` ignites on
+    ``det(F) < ignition_compression``, a VOLUME criterion, so era_filler leaves the
+    ordinary constitutive path at J=0.98 whatever pressure that turns out to be. The
+    assert below is the cheap, derived proxy that goes red when the handoff moves far
+    enough to matter (see the red-check mutation: lowering ``ignition_compression``).
     """
     era = materials.get("era_filler")
     mu, lam = mpm._lame(era.youngs_modulus, era.poisson_ratio)
