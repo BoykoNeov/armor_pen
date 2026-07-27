@@ -26,6 +26,19 @@
 #      8 cells -> 1.229      12 cells -> 1.383      16 cells -> 1.429  (via dx)
 #                                                   16 cells -> 1.501  (via diameter)
 #
+# !! THOSE FOUR RATIOS ARE THE MURNAGHAN-ERA MEASUREMENT and were never re-read
+# through M13's Mie-Gruneisen EOS or M14's P=4 CFL margin, both of which rebaked
+# every cache. Re-measured 2026-07-27 (milestone 17):
+#
+#      8 cells -> 1.2657    12 cells -> 1.4573    16 cells -> 1.4968 (via dx)
+#                                                 16 cells -> 1.5587 (via diameter)
+#
+# The prediction is unchanged at 1.5357 and every conclusion above survives -- but
+# the fat-jet row now OVERSHOOTS it by +1.5 % where it sat 2.3 % under. Milestone 17
+# then decomposed what remains of the two 16-cell routes' 4.1 % disagreement: ~39 %
+# of it is the TIMESTEP the dx ladder drags along (dt is CFL-bound), ~61 % is not.
+# See PHYSICS §3.8 and §3.14, and the `standoff_conv_dt*` partner decks.
+#
 # monotone toward the predicted 1.536, and the two 16-cell configurations land close
 # to each other despite sharing no grid and no jet — so **cells across the jet is the
 # controlling parameter**, and the shortfall is numerical rather than physical. Do

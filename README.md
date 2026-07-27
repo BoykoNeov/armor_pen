@@ -174,13 +174,20 @@ to it: `Z = 168 + S`. Depth at a *matched consumed element* is then proportional
 provably so for **any** `u(v)`, strength included.
 
 > **The shipped decks under-read it, and that is the finding.** Measured S90/S0 depth
-> ratio **1.229** against **1.536** predicted. The jet is 3 mm across = **8 cells**,
+> ratio **1.2657** against **1.536** predicted. The jet is 3 mm across = **8 cells**,
 > and it *thins as it stretches* to ~3. Refining the grid walks the ratio up
-> **1.229 → 1.383 → 1.429**, and a **6 mm jet at the shipped resolution** — 16 cells
+> **1.2657 → 1.4573 → 1.4968**, and a **6 mm jet at the shipped resolution** — 16 cells
 > across by fattening instead of refining, an independent route the derivation allows
-> because it is diameter-independent — reads **1.501**, within scatter of the
+> because it is diameter-independent — reads **1.5587**, within scatter of the
 > prediction. **Cells across the jet is the controlling parameter**; the shortfall is
 > numerical.
+>
+> *(Re-measured at milestone 17 on the shipped P=4 caches. The M10-era figures —
+> 1.229 / 1.383 / 1.429 / 1.501 — had survived two rebakes unread; every conclusion
+> here held, and the fat-jet row moved from 2.3 % under the prediction to 1.5 % over
+> it. Milestone 17 then decomposed the two 16-cell routes' remaining 4.1 %
+> disagreement: **~39 % of it is the timestep the `dx` ladder drags along, ~61 % is
+> not.**)*
 
 Reported as a trend, not a value: the convergence order is ill-conditioned, so no
 extrapolated number is quoted, and "converges toward" is not "converged". Two traps

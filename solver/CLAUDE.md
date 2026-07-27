@@ -301,6 +301,10 @@ Grow the reference MLS-MPM incrementally, validating visually with
    `standoff_conv_*` decks that exist to measure how wrong the shipped four are.
    Zero new solver code — `ArmorLayer.standoff` did the whole job. Measure with
    `tools/measure_standoff.py --family` / `--convergence`.
+   - > **⚠️ EVERY RATIO IN THIS ENTRY IS MURNAGHAN-ERA — re-measured at M17 (below).**
+     > Today: **1.2657 / 1.4573 / 1.4968 / 1.5587**, under-read **~2.0×** on the
+     > excess, fat jet **+1.5 % OVER** the prediction rather than 2.3 % under. The
+     > conclusions all held; only the absolutes moved. Re-measure, never translate.
    - **The shipped decks under-read the effect ~2.3× on the excess and are NOT
      grid-converged. Do not quote their ratio as the model's answer.** Measured
      S90/S0 = 1.229 vs 1.536 predicted a priori. The physics lives in the
@@ -310,7 +314,9 @@ Grow the reference MLS-MPM incrementally, validating visually with
      jet DEPTH claim, and it is reached identically by refining `dx` (1.229 → 1.383 →
      1.429 at 8/12/16 cells) or by fattening the jet (6 mm at the shipped `dx` = 16
      cells → 1.501, within scatter of the prediction). The derivation is
-     diameter-independent, which is what licenses the second route.
+     diameter-independent, which is what licenses the second route. **M17 decomposed
+     the two 16-cell routes' residual disagreement: ~39 % of it is the `dt` the `dx`
+     ladder drags along, ~61 % is not.**
    - **This is why §3.4 was right to refuse a depth comparison** — for a second,
      independent reason it did not know about. Kinematic claims are safe (free-flight
      markers don't lean on grid coupling); depth claims are not.
@@ -701,7 +707,9 @@ and the resolution guard **217 829 → 0** — neither was ever an EOS problem.
      seeding and impact instant. The residual metric is still read on a **matched**
      clock (4 µs after each arm's own breakout), because it lives entirely after
      perforation.
-   - **It predicts §3.8's open 5 % gap.** `_impact_pressure` never sees diameter and
+   - **It predicts §3.8's open 5 % gap.** ✅ **TESTED at M17: the gap is 4.13 % on
+     today's caches (the 5 % was Murnaghan-era), and `dt` is only ~39 % of it.**
+     `_impact_pressure` never sees diameter and
      `standoff_conv_d6mm_s00` runs the *shipped* `grid_resolution: 1440`, so the
      fat-jet route to 16 cells is **dt-free** and the dx route is not — and the dx
      route is the one reading low, the direction a finer `dt` pushes. **Not tested**

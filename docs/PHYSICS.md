@@ -2483,6 +2483,22 @@ dt-only pair reproduces the shipped 1.229 (the gap is then not about `dt`), and
 supported if it moves the ratio *down* from 1.229, in the direction the `dx` route
 is dragged.
 
+> **✅ TESTED — milestone 17 (§3.14), and the answer is *partly*. Three corrections
+> to the paragraphs above, which are kept as M16 wrote them.**
+> * **The figures are Murnaghan-era.** §3.8's table had not been re-read through
+>   M13 or M14 when this was written; today the routes are **1.4968** and
+>   **1.5587** and the gap is **4.13 %**, not 5 %. The shipped arm is **1.2657**,
+>   not 1.229.
+> * **The substep target named here is the wrong arm.** dx250 is a **1.5×** `dt`
+>   refinement partnering 12 cells; the gap lives between dx188 (**2×**) and the fat
+>   jet. Both partners were baked — and the second point mattered, because the `dt`
+>   term turns out to **saturate** by 513 substeps.
+> * **The falsifier is written on the RATIO alone, and that was the real trap.** A
+>   finer `dt` suppresses both arms' *depth* 3–6 % while moving their quotient only
+>   1.6–1.9 %, so a ratio-only reading understates the effect ~3×. Neither branch of
+>   the falsifier was reached: `dt` accounts for **~39 %** of the gap and **~61 % is
+>   not `dt`** — supported in sign, falsified as a complete explanation.
+
 #### A by-product: how M14's CFL budget behaves under refinement
 
 Four arms, one design `c_max = 64101 mm/ms` on every one of them — confirming

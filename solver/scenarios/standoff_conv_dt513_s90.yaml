@@ -3,7 +3,8 @@
 # order-of-magnitude values, not any real system (CLAUDE.md §10).
 #
 # WHY THIS EXISTS. PHYSICS §3.8's convergence family reaches 16 cells across the
-# jet by two routes that disagree by ~5 %: refine `dx`, or fatten the jet at the
+# jet by two routes that disagree (§3.13 quoted ~5 %; re-measured at M17, 4.13 %):
+# refine `dx`, or fatten the jet at the
 # shipped `dx`. Milestone 16 (§3.13) predicted the cause — the substep is CFL-bound,
 # so REFINING THE GRID REFINES THE CLOCK WITH IT, while fattening the jet does not
 # touch `dt` at all. `_impact_pressure` and `_eos_equilibrium_j` never see the
@@ -42,7 +43,7 @@
 # and nothing else moves. Do not "fix" this deck by reaching for the margin.
 #
 # WHY 513 AND NOT ONLY 684. §3.13 wrote the experiment down as "a deck `dt` set to
-# the `standoff_conv_dx250` arms' substep count" — but the 5 % gap it predicts lives
+# the `standoff_conv_dx250` arms' substep count" — but the gap it predicts lives
 # between `standoff_conv_dx188` (2x the shipped `dt`) and `standoff_conv_d6mm` (the
 # shipped `dt`). 513 substeps is a 1.5x refinement and partners dx250 / 12 cells; it
 # does not reach either arm in the gap. The spec named the wrong arm. `dt684` is the
@@ -54,6 +55,17 @@
 # construction, since `min(deck_dt, cfl_dt)` only ever lowers `dt` — and any
 # `dx` x `dt` INTERACTION, which is why each decomposed row is clean while the trend
 # between rows is not.
+#
+#
+# THE RESULT (measured 2026-07-27, `python tools/measure_standoff.py --dt-decomposition`).
+# The dt-only term is -1.87 % at 513 substeps and -1.56 % at 684: the sign §3.13
+# predicted, and SATURATED by 513 -- the next 1.5x refinement moves it back +0.31 %,
+# only 1.5x the 0.2 % resolution floor, so "saturated" is claimed and "turned over" is
+# named. Against a two-route disagreement of +4.13 % (§3.13 quoted 5 %, from §3.8's
+# Murnaghan-era table; re-measured it is 4.13 %), that makes the timestep ~39 % of the
+# gap and ~61 % NOT dt -- supported in sign, falsified as a complete explanation.
+# The dx-only rows are the bigger result: +17.46 % (8->12 cells) and +20.27 % (8->16)
+# where the confounded ladder reads +15.3 % and +18.4 %. Full writeup: PHYSICS §3.14.
 #
 # DIAGNOSTIC deck, not for playback: `frame_count` is 75 to match the rest of the
 # `standoff_conv_*` family (cache size only — the measurement interpolates on

@@ -1,4 +1,4 @@
-# The TIMESTEP partner that tests §3.8's OPEN 5 % GAP — milestone 17.
+# The TIMESTEP partner that tests §3.8's OPEN TWO-ROUTE GAP — milestone 17.
 # Scenarios are DATA, not code (CLAUDE.md §9). Representative / illustrative
 # order-of-magnitude values, not any real system (CLAUDE.md §10).
 #
@@ -52,6 +52,17 @@
 # construction, since `min(deck_dt, cfl_dt)` only ever lowers `dt` — and any
 # `dx` x `dt` INTERACTION, which is why each decomposed row is clean while the trend
 # between rows is not.
+#
+#
+# THE RESULT (measured 2026-07-27, `python tools/measure_standoff.py --dt-decomposition`).
+# The dt-only term is -1.87 % at 513 substeps and -1.56 % at 684: the sign §3.13
+# predicted, and SATURATED by 513 -- the next 1.5x refinement moves it back +0.31 %,
+# only 1.5x the 0.2 % resolution floor, so "saturated" is claimed and "turned over" is
+# named. Against a two-route disagreement of +4.13 % (§3.13 quoted 5 %, from §3.8's
+# Murnaghan-era table; re-measured it is 4.13 %), that makes the timestep ~39 % of the
+# gap and ~61 % NOT dt -- supported in sign, falsified as a complete explanation.
+# The dx-only rows are the bigger result: +17.46 % (8->12 cells) and +20.27 % (8->16)
+# where the confounded ladder reads +15.3 % and +18.4 %. Full writeup: PHYSICS §3.14.
 #
 # DIAGNOSTIC deck, not for playback: `frame_count` is 75 to match the rest of the
 # `standoff_conv_*` family (cache size only — the measurement interpolates on
