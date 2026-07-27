@@ -263,9 +263,12 @@ that `dt` is CFL-bound, so refining the grid refines the **clock** with it, and 
 dt-only control decks show the two push **opposite ways on every metric**: a finer
 `dt` penetrates later and leaves a slower residual, a finer `dx` does each the other
 way. A CFL-coupled ladder therefore measures **the difference of two opposing
-errors, not the grid error** — and it cannot be un-coupled downward, since
-`dt = min(deck_dt, cfl_dt)` makes *fine `dx` at coarse `dt`* unreachable by
-construction. So the decomposition is an attribution argument, not a measurement.
+errors, not the grid error** — and the fix is not more grids but a **substep-matched
+`dt` partner per arm**, which is what the control decks are: one of them runs the
+*identical* 171 substeps as the 12-cell arm, so that pair differs in `dx` and
+nothing else and its difference is measured rather than inferred. What stays out of
+reach is the grid effect at the *shipped* arm's timestep — `dt = min(deck_dt,
+cfl_dt)` makes *fine `dx` at coarse `dt`* unreachable by construction.
 The deliverable is that **§3.4's refusal to quote this deck's jet depth now stands
 on a measurement of this deck** rather than an inference from §3.8's half-space:
 nothing is converged at 16 cells, the residual state is still moving (+31.6 → +45.1 %),

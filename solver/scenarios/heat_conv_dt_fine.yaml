@@ -18,13 +18,17 @@
 # 14's own defect (the bound gets read off the pole guard's extrapolated backstop).
 # Do not "fix" this deck by reaching for the margin.
 #
-#   grid_resolution 768, 110 substeps  -> `heat_vs_composite`  (the shipped arm)
-#   grid_resolution 768, 230 substeps  -> this deck            (dt alone, ~2.1x)
+#   grid_resolution 768,  110 substeps -> `heat_vs_composite` (the shipped arm)
+#   grid_resolution 768,  171 substeps -> `heat_conv_dt_mid`   (dt alone)
+#   grid_resolution 768,  230 substeps -> this deck            (dt alone, ~2.1x)
+#   grid_resolution 1200, 171 substeps -> `heat_conv_dx250`    (dx AND dt)
 #   grid_resolution 1600, 228 substeps -> `heat_conv_dx188`    (dx AND dt)
 #
-# So this deck carries the 16-cell arm's TEMPORAL resolution at the shipped arm's
-# SPATIAL resolution. Whatever it fails to reproduce of the refinement effect is
-# the part that is genuinely about cells across the jet.
+# There is ONE dt arm per dx arm, deliberately: this deck partners the 16-cell arm
+# (230 vs 228 substeps, a 0.9 % mismatch) and `heat_conv_dt_mid` partners the
+# 12-cell arm EXACTLY (171 each). Differencing a dx arm against its partner is a
+# MEASURED dx-only effect - which is the only way to get one out of a solver whose
+# substep is CFL-bound to the cell.
 name: heat_conv_dt_fine
 
 domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 120 }   # mm — identical to the shipped deck

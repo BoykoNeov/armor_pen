@@ -2357,20 +2357,44 @@ rather than measuring it. It also explains the non-monotonicity exactly: the
 16-cell arm carries 228 substeps of the opposing `dt` error against the 12-cell
 arm's 171, which drags its arrivals back toward the shipped value.
 
-Differencing each dx arm against its substep-matched dt partner attributes it:
+The dt partners are what make the `dx` effect **directly measurable**, and this is
+the point of baking two of them rather than one. `heat_conv_dx250` and
+`heat_conv_dt_mid` both run **150 frames × 171 substeps** at the same `frame_dt`,
+so their `dt` is not merely comparable, it is *identical* — the pair differs in
+`dx` and nothing else. Their difference is therefore a measurement:
 
-| dx alone | x=160 | x=190 | x=215 | x=235 | v_resid | through |
+| dx at matched dt | x=160 | x=190 | x=215 | x=235 | v_resid | through |
 |---|---|---|---|---|---|---|
-| 12 cells (vs the 171-substep arm) | −3.80 % | −2.69 % | −4.23 % | −7.45 % | +31.6 % | −23.3 % |
-| 16 cells (vs the 230-substep arm) | −3.08 % | −1.81 % | −4.24 % | −8.97 % | +45.1 % | −36.0 % |
+| 12 cells (`dx250` − `dt_mid`, both **171** substeps) | −3.80 % | −2.69 % | **−4.23 %** | **−7.45 %** | **+31.6 %** | **−23.3 %** |
+| 16 cells (`dx188` 228 − `dt_fine` 230) | −3.08 % | −1.81 % | **−4.24 %** | **−8.97 %** | **+45.1 %** | **−36.0 %** |
 
-**This decomposition is an attribution argument, not a measurement, and the
-solver cannot promote it.** It assumes the two errors add. Testing that needs the
-fourth cell of the 2×2 — **fine `dx` at coarse `dt`** — and that cell is
-**unreachable by construction**: `dt_sim = min(deck_dt, cfl_dt)`, so a deck may
-always refine `dt` below the CFL bound and may *never* coarsen it above one.
-(`frame_count` does not buy it either: it changes frames-per-`dt`, not `dt`.) The
-**measured** results are the joint ladder and the dt-only arms. Quote those.
+The 12-cell row is exact; the 16-cell row carries a **0.9 % substep mismatch**
+(228 vs 230), which is the closest the deck grid allows.
+
+**What this still cannot reach, and it is not the additivity of the two errors.**
+Two things:
+
+- **The `dx` effect at the SHIPPED arm's 110 substeps.** Getting it would need the
+  fourth cell of the 2×2 — fine `dx` at *coarse* `dt` — and that cell is
+  **unreachable by construction**: `dt_sim = min(deck_dt, cfl_dt)`, so a deck may
+  always refine `dt` below the CFL bound and may *never* coarsen it above one.
+  (`frame_count` does not buy it: it changes frames-per-`dt`, not `dt`.) So the
+  rows above are the `dx` effect measured *at 171 and at ~229 substeps*, not at
+  110, and no number here extrapolates one to the shipped arm.
+- **The `dx`×`dt` interaction.** Each row is measured at its own `dt`, so reading
+  the two of them as a **convergence sequence** (12 → 16 cells) mixes the grid
+  ladder with any interaction term. The individual rows are clean; the *trend
+  between them* is not, and that is the honest limit on `−7.45 → −8.97` and
+  `+31.6 → +45.1`.
+
+**Not every cell of that table is quotable.** Re-reading the whole decomposition at
+the 99.0 / 99.5 / 99.9 front percentile moves the **late** columns by ≤0.15 pp on
+arrival and ≤1.2 pp on the residual — far under the effects — but the **x=160**
+column swings **−4.09 / −3.80 / −2.85** (12 cells) and **−3.90 / −3.08 / −1.60**
+(16 cells). At the first interface the front is a few hundred nanoseconds old and
+the percentile definition dominates. **Quote x=215, breakout, residual velocity and
+mass-through. Do not quote the first interface**, and treat x=190 (spread ~0.4 pp
+against a 0.9 pp difference) as marginal.
 
 #### What this settles, and what it does not
 
@@ -2384,20 +2408,26 @@ always refine `dt` below the CFL bound and may *never* coarsen it above one.
   **growing in absolute terms at 16 cells**, with increments shrinking only slowly
   (0.43, 0.55). **16 cells is not enough for the residual state**, and §3.8's own
   warning applies unchanged: "converges toward" is not "converged".
-- **How wrong the shipped arm is, quantified:** it breaks out ~9 % late and its
-  residual runs ~45 % slow on the attribution above, ~4.4 % and ~33 % on the raw
-  ladder. Either way, **the shipped 8-cell cache must not be quoted for breakout
-  time or residual velocity.** Its kinematic claims (§3.4) are untouched — they are
-  measured Lagrangianly on free-flight markers, which do not lean on grid coupling.
-- **An unexplained residue, stated rather than smoothed:** after decomposition the
+- **How wrong the shipped arm is, quantified:** on the raw ladder it breaks out
+  ~4.4 % late with a ~33 % slow residual; measured at matched `dt` the grid's own
+  contribution is ~9 % and ~45 %. Either way, **the shipped 8-cell cache must not
+  be quoted for breakout time or residual velocity.** Its kinematic claims (§3.4)
+  are untouched — they are measured Lagrangianly on free-flight markers, which do
+  not lean on grid coupling.
+- **A residue, stated rather than smoothed — and one part of it withdrawn.** The
   two *early* interfaces move back *toward* the shipped value (−3.80 → −3.08,
-  −2.69 → −1.81) where the late ones grow. Non-monotone at 1000× the scatter floor.
-  No mechanism is offered.
+  −2.69 → −1.81) where the late ones grow. At **x=160 that is not resolvable**: the
+  percentile sweep above moves the same cells by more than the effect, so it is not
+  claimed. At **x=190** the difference is about twice its sensitivity and survives,
+  and the candidate mechanism is the one thing the design cannot reach — a
+  **`dx`×`dt` interaction**, since the two rows are measured at different `dt`.
+  Named, not demonstrated.
 
 #### The transferable lesson, and a prediction it makes about §3.8
 
 > **A CFL-coupled refinement study measures the DIFFERENCE OF TWO OPPOSING ERRORS,
-> not the grid error — and it cannot be un-coupled downward.**
+> not the grid error. The fix is a substep-matched dt partner per arm — not more
+> grids, which only add points to the same confounded ladder.**
 
 That applies retroactively to §3.8's own ladder, and it **predicts the one
 discrepancy that section left open**. §3.8 has two routes to 16 cells across the

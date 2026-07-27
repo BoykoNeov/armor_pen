@@ -668,15 +668,22 @@ and the resolution guard **217 829 → 0** — neither was ever an EOS problem.
      fastest at every interface, the 16-cell arm falls back between it and shipped).
      Not noise: run-to-run scatter here is **≤0.0024 %**.
    - **The transferable rule: a CFL-coupled refinement study measures the DIFFERENCE
-     OF TWO OPPOSING ERRORS, not the grid error — and it cannot be un-coupled
-     downward.** `dt_sim = min(deck_dt, cfl_dt)`, so a deck may always refine `dt`
-     below the bound and **never** coarsen it above one. The fourth cell of the 2×2
-     (fine `dx`, coarse `dt`) is **unreachable by construction**, so the `dx alone`
-     decomposition is an **attribution argument, not a measurement**. Quote the
-     joint ladder and the dt-only arms.
-   - **Isolate dt with the DECK dt, never `cfl_p_margin`.** The margin route works
-     through the EOS design state, and §3.11 is explicit that pushing the design `J`
-     down re-creates milestone 14's own defect.
+     OF TWO OPPOSING ERRORS, not the grid error — and the fix is a substep-matched
+     dt PARTNER per arm, not more grids.** `heat_conv_dt_mid` and `heat_conv_dx250`
+     both run 171 substeps at the same `frame_dt`, so their `dt` is *identical* and
+     their difference is a **measured** dx-only effect (`dt_fine`/`dx188` pair to
+     within 0.9 %). **Isolate with the DECK dt, never `cfl_p_margin`** — the margin
+     works through the EOS design state and §3.11 forbids pushing the design `J`
+     down (it re-creates M14's own defect).
+   - **What the pairs still cannot reach:** the dx effect at the SHIPPED arm's 110
+     substeps — fine `dx` at *coarse* `dt` is **unreachable by construction**
+     (`dt_sim = min(deck_dt, cfl_dt)` only ever lowers `dt`; `frame_count` changes
+     frames-per-`dt`, not `dt`) — and any **`dx`×`dt` interaction**, which is why
+     each decomposed row is clean but the 12→16 **trend between them** is not.
+   - **Not every decomposed cell is quotable.** Re-read at the 99.0/99.5/99.9 front
+     percentile, the late columns move ≤0.15 pp (arrival) and ≤1.2 pp (residual),
+     but **x=160 swings 2.3 pp** — more than the effect there. Quote x=215,
+     breakout, residual velocity, mass-through; **not the first interface**.
    - **§3.4's refusal to quote this deck's depth STANDS — now measured on this deck
      rather than inferred from §3.8's half-space.** That is the deliverable, and it
      is stronger than the partial retirement the milestone was opened to attempt.

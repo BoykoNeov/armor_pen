@@ -22,11 +22,16 @@
 #   grid_resolution 768,  171 substeps -> this deck           (dt alone)
 #   grid_resolution 1200, 171 substeps -> `heat_conv_dx250`   (dx AND dt)
 #
-# This is the 12-cell arm's PARTNER: same substep count, shipped grid. Its twin
-# `heat_conv_dt_fine` (230 substeps) partners the 16-cell arm's 228 the same way.
-# With one dt arm per dx arm, the decomposition is a difference of MEASURED arms
-# rather than an interpolation across the two, and the only assumption left is
-# that the two effects add.
+# This is the 12-cell arm's PARTNER, and the pairing is EXACT: same 171 substeps,
+# same frame_dt, shipped grid - so this deck and `heat_conv_dx250` differ in `dx`
+# and in nothing else, and their difference is a MEASURED dx-only effect rather
+# than an inference. Its twin `heat_conv_dt_fine` (230 substeps) partners the
+# 16-cell arm's 228 the same way, to within 0.9 %.
+#
+# What the pair still cannot reach: the dx effect at the SHIPPED arm's 110
+# substeps (fine dx at coarse dt is unreachable - `min(deck_dt, cfl_dt)` only ever
+# lowers dt), and any dx x dt interaction, which is why the 12-cell and 16-cell
+# rows are each clean but the TREND between them is not.
 name: heat_conv_dt_mid
 
 domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 120 }   # mm — identical to the shipped deck
