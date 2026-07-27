@@ -2656,9 +2656,19 @@ now calls — a pure host-side extraction, no kernel touched. It exists because 
 claim "these two decks run the same `dt`" can only be pinned against the *real*
 sizing path: re-deriving `ceil(frame_dt / min(deck, cfl))` in a test would be
 satisfied by copying a bug, the mistake `test_cfl_sizing` was written to avoid. It
-also lets a deck be checked before an hour of GPU. Verified behaviour-preserving by
-re-sizing **all 38 decks** and matching every runtime-printed substep count,
-including M16's documented 110 / 171 / 228 / 230.
+also lets a deck be checked before an hour of GPU:
+
+```bash
+python -m ballistics_solver.run scenarios/standoff_conv_dt684_s00.yaml --out /dev/null --dry-run
+# [dry-run] standoff_conv_dt684_s00: grid 1440 (dx=0.3750 mm), 75 frames x 684 substeps
+# [dry-run] dt=8.771930e-07 ms, bound by the DECK (deck 8.780e-07, CFL 1.755e-06 ms)
+```
+
+The pairing is legible from that alone — `standoff_conv_dx188_s00` prints the *same*
+`dt` and substep count from a different grid, bound by CFL where the partner is bound
+by its deck. Verified behaviour-preserving by re-sizing **all 38 decks** and matching
+every runtime-printed substep count, including M16's documented 110 / 171 / 228 / 230.
+**The caches did not move**: no rebake, and no figure outside §3.8 changed.
 
 #### A by-product: the CFL budget under temporal refinement
 

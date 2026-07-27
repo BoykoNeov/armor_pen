@@ -817,6 +817,7 @@ cd solver && pip install -e ".[dev]"     # installs warp-lang; or PYTHONPATH=src
 pytest                                   # schema smoke tests (no GPU)
 python -m ballistics_solver.run scenarios/apfsds_vs_rha.yaml --out ../caches/apfsds_vs_rha
 python -m ballistics_solver.run <deck> --out <dir> --cpu   # CPU fallback for debugging
+python -m ballistics_solver.run <deck> --out /dev/null --dry-run   # substeps, no GPU
 ```
 
 ## Toolchain: Warp, not Taichi (decided & migrated 2026-07-14)

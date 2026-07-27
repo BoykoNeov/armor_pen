@@ -149,6 +149,13 @@ def main(argv: list[str] | None = None) -> int:
              "leave frames.bin untouched (CACHE_FORMAT §2.2). Refuses if the deck "
              "has drifted from the bake. No GPU needed.",
     )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="do NOT bake: print the substep the deck would run at and exit. No GPU "
+             "needed, and --out is ignored. On a convergence deck the substep count "
+             "IS the experiment (PHYSICS §3.14), and the ceil window that lands on a "
+             "given count is narrow — check it here, before the GPU time.",
+    )
     args = parser.parse_args(argv)
 
     device = "cpu" if args.cpu else "cuda:0"
@@ -166,6 +173,19 @@ def main(argv: list[str] | None = None) -> int:
     # Deferred imports so `--help` and scenario parsing work without Warp.
     from .cache_writer import CacheWriter
     from . import mpm
+
+    # Also before the GPU assert: sizing the substep is host arithmetic, and the
+    # whole point of asking is to find out BEFORE spending the GPU (PHYSICS §3.14).
+    if args.dry_run:
+        p = mpm.plan_substeps(scenario)
+        print(f"[dry-run] {scenario.name}: grid {scenario.solver.grid_resolution} "
+              f"(dx={p['dx']:.4f} mm), {scenario.solver.frame_count} frames x "
+              f"{p['substeps']} substeps")
+        print(f"[dry-run] dt={p['dt_ms']:.6e} ms, bound by the {p['bound_by'].upper()} "
+              f"(deck {p['dt_deck_ms']:.3e}, CFL {p['dt_cfl_ms']:.3e} ms)")
+        print(f"[dry-run] c_max={p['c_max']:.0f} mm/ms at EOS design J={p['j_design']:.4f}, "
+              f"from p_design={p['p_design']:.0f} MPa")
+        return 0
 
     # GPU sanity check first — a silent CPU fallback is a real hazard (§11).
     import warp as wp
