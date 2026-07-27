@@ -1,0 +1,39 @@
+# Jet GRID-RESOLUTION study on the SHIPPED composite deck — milestone 16.
+# The 16-cell arm. Read `heat_conv_dx250.yaml`'s header first: it carries the
+# family's rationale, the three-grid ladder, and why the metric is an arrival-time
+# CURVE rather than depth at the end of a window this stack perforates.
+#
+# This is the finest arm, and it is the same `dx = 0.1875` mm that milestone 10's
+# `standoff_conv_dx188_*` decks used — so `cells across the jet` = 16 is reached
+# here by exactly the route §3.8 already characterised on a half-space, now applied
+# to the shipped composite stack.
+#
+# 16 cells is NOT converged and must not be reported as such. §3.8's two
+# independent 16-cell configurations (refine dx, or fatten the jet) still differ by
+# 5 %, so cells-across is dominant but not the only term. "Converges toward" is not
+# "converged".
+name: heat_conv_dx188
+
+domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 120 }   # mm — identical to the shipped deck
+
+projectile:
+  kind: heat_jet
+  material: copper_jet
+  length: 120.0
+  diameter: 3.0
+  velocity: 7000
+  tail_velocity: 2000
+  angle_deg: 0.0
+  nose_shape: blunt
+
+armor:
+  - { material: rha,     thickness: 10.0 }                 # front plate   x=150..160
+  - { material: ceramic, thickness: 25.0, standoff: 30.0 } # spaced ceramic x=190..215
+  - { material: rha,     thickness: 20.0 }                 # backing plate x=215..235
+
+solver:
+  grid_resolution: 1600   # THE VARIABLE: dx = 300/1600 = 0.1875 mm -> 16 cells across the jet
+  particles_per_cell: 4
+  dt: 5.0e-8
+  total_time: 3.0e-5
+  frame_count: 150    # frame_dt = 2.0e-7 s — the shipped cadence, kept so the arms align

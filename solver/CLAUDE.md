@@ -657,6 +657,55 @@ and the resolution guard **217 829 → 0** — neither was ever an EOS problem.
 - **It invalidated every boundary-adjacent figure** (see the stale-number note
   below, and PHYSICS §1.1.1). All re-measured; all conclusions held.
 
+14. **Milestone 16 — the jet's grid resolution, and the dt riding along with it
+   (PHYSICS §3.13).** The Next item M10 left. **Zero kernel code**: five decks
+   (`heat_conv_dx250`/`dx188`, `heat_conv_dt_mid`/`dt_fine`) and
+   `tools/measure_jet_grid.py`. Read §3.13 before quoting any jet timeline.
+   - **REFINING dx AND REFINING dt MOVE EVERY METRIC IN OPPOSITE DIRECTIONS**, and
+     `dt` is CFL-bound so the grid ladder drags the clock with it (110 → 171 → 228
+     substeps). The joint ladder is a **partial cancellation** that *understates*
+     the grid effect — and that is why it reads **non-monotone** (the 12-cell arm is
+     fastest at every interface, the 16-cell arm falls back between it and shipped).
+     Not noise: run-to-run scatter here is **≤0.0024 %**.
+   - **The transferable rule: a CFL-coupled refinement study measures the DIFFERENCE
+     OF TWO OPPOSING ERRORS, not the grid error — and it cannot be un-coupled
+     downward.** `dt_sim = min(deck_dt, cfl_dt)`, so a deck may always refine `dt`
+     below the bound and **never** coarsen it above one. The fourth cell of the 2×2
+     (fine `dx`, coarse `dt`) is **unreachable by construction**, so the `dx alone`
+     decomposition is an **attribution argument, not a measurement**. Quote the
+     joint ladder and the dt-only arms.
+   - **Isolate dt with the DECK dt, never `cfl_p_margin`.** The margin route works
+     through the EOS design state, and §3.11 is explicit that pushing the design `J`
+     down re-creates milestone 14's own defect.
+   - **§3.4's refusal to quote this deck's depth STANDS — now measured on this deck
+     rather than inferred from §3.8's half-space.** That is the deliverable, and it
+     is stronger than the partial retirement the milestone was opened to attempt.
+     **16 cells is NOT converged**: residual velocity (+31.6 → +45.1 %) and
+     mass-through (−23.3 → −36.0 %) are still growing. The shipped 8-cell cache must
+     not be quoted for breakout time or residual velocity; its §3.4 *kinematic*
+     claims are untouched.
+   - **The metric is the whole experiment, again — and here the obvious one is worse
+     than blind.** This stack perforates, and `depth_end` reads **102–112 mm through
+     84.8 mm of armor**: past the back face the leading edge is a free residual, so
+     the number is not a ceiling hiding a difference but a different quantity
+     *inventing* one. Use arrival times at the interfaces.
+   - **Lab time IS legitimate here.** §3.8's "never lab time" is a *standoff*
+     confound (a later impact penetrates for less of the window); these arms share
+     seeding and impact instant. The residual metric is still read on a **matched**
+     clock (4 µs after each arm's own breakout), because it lives entirely after
+     perforation.
+   - **It predicts §3.8's open 5 % gap.** `_impact_pressure` never sees diameter and
+     `standoff_conv_d6mm_s00` runs the *shipped* `grid_resolution: 1440`, so the
+     fat-jet route to 16 cells is **dt-free** and the dx route is not — and the dx
+     route is the one reading low, the direction a finer `dt` pushes. **Not tested**
+     (M10's territory; re-baking re-rolls a closed milestone). Experiment and
+     falsifier are written down in §3.13.
+   - **By-product on M14's constant:** design `c_max` is identical on all four arms
+     (the AV term really is `dx`-independent), and budget use runs **63 → 66 → 73 %**
+     across the dx ladder but **63 → 59 → 57 %** as `dt` refines at fixed `dx`. So
+     further **spatial** refinement is what would eventually breach `EOS_CFL_P_MARGIN`.
+     All four clean at P=4; no override needed.
+
 Don't rewrite from scratch. The full solver arc (milestones 1–13) is done.
 
 **Stale-number correction (measured 2026-07-16, updated 2026-07-17):** the "~16 %

@@ -42,7 +42,7 @@ caches/       gitignored bake outputs (large)
 
 ## Status
 
-All fourteen solver milestones are done, and the Godot viewer plays real bakes back in
+All sixteen solver milestones are done, and the Godot viewer plays real bakes back in
 motion. Every deck bakes on the RTX 5090 (NVIDIA Warp, sm_120) and passes
 `validate_cache`.
 
@@ -253,9 +253,33 @@ not a property of the filler, so the ~4.05 ceiling confirms that posture rather 
 arguing against it. **No kernel code, no rebake, no schema bump, no GPU** — three
 relations pinned in `test_compaction_scoping.py`, each verified red first.
 
-**Next:** the **jet's grid resolution** — it is only 8 cells across, which limits
-every jet *depth* claim here (§3.8). See the per-directory `CLAUDE.md` files for the
-build order.
+**The jet's grid resolution is now measured on the shipped deck** (§3.13), and the
+answer arrived with a companion nobody asked for. Refining `heat_vs_composite` from
+7.5 to 12 to 16 cells across the jet reads **non-monotone** — the 12-cell arm is the
+fastest at every interface in the stack — at 1000× a scatter floor this milestone
+had to measure for itself (**≤0.0024 %** on an arrival time; a repeat bake moves
+790 475 of 1 256 472 values and the front percentile does not care). The reason is
+that `dt` is CFL-bound, so refining the grid refines the **clock** with it, and two
+dt-only control decks show the two push **opposite ways on every metric**: a finer
+`dt` penetrates later and leaves a slower residual, a finer `dx` does each the other
+way. A CFL-coupled ladder therefore measures **the difference of two opposing
+errors, not the grid error** — and it cannot be un-coupled downward, since
+`dt = min(deck_dt, cfl_dt)` makes *fine `dx` at coarse `dt`* unreachable by
+construction. So the decomposition is an attribution argument, not a measurement.
+The deliverable is that **§3.4's refusal to quote this deck's jet depth now stands
+on a measurement of this deck** rather than an inference from §3.8's half-space:
+nothing is converged at 16 cells, the residual state is still moving (+31.6 → +45.1 %),
+and the shipped cache must not be quoted for breakout time or residual velocity.
+Its *kinematic* claims are untouched. **Zero kernel code** — five decks, one tool,
+ten tests, six mutations verified red.
+
+**Next:** two things, neither of them "refine the jet" again. **(1)** 16 cells is
+not enough for the **residual state** — velocity and mass-through are still growing
+there, so a 24-cell arm would say whether they turn over. **(2)** §3.13 makes a
+falsifiable prediction about §3.8's one open discrepancy — its two routes to 16
+cells disagree by 5 %, and the fat-jet route is the **dt-free** one — with the deck,
+the substep target and the falsifier all written down, untested. See the
+per-directory `CLAUDE.md` files for the build order.
 
 ## Quick start
 

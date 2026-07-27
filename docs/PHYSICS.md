@@ -2260,6 +2260,200 @@ cited rather than shipped.
 
 ---
 
+### 3.13 The jet's grid resolution — and the timestep riding along with it (milestone 16)
+
+Milestone 10 established that **cells across the jet** controls any jet *depth*
+claim (§3.8), and it established that on a 150 mm RHA **half-space**, with a
+standoff **ratio** as the metric. The shipped jet deck was never itself refined,
+so §3.4's refusal to quote `heat_vs_composite`'s depth rested on an *inference
+from a different geometry*. This milestone refines the shipped deck directly.
+
+Three arms, one variable, everything else identical to `heat_vs_composite`:
+`heat_conv_dx250` (`grid_resolution` 1200) and `heat_conv_dx188` (1600) join the
+shipped 768. The jet seeds **15 / 24 / 32 particle rows** across, i.e. **7.5 / 12 /
+16 cells**. Three grids, not two — two points are not a convergence study and this
+repo has been bitten by that four times (§3.5, §3.6.2). No Richardson order is
+extracted; §3.8 measured that order as ill-conditioned here.
+
+#### The metric, because the obvious one is worse than blind
+
+This stack **perforates** — the tip clears the back face at ~24 µs of a 30 µs
+window. §3.8 chose a half-space precisely to avoid that, which is exactly why the
+shipped composite deck went unrefined. Depth at the end of the window does not
+merely saturate at the stack thickness: it reads **102–112 mm through 84.8 mm of
+armor**, because past the back face the leading edge is no longer a crater bottom
+but a **free residual in flight**. It is not a ceiling hiding a difference, it is a
+*different quantity inventing* one — the same failure `measure_penetration.py`
+warns of, where a perforated deck fits a beautiful straight line to an
+unreachable number. So `tools/measure_jet_grid.py` reports the penetration front
+as a **curve**, and off it the **arrival time at each interface**
+(x = 160 / 190 / 215 / 235), every one of which is uncapped until the last.
+
+**Lab time is a legitimate axis here, and that does not contradict §3.8.** That
+milestone's "match on consumed fraction, *never* lab time" is a **standoff**
+confound: a longer standoff impacts later, so it penetrates for less of the window
+and the metric reports the *opposite sign*. These arms differ only in
+`grid_resolution` — same seeding, same standoff, same virtual origin, so first
+contact is the same instant. Consumed fraction is reported at every interface
+anyway, and it agrees.
+
+**The error bar is 1000× tighter than the repo's usual floor, and it was
+measured.** A repeat bake of the shipped deck moves **790 475 of 1 256 472 values**
+at frame 100 (`atomic_add` ordering is not deterministic) — and yet arrival times
+reproduce to **≤0.0024 %** and residual velocity to **0.0037 %**. The ≤0.11 %
+figure quoted elsewhere here is for *aggregates*; a **positional percentile of a
+large population** is neither an aggregate nor an extremum, and it is far steadier
+than either. Every difference below is 240–2000× that floor. Re-reading every
+arrival at the 99.0 / 99.5 / 99.9 percentile moves it ≤0.2 %, so the choice of
+front definition is not carrying the result.
+
+#### The measurement
+
+Arrival time (µs from t=0) at each interface, and the residual tip **4 µs after
+that arm's own breakout** — matched, because the arms break out at different times
+and a shared final frame would hand them different amounts of free flight:
+
+| arm | x=160 | x=190 | x=215 | x=235 | v_resid | jet through |
+|---|---|---|---|---|---|---|
+| **7.5 cells, 110 substeps** (shipped) | 3.039 | 9.241 | 16.448 | 24.093 | 3208 m/s | 0.1802 |
+| 12 cells, 171 substeps | 2.962 | 9.106 | 16.033 | 22.880 | 3987 | 0.1528 |
+| 16 cells, 228 substeps | 3.022 | 9.299 | 16.283 | 23.028 | 4279 | 0.1457 |
+
+Read as a ladder it is **non-monotone**: the 12-cell arm is the fastest at every
+single interface, and the 16-cell arm falls back between it and the shipped one.
+At 1000× the scatter floor that is not noise. It also is not a failure to
+converge. It is two opposing errors mixing in a ratio that changes along the
+ladder — which the ladder alone cannot show, and which is the actual finding.
+
+#### The substep rides along with the grid, and it pushes the other way
+
+`dt` is CFL-bound, so refining `dx` refines the **clock** with it: 110 → 171 → 228
+substeps per frame. Every difference above is therefore attributable to
+(`dx` **and** `dt`) jointly, and §3.5 already documented that this solver's jet-tip
+state is `dt`-sensitive on its own. A grid study that never separates them is
+*asserting* the attribution it should be measuring.
+
+Two controls isolate it. `heat_conv_dt_mid` and `heat_conv_dt_fine` hold
+`grid_resolution` at the shipped 768 and set the **deck `dt` below the CFL bound**,
+where `min(deck_dt, cfl_dt)` simply takes it — 171 and 230 substeps at 7.5 cells,
+partnering the 12- and 16-cell arms substep-for-substep. (The alternative, raising
+this deck's `cfl_p_margin`, would work through the EOS design state and §3.11 is
+explicit that pushing the design `J` down re-creates milestone 14's own defect.)
+
+All deltas vs the shipped arm:
+
+| | x=160 | x=190 | x=215 | x=235 | v_resid | through |
+|---|---|---|---|---|---|---|
+| **dt only**, 110→171 substeps | +1.24 % | +1.22 % | +1.70 % | +2.42 % | −7.3 % | +8.1 % |
+| **dt only**, 110→230 substeps | +2.50 % | +2.44 % | +3.24 % | +4.55 % | −11.8 % | +16.8 % |
+| dx+dt, 7.5c/110 → 12c/171 | −2.55 % | −1.46 % | −2.53 % | −5.03 % | +24.3 % | −15.2 % |
+| dx+dt, 7.5c/110 → 16c/228 | −0.58 % | +0.63 % | −1.00 % | −4.42 % | +33.4 % | −19.2 % |
+
+**Refining the timestep and refining the grid move every metric in OPPOSITE
+directions.** A finer `dt` penetrates *later*, leaves a *slower* residual and
+pushes *more* jet mass through; a finer grid does each the other way. The joint
+ladder is therefore a **partial cancellation**, and it understates the grid effect
+rather than measuring it. It also explains the non-monotonicity exactly: the
+16-cell arm carries 228 substeps of the opposing `dt` error against the 12-cell
+arm's 171, which drags its arrivals back toward the shipped value.
+
+Differencing each dx arm against its substep-matched dt partner attributes it:
+
+| dx alone | x=160 | x=190 | x=215 | x=235 | v_resid | through |
+|---|---|---|---|---|---|---|
+| 12 cells (vs the 171-substep arm) | −3.80 % | −2.69 % | −4.23 % | −7.45 % | +31.6 % | −23.3 % |
+| 16 cells (vs the 230-substep arm) | −3.08 % | −1.81 % | −4.24 % | −8.97 % | +45.1 % | −36.0 % |
+
+**This decomposition is an attribution argument, not a measurement, and the
+solver cannot promote it.** It assumes the two errors add. Testing that needs the
+fourth cell of the 2×2 — **fine `dx` at coarse `dt`** — and that cell is
+**unreachable by construction**: `dt_sim = min(deck_dt, cfl_dt)`, so a deck may
+always refine `dt` below the CFL bound and may *never* coarsen it above one.
+(`frame_count` does not buy it either: it changes frames-per-`dt`, not `dt`.) The
+**measured** results are the joint ladder and the dt-only arms. Quote those.
+
+#### What this settles, and what it does not
+
+- **§3.4's refusal to quote this deck's jet depth STANDS — and now on a
+  measurement of this deck rather than an inference from a half-space.** That is
+  the deliverable. It is a stronger statement than the partial retirement this
+  milestone was opened to attempt.
+- **Nothing here is converged, and the late quantities are the worst.** Breakout
+  time is the best-behaved (increment ratio 0.20) and even it is unsettled;
+  residual velocity (+31.6 → +45.1 %) and mass-through (−23.3 → −36.0 %) are still
+  **growing in absolute terms at 16 cells**, with increments shrinking only slowly
+  (0.43, 0.55). **16 cells is not enough for the residual state**, and §3.8's own
+  warning applies unchanged: "converges toward" is not "converged".
+- **How wrong the shipped arm is, quantified:** it breaks out ~9 % late and its
+  residual runs ~45 % slow on the attribution above, ~4.4 % and ~33 % on the raw
+  ladder. Either way, **the shipped 8-cell cache must not be quoted for breakout
+  time or residual velocity.** Its kinematic claims (§3.4) are untouched — they are
+  measured Lagrangianly on free-flight markers, which do not lean on grid coupling.
+- **An unexplained residue, stated rather than smoothed:** after decomposition the
+  two *early* interfaces move back *toward* the shipped value (−3.80 → −3.08,
+  −2.69 → −1.81) where the late ones grow. Non-monotone at 1000× the scatter floor.
+  No mechanism is offered.
+
+#### The transferable lesson, and a prediction it makes about §3.8
+
+> **A CFL-coupled refinement study measures the DIFFERENCE OF TWO OPPOSING ERRORS,
+> not the grid error — and it cannot be un-coupled downward.**
+
+That applies retroactively to §3.8's own ladder, and it **predicts the one
+discrepancy that section left open**. §3.8 has two routes to 16 cells across the
+jet and they disagree by 5 %: refining `dx` gives **1.429**, fattening the jet to
+6 mm at the shipped `dx` gives **1.501**, nearer the a-priori 1.536. Those two
+routes differ in exactly this variable. `_impact_pressure` and `_eos_equilibrium_j`
+take material names and `v_tip` and **never the diameter**, and
+`standoff_conv_d6mm_s00` carries `grid_resolution: 1440` — *identical* to
+`standoff_s00`. So **the fat-jet route is the `dt`-free route**, while the `dx`
+route halves the substep alongside the cell. The sign matches: a finer `dt`
+suppresses penetration here, and the `dx` route is the one reading low.
+
+**Not tested — M10's territory, and re-baking it would re-roll a closed
+milestone's numbers.** The experiment is specified: bake `standoff_s00`/`s90` at
+`grid_resolution: 1440` with a deck `dt` set to the `standoff_conv_dx250` arms'
+substep count, and re-run `tools/measure_standoff.py`. It is **falsified** if that
+dt-only pair reproduces the shipped 1.229 (the gap is then not about `dt`), and
+supported if it moves the ratio *down* from 1.229, in the direction the `dx` route
+is dragged.
+
+#### A by-product: how M14's CFL budget behaves under refinement
+
+Four arms, one design `c_max = 64101 mm/ms` on every one of them — confirming
+`bake`'s own comment that the artificial-viscosity contribution to the bound is
+`dx`-independent. Measured `c_eff` as a fraction of that budget:
+
+| | 7.5 cells | 12 cells | 16 cells |
+|---|---|---|---|
+| along the dx ladder | 63 % | 66 % | 73 % |
+| at fixed dx, refining dt (110 / 171 / 230) | 63 % | 59 % | 57 % |
+
+**Opposite signs again.** This is a previously-unmeasured property of
+`EOS_CFL_P_MARGIN`: further **spatial** refinement is what would eventually breach
+it, and temporal refinement buys headroom. Nothing here breached — the tally is
+57–73 %, all four arms clean at the shipped P=4 — so no per-deck `cfl_p_margin` was
+needed, and §3.11's rule stands that more headroom means a per-deck override and
+**never** a bigger global P.
+
+#### What is pinned
+
+`solver/tests/test_jet_grid.py` — ten contract tests on `measure_jet_grid.py`,
+each pairing a reading with the defect that same assertion must catch: a gap-only
+interface rule that silently loses the **bonded** ceramic/steel contact at x=215; a
+manifest whose `armor` provenance block **lies**; an arrival that clamps to the
+window end instead of reading NOT REACHED; a matched residual that silently falls
+back to the final frame; the seeded-lattice reading (15 rows is 7.5 cells, not the
+7.68 `domain/grid_resolution` implies, because `_fill_rect` rounds each object's
+lattice to fit it); and **the tool's own reason to exist** — a synthetic pair that
+penetrates at visibly different rates but ends the window in the same place, which
+`depth_end` calls identical and arrival time separates by 40 %. **Six mutations
+were verified RED first** ([[instruments-that-cannot-see-the-failure]]); the
+harnesses are `M:\claud_projects\temp\m16\red_check.py` and `red_check2.py`, which
+mutate the tool in memory and are cited rather than shipped.
+
+---
+
 ## 4. Timestep & why we bake offline
 
 The cost driver is the **CFL timestep, not particle count**. Steel's sound

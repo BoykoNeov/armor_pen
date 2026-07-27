@@ -1,0 +1,65 @@
+# Jet GRID-RESOLUTION study on the SHIPPED composite deck — milestone 16.
+# Scenarios are DATA, not code (CLAUDE.md §9). Representative / illustrative
+# order-of-magnitude values, not any real system (CLAUDE.md §10).
+#
+# WHY THIS EXISTS. Milestone 10 established that `cells across the jet` is the
+# controlling parameter for any jet DEPTH claim (PHYSICS §3.8), and it did so on a
+# 150 mm RHA HALF-SPACE with a standoff RATIO as the metric. The shipped jet deck
+# `heat_vs_composite` was never itself refined, so §3.4's refusal to quote its
+# depth has stood on an INFERENCE from a different geometry. This family measures
+# the shipped deck directly.
+#
+#   3 mm jet, grid_resolution 768  -> dx = 0.3906 -> 7.7 cells   (`heat_vs_composite`)
+#   3 mm jet, grid_resolution 1200 -> dx = 0.2500 -> 12.0 cells  (this deck)
+#   3 mm jet, grid_resolution 1600 -> dx = 0.1875 -> 16.0 cells  (`heat_conv_dx188`)
+#
+# THREE grids, not two: two points are not a convergence study, and this repo has
+# been bitten by that four times (PHYSICS §3.5, §3.6.2). No Richardson order is to
+# be extracted from them either — §3.8 measured that order as ill-conditioned
+# (it swings ~0.7 to ~5 with the matching point) and a tidy extrapolated value
+# would be false precision. The TREND is the claim.
+#
+# THE METRIC IS NOT DEPTH-AT-WINDOW-END, and that is the whole design. This stack
+# PERFORATES (the tip clears x=235 at ~26 us of a 30 us window), so a depth read at
+# the end of the window is CEILINGED by the back face and would read ~the same on
+# every grid — an instrument that cannot see the failure it is pointed at. §3.8
+# chose a half-space for exactly this reason. `tools/measure_jet_grid.py` reads the
+# penetration front as a CURVE and reports the arrival time at each interface
+# (x = 160 / 190 / 215 / 235), which is uncapped until the last one.
+#
+# LAB TIME IS A LEGITIMATE SHARED AXIS HERE, unlike in §3.8. That milestone's
+# "match on consumed fraction, NEVER lab time" rule is a STANDOFF confound — a
+# longer standoff impacts later, so it penetrates for less of the window. These
+# arms differ only in `grid_resolution`: same seeding, same standoff, same virtual
+# origin, so first contact is at the same instant and the clock is comparable.
+# Consumed fraction is reported alongside it regardless.
+#
+# EVERYTHING ELSE IS IDENTICAL to `heat_vs_composite` — one variable. Note in
+# particular that `frame_count` is NOT cut here, where the `standoff_conv_*` decks
+# cut theirs to 75: these arms are compared FRAME-FOR-FRAME against the shipped
+# cache, so they must keep the repo's uniform frame_dt = 2.0e-7 s.
+name: heat_conv_dx250
+
+domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 120 }   # mm — identical to the shipped deck
+
+projectile:
+  kind: heat_jet
+  material: copper_jet
+  length: 120.0
+  diameter: 3.0
+  velocity: 7000
+  tail_velocity: 2000
+  angle_deg: 0.0
+  nose_shape: blunt
+
+armor:
+  - { material: rha,     thickness: 10.0 }                 # front plate   x=150..160
+  - { material: ceramic, thickness: 25.0, standoff: 30.0 } # spaced ceramic x=190..215
+  - { material: rha,     thickness: 20.0 }                 # backing plate x=215..235
+
+solver:
+  grid_resolution: 1200   # THE VARIABLE: dx = 300/1200 = 0.2500 mm -> 12 cells across the jet
+  particles_per_cell: 4
+  dt: 5.0e-8
+  total_time: 3.0e-5
+  frame_count: 150    # frame_dt = 2.0e-7 s — the shipped cadence, kept so the arms align
