@@ -107,6 +107,13 @@ WHAT IT CANNOT SEE — state these before quoting it.
   * **Anything about whether the reflection mattered.** "Arrived at a wall" is
     not "corrupted a figure". That is what the contamination block is for, and
     even it only bounds the direct part.
+  * **The quoted figures themselves.** `armor_spall` here is a mean over ALL
+    armor; `measure_reactive_ab.py` quotes a mean over the **main plate**. They
+    are different numbers and this tool cannot recompute the other one without
+    learning which layer is the main plate, which is deck knowledge it is not
+    allowed to have. The per-material `k/n` bound is what covers that gap: it
+    holds for a damage fraction over any subset of one material, however that
+    figure defines itself.
 """
 
 from __future__ import annotations
@@ -297,13 +304,38 @@ def measure(cache_dir: Path, keepout: float = START_KEEPOUT,
         "arrive_mm": ARRIVE,
         "walls": walls_out,
         "n_touched": int(touched.sum()),
-        "contamination": _contamination(c, proj, armor, touched),
+        "contamination": _contamination(c, mats, proj, armor, touched),
         "symmetry": _symmetry(c, mats),
     }
     return out
 
 
-def _contamination(c: Cache, proj, armor, touched) -> dict:
+def _per_material_bound(c: Cache, mats, touched) -> dict:
+    """Per material: how far excluding the wall-touched particles could move a
+    damage fraction computed over that material.
+
+    This exists because the aggregates below are NOT the figures this repo
+    quotes. `measure_reactive_ab.py` reports **main-plate** spall — a mean over
+    one material's particles — while `armor_spall` here is a mean over all
+    armor. Recomputing the wrong set and calling the delta "the contamination"
+    would be answering a question nobody asked.
+
+    A count answers it for every set at once. Damage is latched 0/1, so a mean
+    over a material is a fraction, and dropping `k` of `n` members moves a
+    fraction by at most `k/n` — whatever the members happened to be. That is an
+    algebraic ceiling, not a measurement, so it holds for any figure scoped to
+    this material regardless of how that figure defines its window.
+    """
+    out = {}
+    for mid in np.unique(mats):
+        sel = mats == mid
+        n, k = int(sel.sum()), int((sel & touched).sum())
+        out[c.names.get(int(mid), f"id={mid}")] = {
+            "n": n, "touched": k, "max_frac_shift": k / n if n else 0.0}
+    return out
+
+
+def _contamination(c: Cache, mats, proj, armor, touched) -> dict:
     """Recompute the repo's headline aggregates with wall-touched particles
     excluded. The delta is the contamination — a LOWER BOUND, because it counts
     only direct participation and not impulse transmitted through the grid to a
@@ -328,6 +360,7 @@ def _contamination(c: Cache, proj, armor, touched) -> dict:
         "proj_touched": int((proj & touched).sum()),
         "n_armor": int(armor.sum()),
         "armor_touched": int((armor & touched).sum()),
+        "by_material": _per_material_bound(c, mats, touched),
     }
     # Residual velocity of the coherent penetrator (measure_reactive_ab's metric).
     # On a deck where the penetrator is wholly consumed — every copper jet above
@@ -440,6 +473,14 @@ def report(r: dict) -> None:
           f"BOUND — impulse through the grid is not counted)")
     print(f"    projectile {ct['proj_touched']}/{ct['n_proj']} touched, "
           f"armor {ct['armor_touched']}/{ct['n_armor']} touched")
+    # Per material, because the aggregates below are NOT the quoted figures —
+    # measure_reactive_ab.py scopes its spall to the MAIN PLATE. k/n bounds any
+    # of them (see _per_material_bound).
+    for name, b in sorted(ct["by_material"].items(), key=lambda kv: -kv[1]["touched"]):
+        if b["touched"]:
+            print(f"      {name}: {b['touched']}/{b['n']} touched -> a damage "
+                  f"fraction over this material can move at most "
+                  f"{b['max_frac_shift'] * 100:.4f} pp")
     if ct.get("rod_resid_v") is None:
         print("    rod residual v : n/a — no live projectile at the final frame "
               f"({ct['n_proj']} seeded, all consumed or spalled)")

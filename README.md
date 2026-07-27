@@ -216,11 +216,26 @@ milestone 1), and a **recalibrated CFL bound** (§3.11 — the margin had been
 multiplying a volume *ratio*, which put the design state past every material's EOS
 pole on all 30 decks).
 
-**Next:** **domain/BC** work so oblique-deck debris never reaches a wall (the
-standoff family's wall reflections are also not common-mode at matched fraction),
-a **volumetric/compaction criterion** for confined fillers, and the **jet's grid
-resolution** — it is only 8 cells across, which limits every jet *depth* claim here
-(§3.8). See the per-directory `CLAUDE.md` files for the build order.
+**domain/BC is closed, as a clean negative** (§1.1.2). It was listed here as
+"work so oblique-deck debris never reaches a wall"; measuring all 30 baked caches
+first showed that bar was stricter than the seeding design permits — every deck
+lays armor wall-to-wall *on purpose*, so the mirror continues it — and then showed
+the real one is already met. Debris reaches a wall on **8 decks of 30**, always
+late, always 100 % spalled, and on every one of them **nothing that touched a wall
+ever came back**: a free-slip wall zeroes the inbound normal velocity rather than
+negating it, so material arrives, stops, and slides. It does not reflect. The
+largest effect on any figure is **0.0425 pp** on a main-plate spall fraction quoted
+as an A/B of −40.7 %. The standoff family's apparent trend (62→30→12→0 arrivals) is
+**not** a standoff effect — first contact tracks `S / 7000 m/s` to inside one frame,
+so `s90` reads zero because its arrival falls past the end of its own bake. Nothing
+has ever reached `x_hi` on any deck, which retires the only part of this that would
+have been kernel work. **No remedy, no rebake** — measured by
+`tools/measure_wall_contact.py`, 16 tests, each watched going red first.
+
+**Next:** a **volumetric/compaction criterion** for confined fillers, and the
+**jet's grid resolution** — it is only 8 cells across, which limits every jet
+*depth* claim here (§3.8). See the per-directory `CLAUDE.md` files for the build
+order.
 
 ## Quick start
 

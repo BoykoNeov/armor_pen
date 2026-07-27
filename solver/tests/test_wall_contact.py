@@ -196,6 +196,30 @@ def test_contamination_is_measured_not_hardwired(tmp_path):
     assert ct["rod_resid_v_delta_pct"] > 80.0
 
 
+def test_the_per_material_bound_scopes_to_the_material_not_to_all_armor(tmp_path):
+    """The aggregates this tool recomputes are NOT the quoted figures —
+    `measure_reactive_ab.py` scopes its spall to the main plate. So the honest
+    answer is a count: damage is latched 0/1, so dropping k of a material's n
+    particles moves a fraction over that material by at most k/n.
+
+    The trap is dividing by the wrong n. Here `rha` is 2 particles with 1
+    touched (50 pp) while all-armor is 4 with 1 touched (25 pp) — a bound
+    computed against the armor population would understate the main plate's by
+    half, which is the wrong direction for a safety bound.
+    """
+    c = build(
+        tmp_path, domain=DOMAIN, name="bound",
+        # 0-1 are rha; particle 1 travels to the wall. 2-3 are ceramic, parked.
+        y=[STAYS, TRAVELS, STAYS, STAYS], vel=0.0, mat=[1, 1, 2, 2],
+    )
+    bm = wall.measure(c)["contamination"]["by_material"]
+    assert bm["rha"]["n"] == 2 and bm["rha"]["touched"] == 1
+    assert bm["rha"]["max_frac_shift"] == pytest.approx(0.5)
+    # ...and a material nothing touched is bounded at exactly zero.
+    assert bm["id=2"]["touched"] == 0
+    assert bm["id=2"]["max_frac_shift"] == 0.0
+
+
 def test_symmetry_check_catches_the_historical_signature(tmp_path):
     """§1.1.1's cheap check, fed the exact numbers the dead high walls produced:
     `rha` spanning 0.88..119.61 in a 120 mm domain — held off the working bottom

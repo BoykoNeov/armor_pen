@@ -70,6 +70,12 @@ Two consequences worth stating plainly:
   spray does reach the top/bottom walls and slide along them. What matters is that
   the penetration channel is many rod-diameters from the wall, so the event we
   measure is unaffected; the artifact is confined to the far-field debris.
+  **Measured in §1.1.2, and this sentence was over-general**: it happens on 8 of
+  30 decks, not as a rule — on the other 22 nothing that started clear of a wall
+  ever gets within 2.1 mm of one. Where it does happen the second clause holds
+  exactly, and for a reason §1.1 states two paragraphs up without following it
+  through: a slip wall zeroes the inbound normal velocity rather than negating it,
+  so the spray arrives, stops, and slides. **It does not bounce.**
 
 Both transfer kernels index the grid at `floor(Xp − 0.5) + {0,1,2}` with no bounds
 check, so a particle within half a cell of a low edge would scatter **out of
@@ -154,6 +160,118 @@ spray (which stays at `y = 45.9…74.1` here, nowhere near a boundary).
 **⚠️ Every figure in this document measured near a boundary is affected**, and every
 deck has armor at the walls. Re-measure; do not translate. The ERA/NERA numbers are
 the most exposed, since the detonation drives filler straight into the ceiling.
+
+#### 1.1.2 What actually reaches a wall — all 30 decks, and nothing is indicted
+
+§1.1 states two things it never measured: that "late in a bake, spall spray **does**
+reach the top/bottom walls and slide along them", and that "the artifact is confined
+to the far-field debris". §1.1.1 is the standing lesson about precisely that habit —
+*a stated invariant is not a tested one* — so both were measured.
+`tools/measure_wall_contact.py` reads baked caches only; there is no rebake here and
+no GPU was involved.
+
+**The bar had to be settled first, because the repo carried two.** The README asked
+that "oblique-deck debris **never reaches a wall**", which is stricter than the
+seeding design permits: `_seed` lays every slab wall-to-wall *on purpose* so the
+mirror continues it (§1.1). Material at a wall is not the defect. The bar used here
+is the weaker, correct one:
+
+> **No wall-reflected momentum contaminates a quoted figure, inside that figure's
+> measurement window.**
+
+**The instrument counts travel, not proximity.** "Particles within 3 cells of a wall"
+fires at frame 0 on all 30 decks, because that is where the armor is. A particle is
+counted only if it **started > 3.0 mm clear of that wall and later came within
+1.2 mm** (≥ 3 cells on every deck; the cache does not record `dx`, so the thresholds
+are fixed lengths that bracket the repo, and both are swept). Sixteen tests pin it,
+each written by watching it go **red** on a specific defect first — including the
+one that matters most here, a control deck where nothing travels reading zero
+against a twin that reads one, *one particle apart*.
+
+**Result: 8 decks of 30 show any arrival at all; 647 particles in total.**
+
+| family | arrivals | first contact | what arrived | max bound on a per-material damage fraction |
+|---|---|---|---|---|
+| `apfsds_vs_era_oblique` | 90 at `y_lo` | 115.6 of 140.0 µs | 65 `rha` + 25 rod, **100 % spalled** | `rha` **0.0314 pp**, rod 0.2207 pp |
+| `apfsds_vs_era_oblique_inert` | 129 at `y_lo` | 115.0 of 140.0 µs | 88 `rha` + 41 rod, **100 % spalled** | `rha` **0.0425 pp**, rod 0.3620 pp |
+| `standoff_s00` / `s30` / `s60` | 62 / 30 / 12, split evenly `y_lo`+`y_hi` | 35.0 / 39.4 / 43.8 of 45.0 µs | `rha`, **100 % spalled** | **0.0123 / 0.0059 / 0.0024 pp** |
+| `standoff_conv_*_s00` (3 decks) | 128 / 98 / 98 | 33.6–34.8 of 45.0 µs | `rha`, **100 % spalled** | 0.0253 / 0.0086 / 0.0048 pp |
+| the other **22 decks** | **none** | — | — | — |
+
+Three findings, in order of how much they change.
+
+**1. Nothing that touches a wall comes back.** This is the one that decides the
+verdict, and it is measured rather than bounded — each wall-touched particle is
+followed from its own arrival frame onward. On every one of the eight decks the
+answer is the same: **no wall-touched particle ever left the 1.2 mm arrival band**,
+observed for 24.4 µs afterward on the oblique deck (and 10–11 µs on the standoff
+family; `standoff_s60`'s window is only 1.2 µs, so that deck's clean read is the
+weakest of the eight and should not be leaned on). On `apfsds_vs_era_oblique` the
+closest any wall-touched particle came back to the centreline was **108.8 mm of a
+110.0 mm half-span**.
+
+The mechanism is the boundary condition itself, and it is worth stating because it
+makes the result unsurprising rather than lucky: **a free-slip wall does not reflect.**
+It zeroes the inbound normal velocity; it does not negate it. Material arrives,
+stops, and slides — §1.1's "slide along them", now measured. The ballistic estimate
+that first framed this question (1620 m/s × the remaining 24 µs = 39 mm of possible
+return travel) was wrong by a factor of ~30 in the safe direction, which is exactly
+why it was replaced with a measurement.
+
+What can still travel back is the **stress wave**, and that is grid-transmitted —
+squarely in the tool's blind spot. Every contamination figure here is a lower bound
+on direct participation only.
+
+**2. The standoff family's "trend" is a window artifact, not a standoff effect.**
+Arrivals fall 62 → 30 → 12 → 0 across `standoff_s00/s30/s60/s90`, which reads as a
+standoff-dependent wall effect and is not one. Look at *first contact* instead. The
+jet tip is 7000 m/s and the standoffs are 0/30/60/90 mm, so impact — and everything
+downstream of it — is displaced by exactly `S / 7.0` µs:
+
+| deck | predicted first contact | measured | bake ends |
+|---|---|---|---|
+| `standoff_s00` | 35.00 µs | **35.0** | 45.0 |
+| `standoff_s30` | 39.29 | **39.4** | 45.0 |
+| `standoff_s60` | 43.57 | **43.8** | 45.0 |
+| `standoff_s90` | 47.86 | **never** | 45.0 |
+
+Residuals are **0.00 / +0.11 / +0.23 µs** against a 0.2 µs frame — the first two
+inside one frame, `s60` just over it. (They grow monotonically with `S`, which is
+what a jet tip losing a little speed in free flight would look like; it is a
+sub-frame effect and nothing here rests on it.) It is the *same event at the same
+elapsed time from impact*, shifted; the counts track how much of it fits before
+`total_time`, and `s90` reads zero because its first contact falls ~2.9 µs **past
+the end of its own bake**. This is §3.8's already-documented elapsed-from-impact
+systematic surfacing in a new instrument — it is **not** evidence for a remedy, and
+must not be used as one.
+
+**3. Nothing has ever reached the exit face.** `x_hi` reads zero arrivals on all 30
+decks, and the closest approach on any deck is **10.65 mm** (`sweep_tungsten_v3500`).
+That retires the one branch of this work that would have been kernel code: an
+arrival at `xmax` would mirror a *second target* downrange, which no domain resize
+can fix. ⚠️ But 10.65 mm in a 300 mm domain is not a comfortable margin, and the
+three closest decks are the tungsten sweep at v2500–v5000, where the rod perforates
+and exits. **A future deck that runs longer or faster than these will reach `x_hi`**,
+and that is the case to re-check before extending the sweep, not a defect today.
+
+**Also confirmed: the §1.1.1 fix, on every deck.** The worst mid-height asymmetry
+across all 28 applicable decks is **0.039 mm** (`apfsds_vs_nera`), against the dead
+walls' 0.49 mm signature. Wall-spanning material only — the free-ended rod's ends
+are not a boundary measurement, and headlining them reported a mushroomed tip as an
+asymmetry of 0.216 mm.
+
+**Verdict: no remedy is warranted, and no deck was rebaked to establish it.** The
+largest bound on any figure scoped to a single material is **0.36 pp** (the rod on
+`apfsds_vs_era_oblique_inert`); on the main plate, which is what
+`measure_reactive_ab.py` actually quotes, it is **0.0425 pp** — against an A/B effect
+of −40.7 %. The standoff family's depth figures are read along the axis, tens of mm
+from either wall, and nothing came back off a wall at all.
+
+Two caveats travel with that verdict. The tool sees only **dumped frames**, so a
+sub-frame excursion is invisible (§3.9's aliasing lesson); and it measures **direct
+participation**, so grid-transmitted impulse is uncounted. Neither is idle, but
+neither is load-bearing here: arrivals happen only in the last ~25 % of a bake, at
+debris speeds, and nothing travels back.
 
 ### 1.2 The penetrator is pointed, not flat-faced
 
