@@ -2133,6 +2133,133 @@ already visible in the audit line, waiting to be read.
 
 ---
 
+### 3.12 The compaction criterion, closed as a negative (milestone 15)
+
+**No kernel code, no new material constant, no rebake, no schema bump, no GPU.**
+Milestone 15 was chartered by §3.6.2 — *"relieving this needs a **VOLUMETRIC**
+criterion (compaction/pore collapse), not a deviatoric one"* — and carried in
+README's Next list. It closes without building anything, for two independent
+reasons, and the first one is embarrassing.
+
+#### It was already delivered, by milestone 13
+
+§3.10 says so in as many words: **"MG's thermal pressure `Γρ₀e` IS that volumetric
+mechanism"** — compression feeds `e`, `e` pushes back, and nera's worst live `J`
+went **0.2421 → 0.5434**, a 2.26× relief against a ~1 % extremum wobble. M12 was
+right about the *kind* of thing required and wrong that MG would not supply it.
+
+So the Next-list entry is a **stale carry-forward**: §3.6.2's ask was answered
+one milestone later, inside this same document, and the list was refreshed after
+M13 and M14 shipped (`3f1ffb4`) without anyone noticing that its top item was
+done. The lesson is [[rebake-invalidates-documented-results]] in a documentation
+register — a milestone can be closed by a *later section of the same file* and
+the summary above it will happily keep asking for it.
+
+#### What genuinely remains is pore collapse — and it is inert here by 34–688×
+
+The specific mechanism never built is a **P-α model** (Herrmann 1969;
+Carroll–Holt 1972): a distension `α = v/v_s ≥ 1` that ratchets irreversibly to 1
+as pores close. That is a *different* volumetric mechanism from `Γρ₀e`, so it is
+worth asking separately. It is inert everywhere this repo could put it.
+
+A P-α material is **fully compacted above its crush-up pressure `p_c`** — `α = 1`,
+the pores are gone, and the law reduces *exactly* to the solid-matrix EOS. So it
+can only matter where pressures are comparable to `p_c`. Measured over all 30
+decks at the design state milestone 14 already builds (`_impact_pressure` →
+`_eos_equilibrium_j`) — **not** at a `worst live J` extremum, which §3.6.1 and
+§3.11 both say not to size anything from:
+
+| public crush-up pressure (order-of-magnitude, chosen before the run) | vs the **smallest** deck-wide contact shock — 34.4 GPa, `sweep_copper_v1500` |
+|---|---|
+| polymer foam / syntactic, ~50 MPa | 688× |
+| pressed HE / powder compact, ~500 MPa | 69× |
+| porous metal — Herrmann's own calibration materials, ~1 GPa | 34× |
+| an absurd upper bound, 10 GPa | 3.4× |
+
+That comparison is deliberately made **without** `EOS_CFL_P_MARGIN`: the claim is
+about the physical shock, and multiplying by a stability constant that has shipped
+at both 3 and 4 would make a physics statement depend on a tunable. The margin only
+widens the gap (4× on 29 decks), so dropping it is the conservative direction —
+the margined design pressures run 138–2754× instead.
+
+At those ratios no distension and no crush curve moves the design state, the CFL
+bound, or the pole guard's clearance. **This is not a close call that better
+constants could flip.**
+
+#### And no material here is eligible anyway
+
+The bulk filler *does* sit in the right pressure band — §3.6.1's median live
+`J = 0.9932` is **62 MPa** and its min-of-mean `J = 0.9495` is **544 MPa**, which
+straddles a pressed powder's crush-up. So the question is fair. Each candidate
+still fails, for its own reason:
+
+- **`nera_filler`** is a near-incompressible elastomer. Rubber has no pores;
+  distension would have to be *invented* to buy a number, which is tuning toward
+  the answer (root §10). And the physical reason its vise was never constitutive:
+  a confined near-incompressible solid's relief mechanism is **lateral extrusion,
+  not compaction** — and §3.6.1 established those are 25 debris particles pinned
+  in the *main plate's* crater 34 mm downrange, i.e. **kinematic and
+  resolution-bound, not a missing material model.** No constitutive law was ever
+  going to fix it. Same register as §1.1.2's free-slip walls.
+- **`era_filler`** is the one material where porosity *would* be physical — a
+  pressed/cast explosive is genuinely heterogeneous. But it **ignites at 191.8 MPa**
+  (`ignition_compression = 0.98` through the EOS), *below* where a pressed powder's
+  pores finish collapsing, and hands off to the detonation state machine. The
+  compaction branch would act over a sliver and then be overwritten.
+- **`era_filler_inert`** spalls at `damage_threshold = 0.02` and leaves the live
+  set almost immediately (§3.6.2).
+
+There is also **no zero-cost way to parameterize it**, which is worth stating
+because "just default `α₀ = 1` and it is inert" understates the cost. In the P-α
+framing the tabulated `density` / `youngs_modulus` are the **porous** values, so
+the model needs *solid-matrix* constants that are not derivable from what
+`materials.py` holds — and the porous reference density is `ρ₀₀ = ρ_s0/α₀`, so
+making a filler porous changes its seeded mass. That **breaks the equal-areal-mass
+A/B family** the three fillers exist to form (§3.6.2). The capability cannot be
+added honestly without paying for it in the one comparison the ERA decks are for.
+
+#### A by-product: M14's ERA ceiling is a posture, not a material property
+
+The same arithmetic explains §3.11's tightest open number. `era_filler` designs to
+`J = 0.5504` against its guard switch `0.5500` — 0.07 % clearance — because `bake`
+sizes **every** material by the *deck-wide* worst contact pressure: **76.4 GPa**
+(tungsten on tungsten), **6×** the **12.2 GPa** its own impedance match with the rod
+would give. Sized by its own match it would design to `J = 0.6188`, clearing the
+switch by 0.0688 — **170× more room**.
+
+**Read this as confirmation, not as a defect.** §3.11 chose deck-wide sizing
+deliberately and defended it: *"a CONFINED soft layer is crushed by its stiff
+neighbours, not by its own (tiny) impedance. Per-material matching would hand
+`era_filler` a comfortable bound precisely because it is soft — which is
+backwards."* That reasoning is correct and nothing here is evidence against it.
+The ~4.05 ceiling is **the price of a conservative choice**, not a constraint
+`era_filler` imposes — which is exactly why the remedy §3.11 prescribes is a
+per-deck `cfl_p_margin`, never per-material pressure sizing and never a bigger
+global `P`.
+
+For completeness, the one deck that *does* design inside the guard —
+`apfsds_vs_nera`, at `J = 0.4828` vs `J_sw = 0.5500` — is §3.11's **named and
+tested exception**, not a new finding: the override exists precisely to price that
+vise, and `test_design_state_is_on_the_physical_eos_branch` asserts it.
+
+#### What is pinned
+
+`solver/tests/test_compaction_scoping.py` — three relations, all derived from
+`materials.py` and the deck glob, none restating a literal from this section:
+every deck's contact shock is a decade past any plausible `p_c`; `era_filler`
+ignites below a pressed powder's crush-up; the filler's neighbours strike far
+harder than its own impedance. **Each was verified to fail first**, against the
+mutation that would make compaction genuinely live rather than a scrambled
+constant — a 150 mm/ms deck, a lowered `ignition_compression`, a filler impedance
+raised toward tungsten's — each with a control confirming the assert stays green
+on the shipped configuration
+([[instruments-that-cannot-see-the-failure]]). The scoping arithmetic itself is
+`M:\claud_projects\temp\m15_compaction\design_state.py`; it imports the solver, so
+it cannot live in `tools/` (root §3), the same way §3.11's sizing arithmetic is
+cited rather than shipped.
+
+---
+
 ## 4. Timestep & why we bake offline
 
 The cost driver is the **CFL timestep, not particle count**. Steel's sound

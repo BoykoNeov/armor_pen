@@ -233,10 +233,29 @@ have been kernel work. **No remedy, no rebake** — measured by
 `tools/measure_wall_contact.py`, 16 tests, twelve mutations each caught by exactly
 one of them.
 
-**Next:** a **volumetric/compaction criterion** for confined fillers, and the
-**jet's grid resolution** — it is only 8 cells across, which limits every jet
-*depth* claim here (§3.8). See the per-directory `CLAUDE.md` files for the build
-order.
+**The volumetric/compaction criterion is closed as a negative** (§3.12), and the
+first reason is embarrassing: **it had already shipped as milestone 13.** §3.6.2
+asked for "a VOLUMETRIC criterion, not a deviatoric one"; §3.10 answers it in as
+many words — *"MG's thermal pressure `Γρ₀e` IS that volumetric mechanism"* — and
+measured nera's worst live `J` going **0.2421 → 0.5434**. This Next list was
+refreshed after M13 and M14 shipped and kept asking for a thing a later section of
+the same document had already delivered. What genuinely remained is **pore collapse**
+(a P-α model), and it is inert everywhere here: a P-α material is fully compacted
+above its crush-up pressure, and the *smallest* deck-wide contact shock across all 30
+decks (34.4 GPa) sits **34–688×** above every plausible crush-up. No material is
+eligible either — `nera_filler` is a near-incompressible elastomer with no pores
+(its vise is **lateral extrusion and resolution, not constitutive**), `era_filler`
+ignites at 191.8 MPa *before* a pressed powder's pores finish collapsing, and
+`era_filler_inert` spalls almost immediately. A by-product settles §3.11's tightest
+open number: `era_filler`'s 0.07 % guard clearance is the **price of deck-wide
+pressure sizing** — 76.4 GPa vs the 12.2 GPa its own impedance match gives, 6× — and
+not a property of the filler, so the ~4.05 ceiling confirms that posture rather than
+arguing against it. **No kernel code, no rebake, no schema bump, no GPU** — three
+relations pinned in `test_compaction_scoping.py`, each verified red first.
+
+**Next:** the **jet's grid resolution** — it is only 8 cells across, which limits
+every jet *depth* claim here (§3.8). See the per-directory `CLAUDE.md` files for the
+build order.
 
 ## Quick start
 

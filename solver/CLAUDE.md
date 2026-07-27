@@ -551,6 +551,49 @@ Grow the reference MLS-MPM incrementally, validating visually with
      `p_impact > p_stag` claim fails on rha/copper at 7 km/s, because a lower-impedance
      target genuinely cannot sustain the striker's stagnation pressure. Only the
      **deck-wide max** (which includes the symmetric self-impact) carries the claim.
+13. **Milestone 15 — the compaction criterion, CLOSED AS A NEGATIVE (PHYSICS §3.12).**
+   **Nothing was built: no kernel code, no material constant, no rebake, no schema
+   bump, no GPU.** Read §3.12 before proposing a P-α model again.
+   - **IT HAD ALREADY SHIPPED AS M13, and the Next list kept asking for it.** §3.6.2
+     asked for "a VOLUMETRIC criterion, not a deviatoric one"; §3.10 answers it
+     outright — *"MG's thermal pressure `Γρ₀e` IS that volumetric mechanism"* — with
+     nera's worst live `J` measured **0.2421 → 0.5434**. README's Next list was
+     refreshed *after* M13 and M14 landed (`3f1ffb4`) and still carried it. **A
+     milestone can be closed by a later section of the same document while the summary
+     above it goes on asking** — check the body before inheriting a Next item.
+   - **What genuinely remained is PORE COLLAPSE (P-α; Herrmann 1969, Carroll–Holt
+     1972), and it is inert here by 34–688×.** A P-α material is fully compacted above
+     its crush-up pressure `p_c`, where the law reduces *exactly* to the solid EOS. The
+     **smallest** deck-wide contact shock over all 30 decks is **34.4 GPa**
+     (`sweep_copper_v1500`); the whole plausible public `p_c` band is 50 MPa – 1 GPa.
+     Measured at the **design state** M14 already builds, deliberately **not** at a
+     `worst live J` extremum (§3.6.1/§3.11 both forbid sizing from one), and
+     **unmargined**, so a physics claim does not rest on `EOS_CFL_P_MARGIN`.
+   - **No material here is eligible, each for its own reason.** `nera_filler` is a
+     near-incompressible elastomer — no pores, and inventing distension to buy a number
+     is tuning toward the answer (root §10). Its vise is **lateral extrusion and
+     resolution, not constitutive**: §3.6.1's 25 particles are debris pinned in the main
+     plate's crater 34 mm downrange, so **no constitutive law was ever going to fix it**
+     (same register as §1.1.2's walls). `era_filler` is the one material where porosity
+     *would* be physical, but it **ignites at 191.8 MPa**, below a pressed powder's
+     crush-up. `era_filler_inert` spalls at `dthr=0.02`.
+   - **There is no zero-cost parameterization either** — "default `α₀=1` and it is
+     inert" understates it. The tabulated `density`/`youngs_modulus` are the **porous**
+     values in that framing, so P-α needs solid-matrix constants `materials.py` does not
+     hold, and `ρ₀₀ = ρ_s0/α₀` means making a filler porous **changes its seeded mass
+     and breaks the equal-areal-mass A/B family** the three fillers exist to form.
+   - **BY-PRODUCT: M14's ~4.05 ceiling is a POSTURE, not a material property — and the
+     posture stays.** `era_filler`'s 0.07 % clearance comes from being sized by the
+     deck-wide **76.4 GPa** rather than the **12.2 GPa** of its own match with the rod
+     (6×); its own match would clear `J_sw` by 0.0688, **170× more**. That is
+     *confirmation* of §3.11's deliberate choice ("a confined soft layer is crushed by
+     its stiff neighbours"), **not** an argument for per-material sizing, which M14
+     rejected as backwards. Remedy stays a per-deck `cfl_p_margin`.
+   - `tests/test_compaction_scoping.py` pins three **relations** derived from
+     `materials.py` + the deck glob, never a literal from the writeup. **Each verified
+     RED first**, against the mutation that would make compaction genuinely live — a
+     150 mm/ms deck, a *lowered* `ignition_compression`, a filler impedance raised
+     toward tungsten's — each with a control confirming it stays green as shipped.
 
 ### Schema v3 — the cache says what it IS (a format change, not a milestone; done)
 
