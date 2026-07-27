@@ -55,6 +55,45 @@ threshold, not the physics. **If a future deck runs dx > 0.4 mm, `ARRIVE` stops
 covering its band and must be revisited** — which is the standing argument for
 putting `dx` in the manifest.
 
+**The widest sweep column is not an arrival count.** At `D = 5.0` the eligibility
+floor is 5.0 mm, and a plate under load bulges laterally by most of a millimetre
+(`closest_mm` bottoms out around 2.1–2.4 mm on decks with zero arrivals). So
+anything seeded between 5.0 and ~5.8 mm registers there without travelling
+anywhere: `standoff_conv_dx188_s90` reads 4091 in that column with **no arrival
+at any wall**. Read 0.6 and 1.2; read 5.0 as plate bulge. It is kept because a
+column that moves when the physics does not is worth being able to see.
+
+REACH — the number that decides whether an arrival mattered.
+
+An arrival is only a problem if the material comes *back* and reaches something
+that is being measured. So for every particle that touched a wall, this follows
+it afterwards and reports how far back in it got: `reach_mm` from the wall, and
+`nearest_mid_mm`, its closest approach to the domain centreline — which is where
+the penetration channel is on a normal-incidence deck, so the number is directly
+comparable without arithmetic. This is **measured, not bounded** from the arrival
+speed; debris can be re-accelerated by what is behind it, so a ballistic estimate
+is not conservative in the right direction.
+
+It is truncated by the same `total_time` as everything else, so it supports
+"clean **inside this bake's own window**" — which is enough, since every figure
+this repo quotes is read from a frame inside that window. It does not support
+"wall reflections are harmless". The window is printed next to it for that
+reason: on `standoff_s60` the first arrival lands 1.2 µs before the bake ends,
+and a reach measured over 1.2 µs is a much weaker statement than the same reach
+measured over the oblique decks' 24 µs.
+
+**Reach has a floor at `ARRIVE`**, and reading that floor as a distance is the
+one way to misuse it. A particle is only in the set from the frame it came
+within 1.2 mm, so the set's maximum can never fall below the value that admitted
+it. `reach_mm ≈ ARRIVE` therefore does not mean "it travelled 1.2 mm back" — it
+means **no wall-touched particle ever left the arrival band at all**, which is
+the strongest clean reading the metric has. It is reported as that sentence
+rather than as a number, and `reach_exceeds_band` carries it in the JSON.
+(A free-slip wall is why: it zeroes the inbound normal velocity rather than
+negating it, so material arrives, stops, and slides — §1.1's "slide along them".
+Nothing bounces. What can still travel back is the *stress wave*, and that is
+grid-transmitted, i.e. squarely in the blind spot above.)
+
 WHAT IT CANNOT SEE — state these before quoting it.
 
   * **Transmitted impulse.** Excluding wall-touched particles measures *direct
@@ -162,6 +201,18 @@ def measure(cache_dir: Path, keepout: float = START_KEEPOUT,
                else float("inf") for w in WALLS}
     closest_t = {w: 0.0 for w in WALLS}
     v_at_arrival = {w: 0.0 for w in WALLS}
+    # How far back in wall-touched material travelled AFTER touching. See the
+    # docstring: measured over the frames that remain, not extrapolated.
+    reach = {w: 0.0 for w in WALLS}
+    to_mid = {w: float("inf") for w in WALLS}
+    # Half the domain span perpendicular to each wall: distance-from-wall minus
+    # this is the signed distance to the centreline the channel runs along.
+    half = {
+        "x_lo": 0.5 * (c.dom["xmax"] - c.dom["xmin"]),
+        "x_hi": 0.5 * (c.dom["xmax"] - c.dom["xmin"]),
+        "y_lo": 0.5 * (c.dom["ymax"] - c.dom["ymin"]),
+        "y_hi": 0.5 * (c.dom["ymax"] - c.dom["ymin"]),
+    }
 
     frame_ix = range(0, c.n_f, stride)
     for f in frame_ix:
@@ -179,6 +230,14 @@ def measure(cache_dir: Path, keepout: float = START_KEEPOUT,
                 first[w][fresh] = f
                 v_at_arrival[w] = max(v_at_arrival[w],
                                       float(fr[fresh, cv].max()))
+            # Reach is a forward pass by construction: `first[w] >= 0` is true
+            # only from a particle's own arrival frame onward, so nothing is
+            # credited for where it was on its way IN.
+            back = first[w] >= 0
+            if back.any():
+                reach[w] = max(reach[w], float(dw[back].max()))
+                to_mid[w] = min(to_mid[w],
+                                float(np.abs(dw[back] - half[w]).min()))
             near = float(dw[el].min())
             if near < closest[w]:
                 closest[w], closest_t[w] = near, f * c.dt_us
@@ -212,6 +271,17 @@ def measure(cache_dir: Path, keepout: float = START_KEEPOUT,
             "closest_mm": closest[w],
             "closest_us": closest_t[w],
             "max_v_at_arrival": v_at_arrival[w] if n else 0.0,
+            "reach_mm": reach[w] if n else None,
+            "nearest_mid_mm": to_mid[w] if n else None,
+            "half_span_mm": half[w],
+            # The floor. See the docstring: reach cannot read below ARRIVE, so
+            # only a value ABOVE it says anything travelled back.
+            "reach_exceeds_band": bool(n and reach[w] > ARRIVE + 1e-6),
+            # How long there was to observe the return trip. A clean reach over
+            # 1.2 us is not the same evidence as a clean reach over 24 us.
+            "observed_us": (float(c.n_f * c.dt_us
+                                  - first[w][first[w] >= 0].min() * c.dt_us)
+                            if n else None),
             "by_material": by_mat,
             "sweep": {D: int(ever[w][D].sum()) for D in ARRIVE_SWEEP},
         }
@@ -260,6 +330,11 @@ def _contamination(c: Cache, proj, armor, touched) -> dict:
         "armor_touched": int((armor & touched).sum()),
     }
     # Residual velocity of the coherent penetrator (measure_reactive_ab's metric).
+    # On a deck where the penetrator is wholly consumed — every copper jet above
+    # v2500 — there is no live projectile left at the final frame and this is not
+    # a number. Say so out loud: a metric that vanishes silently reads as a
+    # measured zero, which is the exact shape of defect this repo keeps finding.
+    out["n_live_proj"] = int(live_proj.sum())
     v_all, v_clean = agg(live_proj), agg(live_proj & ~touched)
     out["rod_resid_v"] = v_all
     out["rod_resid_v_clean"] = v_clean
@@ -290,23 +365,38 @@ def _symmetry(c: Cache, mats) -> dict:
     Skipped on oblique decks: the rod is tilted and the impact is deliberately
     off-centre there (§3.2), so the material is not symmetric to begin with and
     an asymmetry would mean nothing.
+
+    Only **wall-spanning** material sets the headline. The check works by asking
+    whether a slab still touches both mirrors equally, so it means nothing for a
+    material that touches neither: the rod's ends are free, and on `apfsds_vs_era`
+    the rod reads 0.216 mm of "asymmetry" across a ~32 mm gap — a mushroomed tip,
+    not a boundary. Non-spanning materials are still listed, just not headlined.
     """
     angle = float((c.m.get("projectile") or {}).get("angle_deg") or 0.0)
     if abs(angle) > 1e-9:
         return {"applicable": False,
                 "why": f"angle_deg={angle} — not symmetric by construction"}
-    fF = np.asarray(c.frames[-1])
-    y = fF[:, c.col["pos_y"]]
+    f0, fF = np.asarray(c.frames[0]), np.asarray(c.frames[-1])
+    y0, y = f0[:, c.col["pos_y"]], fF[:, c.col["pos_y"]]
     out = {"applicable": True, "by_material": {}}
-    worst = 0.0
+    worst, worst_of = 0.0, None
     for mid in np.unique(mats):
         sel = mats == mid
         lo = float(y[sel].min() - c.dom["ymin"])
         hi = float(c.dom["ymax"] - y[sel].max())
-        out["by_material"][c.names.get(int(mid), f"id={mid}")] = {
-            "gap_lo_mm": lo, "gap_hi_mm": hi, "asym_mm": abs(lo - hi)}
-        worst = max(worst, abs(lo - hi))
+        # Seeded against both walls => the mirror is meant to continue it, so
+        # the two gaps are comparable quantities. Judged at frame 0, before
+        # anything has moved.
+        spans = bool(float(y0[sel].min() - c.dom["ymin"]) < START_KEEPOUT
+                     and float(c.dom["ymax"] - y0[sel].max()) < START_KEEPOUT)
+        name = c.names.get(int(mid), f"id={mid}")
+        out["by_material"][name] = {
+            "gap_lo_mm": lo, "gap_hi_mm": hi, "asym_mm": abs(lo - hi),
+            "spans_walls": spans}
+        if spans and abs(lo - hi) > worst:
+            worst, worst_of = abs(lo - hi), name
     out["worst_asym_mm"] = worst
+    out["worst_material"] = worst_of
     return out
 
 
@@ -321,7 +411,7 @@ def report(r: dict) -> None:
           f"arrived = came within {r['arrive_mm']:.1f} mm")
     print(f"  {'wall':<6}{'eligible':>10}{'arrived':>9}{'first us':>10}"
           f"{'closest mm':>12}{'at us':>9}{'max v':>9}   sweep "
-          f"{'/'.join(f'{D}' for D in ARRIVE_SWEEP)} mm")
+          f"{'/'.join(f'{D}' for D in ARRIVE_SWEEP)} mm (5.0 = plate bulge)")
     for w in WALLS:
         x = r["walls"][w]
         first = f"{x['first_us']:.1f}" if x["first_us"] is not None else "-"
@@ -333,13 +423,35 @@ def report(r: dict) -> None:
                               key=lambda kv: -kv[1]["n"]):
             print(f"           {name}: {m['n']} from {m['first_us']:.1f} us, "
                   f"{m['frac_damaged_at_end']:.0%} spalled by the end")
+        if x["n_arrived"]:
+            if x["reach_exceeds_band"]:
+                verdict = (f"came back {x['reach_mm']:.1f} mm from the wall, to "
+                           f"within {x['nearest_mid_mm']:.1f} mm of the "
+                           f"centreline (half-span {x['half_span_mm']:.1f} mm)")
+            else:
+                verdict = (f"never left the {r['arrive_mm']:.1f} mm arrival "
+                           f"band — nothing travelled back (reach is at its "
+                           f"floor, which is what a clean read looks like)")
+            print(f"           {verdict}; observed for "
+                  f"{x['observed_us']:.1f} us after first contact")
 
     ct = r["contamination"]
     print(f"  contamination (final frame; DIRECT participation only, a LOWER "
           f"BOUND — impulse through the grid is not counted)")
     print(f"    projectile {ct['proj_touched']}/{ct['n_proj']} touched, "
           f"armor {ct['armor_touched']}/{ct['n_armor']} touched")
-    if ct.get("rod_resid_v") is not None:
+    if ct.get("rod_resid_v") is None:
+        print("    rod residual v : n/a — no live projectile at the final frame "
+              f"({ct['n_proj']} seeded, all consumed or spalled)")
+    elif ct.get("rod_resid_v_clean") is None:
+        # Every live projectile particle touched a wall, so there is no clean
+        # subset to compare against. No deck in the repo does this, but the
+        # difference between "no contamination" and "nothing left uncontaminated
+        # to measure" is exactly the difference this tool exists to make.
+        print(f"    rod residual v : {ct['rod_resid_v']:.1f} m/s, but ALL "
+              f"{ct['n_live_proj']} live projectile particles touched a wall — "
+              f"no clean subset to compare against")
+    else:
         dv = ct["rod_resid_v_delta_pct"]
         print(f"    rod residual v : {ct['rod_resid_v']:.1f} -> "
               f"{ct['rod_resid_v_clean']:.1f} m/s excluding them"
@@ -355,10 +467,13 @@ def report(r: dict) -> None:
         print(f"  symmetry check : skipped — {sym['why']}")
     else:
         print(f"  symmetry check : worst mid-height asymmetry "
-              f"{sym['worst_asym_mm']:.3f} mm")
+              f"{sym['worst_asym_mm']:.3f} mm"
+              + (f" ({sym['worst_material']})" if sym["worst_material"] else "")
+              + "  [wall-spanning material only]")
         for name, s in sym["by_material"].items():
             print(f"           {name}: gap lo {s['gap_lo_mm']:.2f} vs hi "
-                  f"{s['gap_hi_mm']:.2f} mm  (asym {s['asym_mm']:.3f})")
+                  f"{s['gap_hi_mm']:.2f} mm  (asym {s['asym_mm']:.3f})"
+                  + ("" if s["spans_walls"] else "  [not wall-spanning]"))
     print()
 
 

@@ -222,6 +222,127 @@ def test_symmetry_check_is_skipped_where_it_would_mean_nothing(tmp_path):
     assert wall.measure(c)["symmetry"]["applicable"] is False
 
 
+def test_reach_follows_a_bounce_and_ignores_the_approach(tmp_path):
+    """Reach is the number that decides whether an arrival MATTERED, so it has to
+    measure travel back from the wall and nothing else.
+
+    The trap it must not fall into: the particle starts 25 mm out, so a naive max
+    over all frames would report 25 mm of "reach" for a particle that only ever
+    fell inward. Reach may count a frame only from that particle's own arrival
+    onward.
+    """
+    # Down from 25 mm to 0.4 mm (arrives frame 9), then back out to 8.0 mm.
+    bounce = [25.0, 20.0, 15.0, 10.0, 5.0, 0.4, 2.0, 4.0, 6.0, 8.0]
+    c = build(tmp_path, domain=DOMAIN, name="bounce",
+              y=[bounce], vel=500.0, mat=[1])
+    y_lo = wall.measure(c)["walls"]["y_lo"]
+    assert y_lo["n_arrived"] == 1
+    assert y_lo["first_us"] == pytest.approx(1.0)          # frame 5
+    # 8.0 mm back out — NOT the 25.0 mm it started at.
+    assert y_lo["reach_mm"] == pytest.approx(8.0)
+    # Domain is 50 mm tall, so the centreline is 25 mm from the wall and the
+    # bounce closed to within 17 mm of it.
+    assert y_lo["half_span_mm"] == pytest.approx(25.0)
+    assert y_lo["nearest_mid_mm"] == pytest.approx(17.0)
+
+
+def test_reach_at_its_floor_is_reported_as_a_clean_read_not_a_distance(tmp_path):
+    """Every arrival deck in the repo reads reach ~= ARRIVE, and that number is
+    the metric's FLOOR: a particle joins the set at the frame it comes within
+    1.2 mm, so the set maximum can never read lower. Printing it as "got 1.2 mm
+    back from the wall" would turn "nothing moved" into a measured distance.
+
+    Two decks one behaviour apart: one where the debris sticks to the wall, one
+    where it returns 8 mm. The flag must separate them.
+    """
+    stuck = build(tmp_path, domain=DOMAIN, name="stuck",
+                  y=[[25.0, 15.0, 5.0, 0.4, 0.3, 0.3, 0.3, 0.3, 0.3, 0.3]],
+                  vel=500.0, mat=[1])
+    s = wall.measure(stuck)["walls"]["y_lo"]
+    assert s["n_arrived"] == 1
+    assert s["reach_exceeds_band"] is False
+    assert s["reach_mm"] <= wall.ARRIVE
+    # ...and the report must not describe that as travel.
+    import io, contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        wall.report(wall.measure(stuck))
+    out = buf.getvalue()
+    assert "never left the 1.2 mm arrival band" in out
+    # This deck's only particle IS the projectile and it touched a wall, so
+    # there is no clean subset. That must be said, not crashed on and not
+    # silently rendered as a zero delta.
+    assert "no clean subset to compare against" in out
+
+    back = build(tmp_path, domain=DOMAIN, name="back",
+                 y=[[25.0, 15.0, 5.0, 0.4, 2.0, 4.0, 6.0, 7.0, 8.0, 8.0]],
+                 vel=500.0, mat=[1])
+    b = wall.measure(back)["walls"]["y_lo"]
+    assert b["reach_exceeds_band"] is True
+    assert b["reach_mm"] == pytest.approx(8.0)
+
+
+def test_the_observation_window_is_reported_with_the_reach(tmp_path):
+    """A clean reach over 1.2 us (`standoff_s60`) is not the evidence a clean
+    reach over 24 us (the oblique decks) is. The window has to travel with the
+    number or the weak case reads exactly like the strong one."""
+    # Arrives at frame 5 of 10; frames are 0.2 us, so 1.0 us remains.
+    c = build(tmp_path, domain=DOMAIN, name="window",
+              y=[[25.0, 20.0, 15.0, 10.0, 5.0, 0.4, 0.3, 0.3, 0.3, 0.3]],
+              vel=500.0, mat=[1])
+    y_lo = wall.measure(c)["walls"]["y_lo"]
+    assert y_lo["first_us"] == pytest.approx(1.0)
+    assert y_lo["observed_us"] == pytest.approx(1.0)
+
+
+def test_reach_is_absent_where_nothing_arrived(tmp_path):
+    """The control. A deck with no arrival has no reach — not a reach of zero,
+    which would read as "it touched the wall and stayed there"."""
+    c = build(tmp_path, domain=DOMAIN, name="noreach", **_tracks(STAYS))
+    y_lo = wall.measure(c)["walls"]["y_lo"]
+    assert y_lo["reach_mm"] is None
+    assert y_lo["nearest_mid_mm"] is None
+
+
+def test_a_consumed_penetrator_says_so_instead_of_vanishing(tmp_path, capsys):
+    """Four shipped decks (`sweep_copper_v2500` and up) have no live projectile
+    left at the final frame, so the residual-velocity line has nothing to print.
+    A line that silently disappears reads as "no contamination found"."""
+    c = build(
+        tmp_path, domain=DOMAIN, name="consumed",
+        y=[STAYS, STAYS], vel=1600.0, mat=[0, 0],
+        damage=1.0,                       # the whole penetrator is spalled
+    )
+    r = wall.measure(c)
+    assert r["contamination"]["n_live_proj"] == 0
+    assert r["contamination"]["rod_resid_v"] is None
+    wall.report(r)
+    assert "rod residual v : n/a" in capsys.readouterr().out
+
+
+def test_only_wall_spanning_material_sets_the_symmetry_headline(tmp_path):
+    """The check asks whether a slab still meets both mirrors evenly, which is
+    meaningless for material that meets neither. A free-ended rod that mushrooms
+    asymmetrically is not a boundary failure, and must not be reported as the
+    worst asymmetry on the deck."""
+    dom = {"xmin": 0.0, "xmax": 100.0, "ymin": 0.0, "ymax": 120.0}
+    # mat 1 (rha) spans wall to wall and stays even. mat 0 (the rod) sits in the
+    # middle and ends 5 mm lopsided — a much bigger number, and irrelevant.
+    c = build(tmp_path, domain=dom, name="span",
+              y=[[40.0, 45.0], [0.9, 0.9], [119.1, 119.1]],
+              vel=[[1600.0, 1600.0], [0.0, 0.0], [0.0, 0.0]],
+              mat=[0, 1, 1])
+    s = wall.measure(c)["symmetry"]
+    assert s["by_material"]["rha"]["spans_walls"] is True
+    assert s["by_material"]["tungsten_rod"]["spans_walls"] is False
+    # The rod's own asymmetry is the larger of the two and is still reported...
+    # (it ends at y=45 in a 120 mm domain: gaps of 45.0 and 75.0)
+    assert s["by_material"]["tungsten_rod"]["asym_mm"] == pytest.approx(30.0)
+    # ...but the headline is the plate's, which is what the walls act on.
+    assert s["worst_material"] == "rha"
+    assert s["worst_asym_mm"] == pytest.approx(0.0, abs=1e-3)
+
+
 def test_stride_can_only_miss_an_arrival_never_invent_one(tmp_path):
     """The documented direction of the sampling bias, pinned. Frame 9 is the
     only frame inside the band, so an even stride steps straight over it."""
