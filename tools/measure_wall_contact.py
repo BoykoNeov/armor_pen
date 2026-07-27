@@ -113,7 +113,9 @@ WHAT IT CANNOT SEE — state these before quoting it.
     learning which layer is the main plate, which is deck knowledge it is not
     allowed to have. The per-material `k/n` bound is what covers that gap: it
     holds for a damage fraction over any subset of one material, however that
-    figure defines itself.
+    figure defines itself — but only over that material as a WHOLE; a figure
+    scoped to one layer of a multi-slab material has a proportionally larger
+    bound (see `_per_material_bound`).
 """
 
 from __future__ import annotations
@@ -320,11 +322,19 @@ def _per_material_bound(c: Cache, mats, touched) -> dict:
     armor. Recomputing the wrong set and calling the delta "the contamination"
     would be answering a question nobody asked.
 
-    A count answers it for every set at once. Damage is latched 0/1, so a mean
-    over a material is a fraction, and dropping `k` of `n` members moves a
-    fraction by at most `k/n` — whatever the members happened to be. That is an
-    algebraic ceiling, not a measurement, so it holds for any figure scoped to
-    this material regardless of how that figure defines its window.
+    A count gets most of the way there. Damage is latched 0/1, so a mean over a
+    material is a fraction, and dropping `k` of `n` members moves a fraction by
+    at most `k/n` — whatever the members happened to be. That is an algebraic
+    ceiling rather than a measurement, so it needs no assumption about which
+    particles were touched.
+
+    **`n` is the whole material, so this bounds a figure over the whole
+    material.** A figure scoped to a SUB-REGION divides by a smaller population
+    and its bound is correspondingly larger — `apfsds_vs_era_oblique` carries
+    three `rha` slabs under one id, and the main plate is 67 % of them, so a
+    main-plate figure's ceiling is ~1.5x what is printed here. Scaling it needs
+    the layer geometry, which is deck knowledge this tool may not have (root §3);
+    PHYSICS §1.1.2 does that step, and this is the input to it, not the answer.
     """
     out = {}
     for mid in np.unique(mats):
@@ -479,8 +489,9 @@ def report(r: dict) -> None:
     for name, b in sorted(ct["by_material"].items(), key=lambda kv: -kv[1]["touched"]):
         if b["touched"]:
             print(f"      {name}: {b['touched']}/{b['n']} touched -> a damage "
-                  f"fraction over this material can move at most "
-                  f"{b['max_frac_shift'] * 100:.4f} pp")
+                  f"fraction over ALL of this material can move at most "
+                  f"{b['max_frac_shift'] * 100:.4f} pp (a figure scoped to one "
+                  f"layer of it divides by less, so its bound is larger)")
     if ct.get("rod_resid_v") is None:
         print("    rod residual v : n/a — no live projectile at the final frame "
               f"({ct['n_proj']} seeded, all consumed or spalled)")

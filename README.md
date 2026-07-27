@@ -224,13 +224,14 @@ the real one is already met. Debris reaches a wall on **8 decks of 30**, always
 late, always 100 % spalled, and on every one of them **nothing that touched a wall
 ever came back**: a free-slip wall zeroes the inbound normal velocity rather than
 negating it, so material arrives, stops, and slides. It does not reflect. The
-largest effect on any figure is **0.0425 pp** on a main-plate spall fraction quoted
+largest effect on any figure is **0.0635 pp** on a main-plate spall fraction quoted
 as an A/B of −40.7 %. The standoff family's apparent trend (62→30→12→0 arrivals) is
-**not** a standoff effect — first contact tracks `S / 7000 m/s` to inside one frame,
+**not** a standoff effect — first contact tracks `S / 7000 m/s` to within 0.23 µs,
 so `s90` reads zero because its arrival falls past the end of its own bake. Nothing
 has ever reached `x_hi` on any deck, which retires the only part of this that would
 have been kernel work. **No remedy, no rebake** — measured by
-`tools/measure_wall_contact.py`, 16 tests, each watched going red first.
+`tools/measure_wall_contact.py`, 16 tests, twelve mutations each caught by exactly
+one of them.
 
 **Next:** a **volumetric/compaction criterion** for confined fillers, and the
 **jet's grid resolution** — it is only 8 cells across, which limits every jet

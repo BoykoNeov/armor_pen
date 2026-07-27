@@ -184,9 +184,11 @@ fires at frame 0 on all 30 decks, because that is where the armor is. A particle
 counted only if it **started > 3.0 mm clear of that wall and later came within
 1.2 mm** (≥ 3 cells on every deck; the cache does not record `dx`, so the thresholds
 are fixed lengths that bracket the repo, and both are swept). Sixteen tests pin it,
-each written by watching it go **red** on a specific defect first — including the
-one that matters most here, a control deck where nothing travels reading zero
-against a twin that reads one, *one particle apart*.
+and **twelve mutations of the tool were each caught by exactly one of them** —
+including the one that matters most here, a control deck where nothing travels
+reading zero against a twin that reads one, *one particle apart*. (The remaining
+four tests are the green halves of those pairs: controls, not red-proven
+assertions.)
 
 **Result: 8 decks of 30 show any arrival at all; 647 particles in total.**
 
@@ -197,6 +199,26 @@ against a twin that reads one, *one particle apart*.
 | `standoff_s00` / `s30` / `s60` | 62 / 30 / 12, split evenly `y_lo`+`y_hi` | 35.0 / 39.4 / 43.8 of 45.0 µs | `rha`, **100 % spalled** | **0.0123 / 0.0059 / 0.0024 pp** |
 | `standoff_conv_*_s00` (3 decks) | 128 / 98 / 98 | 33.6–34.8 of 45.0 µs | `rha`, **100 % spalled** | 0.0253 / 0.0086 / 0.0048 pp |
 | the other **22 decks** | **none** | — | — | — |
+
+**Threshold sensitivity, since the verdict must not be one.** The counts above are
+the `1.2 mm` column. Widening to `2.4 mm` — roughly twice the 3-cell slip band, so
+material there has not entered it — takes **8 decks to 12**, adding
+`sweep_tungsten_v2500` (353), `sweep_tungsten_v1500` (210), `sweep_copper_v1500`
+(13) and `sweep_copper_v2500` (1). None of those approach closer than 2.11 mm and
+none is an arrival. Narrowing to `0.6 mm` takes it the other way, to 2 decks.
+(Ignore the `5.0 mm` column: eligibility there needs a start past 5.0 mm and a
+loaded plate bulges laterally ~0.8 mm, so it counts seeding —
+`standoff_conv_dx188_s90` reads 4091 with zero arrivals at any wall.)
+
+**And a bound is over the population it divides by.** The `k/n` figures above use
+`n` = *the whole material*. That is the honest ceiling for a fraction taken over
+all of `rha`, but `measure_reactive_ab.py` scopes to the **main plate**, and the
+oblique deck carries three `rha` slabs (6 + 6 + 24 mm) under one material id. The
+main plate is 138632 of the 206830 `rha` particles, so a main-plate-scoped bound
+is ~1.5x larger: pessimistically assuming *every* touched particle landed there —
+which late-time crater debris makes plausible — **0.0469 pp** (reactive) and
+**0.0635 pp** (inert). Still three orders of magnitude under the −40.7 % effect,
+but quote the number that matches the figure's own population.
 
 Three findings, in order of how much they change.
 
@@ -261,11 +283,12 @@ are not a boundary measurement, and headlining them reported a mushroomed tip as
 asymmetry of 0.216 mm.
 
 **Verdict: no remedy is warranted, and no deck was rebaked to establish it.** The
-largest bound on any figure scoped to a single material is **0.36 pp** (the rod on
-`apfsds_vs_era_oblique_inert`); on the main plate, which is what
-`measure_reactive_ab.py` actually quotes, it is **0.0425 pp** — against an A/B effect
-of −40.7 %. The standoff family's depth figures are read along the axis, tens of mm
-from either wall, and nothing came back off a wall at all.
+largest material-wide bound anywhere is **0.36 pp** (the rod on
+`apfsds_vs_era_oblique_inert`); the main-plate spall fraction
+`measure_reactive_ab.py` actually quotes is bounded at **0.0635 pp** even
+pessimistically — against an A/B effect of −40.7 %. The standoff family's depth
+figures are read along the axis, tens of mm from either wall, and nothing came back
+off a wall at all.
 
 Two caveats travel with that verdict. The tool sees only **dumped frames**, so a
 sub-frame excursion is invisible (§3.9's aliasing lesson); and it measures **direct
