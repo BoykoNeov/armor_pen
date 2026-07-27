@@ -1972,44 +1972,30 @@ def _von_mises(F: np.ndarray, mu: np.ndarray, lam: np.ndarray,
 # ===========================================================================
 
 
-def bake(scenario, writer, device: str = "cuda:0", j_trace=None,
-         nan_trace: bool = False) -> None:
-    """Run the elastic MLS-MPM substep loop and dump render frames.
+def plan_substeps(scenario) -> dict:
+    """Size the substep for a scenario, WITHOUT baking it. Host-side, no GPU.
 
-    ``j_trace`` is an optional DEBUG hook, ``(frame_lo, frame_hi, material, path)``:
-    log min/mean live J for ``material`` on EVERY SUBSTEP over ``[frame_lo,
-    frame_hi)`` and save to ``path`` as .npz. It exists because the shock ring is
-    a sub-frame phenomenon (see ``_trace_j``) and nothing sampled at frame cadence
-    can see it — not the cache, not the CFL audit. Windowed, so the cost is
-    bounded; off by default and ``run.py`` never sets it. Not a schema change:
-    it writes its own file and touches no cache column.
+    Lifted verbatim out of ``bake``, which now calls it, so there is exactly ONE
+    definition of how a deck's ``dt`` is chosen. That matters for two reasons
+    beyond tidiness:
 
-    Wiring is in run.py; the physics is here. Sets ``writer.particle_count``
-    after seeding (run.py constructs the writer with a placeholder 0).
+    * A deck can be checked BEFORE an hour of GPU is spent on it. The substep
+      count is not a detail on the convergence decks — it IS the experiment
+      (PHYSICS §3.13: a ``dt`` partner that lands on 514 substeps instead of 513
+      turns a measured pair back into an inference), and ``ceil`` makes the
+      window that hits a given count narrow.
+    * A test can pin the pairing against the REAL sizing path. Re-deriving the
+      arithmetic in a test would be satisfied by copying a bug — the mistake
+      ``test_cfl_sizing`` was written to avoid.
+
+    Returns the sizing and the quantities it was read from, so a caller can print
+    the audit line or assert on any of them.
     """
     sp = scenario.solver
     dom = scenario.domain
-
-    # --- units: convert the two SI-seconds deck fields to ms once (root §7) ---
     dt_deck_ms = sp.dt * 1.0e3
     total_ms = sp.total_time * 1.0e3
-
-    # Artificial (shock) viscosity coefficients — dimensionless, so no conversion.
-    # Deck fields with defaults, so every existing deck inherits them silently;
-    # see the AV block at the top of this module.
-    av_c_q = sp.av_c_q
-    av_c_l = sp.av_c_l
-
-    # --- grid geometry (mm-ms-g) ---
-    grid_res = sp.grid_resolution
-    inv_dx = grid_res / (dom.xmax - dom.xmin)
-    dx = 1.0 / inv_dx
-    n_side = max(1, int(round(math.sqrt(sp.particles_per_cell))))
-    spacing = dx / n_side
-
-    seed = _seed(scenario, dx, spacing)
-    n = seed["pos"].shape[0]
-    writer.particle_count = n  # <-- the writer was built with a placeholder 0
+    dx = (dom.xmax - dom.xmin) / sp.grid_resolution
 
     # --- CFL: pick a stable substep dt, decoupled from the (optimistic) deck dt ---
     # The EOS STIFFENS under compression (K = K0·J^-K'), so the REST sound speed is
@@ -2017,7 +2003,7 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None,
     # resting one, and c ~ J^(-K'/2). Size the substep from the compression this
     # deck's own IMPACT SHOCK drives its materials to, with EOS_CFL_P_MARGIN of
     # headroom for the transient that overshoots it.
-    # This is a prediction, so the frame loop below MEASURES whether it held.
+    # This is a prediction, so bake's frame loop MEASURES whether it held.
     proj = materials.get(scenario.projectile.material)
     names = {scenario.projectile.material, *(a.material for a in scenario.armor)}
     # Tip velocity — `tail_velocity` (if any) is slower by construction, so the tip
@@ -2049,16 +2035,16 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None,
         # Artificial viscosity raises the signal speed, so the bound has to carry
         # it too. A priori the worst compression rate is a shock resolved across
         # ~one cell, |div v| ~ v_tip/dx — which makes the quadratic contribution
-        # c_q*dx*(v_tip/dx) = c_q*v_tip, independent of dx. Like the J estimate
-        # above this is a PREDICTION; the frame loop measures whether it held.
+        # c_q*dx*(v_tip/dx) = c_q*v_tip, INDEPENDENT of dx. Like the J estimate
+        # above this is a PREDICTION; bake's frame loop measures whether it held.
         # `e` is left at 0 here ON PURPOSE: the design J comes from the COLD curve
         # (`_eos_equilibrium_j`), so pairing it with a heated sound speed would mix
-        # two different states. Shock heating RAISES c, so the audit below measures
-        # the real thing every frame and warns — predict cold, verify hot.
+        # two different states. Shock heating RAISES c, so the audit measures the
+        # real thing every frame and warns — predict cold, verify hot.
         c_eos = float(_eos_sound_speed(Jd, K0, mu, mat.density, mgp_d, 0.0))
         div_v_design = -v_tip / dx
         c_max = max(
-            c_max, _av_signal_speed(c_eos, div_v_design, dx, av_c_q, av_c_l)
+            c_max, _av_signal_speed(c_eos, div_v_design, dx, sp.av_c_q, sp.av_c_l)
         )
     dt_cfl = CFL * dx / c_max
     dt_sim = min(dt_deck_ms, dt_cfl)
@@ -2066,6 +2052,71 @@ def bake(scenario, writer, device: str = "cuda:0", j_trace=None,
     frame_dt_ms = total_ms / sp.frame_count
     substeps = max(1, math.ceil(frame_dt_ms / dt_sim))
     dt = frame_dt_ms / substeps  # even division so frame times land exactly
+
+    return {
+        "dt_ms": dt,
+        "substeps": substeps,
+        "dt_deck_ms": dt_deck_ms,
+        "dt_cfl_ms": dt_cfl,
+        "frame_dt_ms": frame_dt_ms,
+        "dx": dx,
+        "c_max": c_max,
+        "j_design": j_design,
+        "p_design": p_design,
+        # Which of the two bounds actually won. `bake` only ever LOWERS dt, so a
+        # deck dt above the CFL limit is an upper bound that never binds.
+        "bound_by": "deck" if dt_deck_ms <= dt_cfl else "cfl",
+    }
+
+
+def bake(scenario, writer, device: str = "cuda:0", j_trace=None,
+         nan_trace: bool = False) -> None:
+    """Run the elastic MLS-MPM substep loop and dump render frames.
+
+    ``j_trace`` is an optional DEBUG hook, ``(frame_lo, frame_hi, material, path)``:
+    log min/mean live J for ``material`` on EVERY SUBSTEP over ``[frame_lo,
+    frame_hi)`` and save to ``path`` as .npz. It exists because the shock ring is
+    a sub-frame phenomenon (see ``_trace_j``) and nothing sampled at frame cadence
+    can see it — not the cache, not the CFL audit. Windowed, so the cost is
+    bounded; off by default and ``run.py`` never sets it. Not a schema change:
+    it writes its own file and touches no cache column.
+
+    Wiring is in run.py; the physics is here. Sets ``writer.particle_count``
+    after seeding (run.py constructs the writer with a placeholder 0).
+    """
+    sp = scenario.solver
+    dom = scenario.domain
+
+    # --- units: SI-seconds deck field to ms (root §7). `total_time` is converted
+    # inside `plan_substeps`, which owns the frame/substep arithmetic; this one is
+    # kept because the audit line below reports the deck's own (upper-bound) dt.
+    dt_deck_ms = sp.dt * 1.0e3
+
+    # Artificial (shock) viscosity coefficients — dimensionless, so no conversion.
+    # Deck fields with defaults, so every existing deck inherits them silently;
+    # see the AV block at the top of this module.
+    av_c_q = sp.av_c_q
+    av_c_l = sp.av_c_l
+
+    # --- grid geometry (mm-ms-g) ---
+    grid_res = sp.grid_resolution
+    inv_dx = grid_res / (dom.xmax - dom.xmin)
+    dx = 1.0 / inv_dx
+    n_side = max(1, int(round(math.sqrt(sp.particles_per_cell))))
+    spacing = dx / n_side
+
+    seed = _seed(scenario, dx, spacing)
+    n = seed["pos"].shape[0]
+    writer.particle_count = n  # <-- the writer was built with a placeholder 0
+
+    # --- CFL: pick a stable substep dt, decoupled from the (optimistic) deck dt ---
+    # The whole sizing lives in `plan_substeps` so a deck can be checked without a
+    # bake and a test can pin it against this same path; read it there.
+    plan = plan_substeps(scenario)
+    dt, substeps = plan["dt_ms"], plan["substeps"]
+    dt_cfl, c_max = plan["dt_cfl_ms"], plan["c_max"]
+    j_design, p_design = plan["j_design"], plan["p_design"]
+    frame_dt_ms = plan["frame_dt_ms"]   # the NaN tripwire below reports in µs
 
     if dt < dt_deck_ms:
         print(

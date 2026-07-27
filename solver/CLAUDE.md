@@ -713,6 +713,55 @@ and the resolution guard **217 829 → 0** — neither was ever an EOS problem.
      further **spatial** refinement is what would eventually breach `EOS_CFL_P_MARGIN`.
      All four clean at P=4; no override needed.
 
+15. **Milestone 17 — separating `dx` from the clock CFL drags with it (PHYSICS
+   §3.14).** The experiment §3.13 wrote down and left untested. Four decks
+   (`standoff_conv_dt513_s00/s90`, `standoff_conv_dt684_s00/s90`), a
+   `--dt-decomposition` mode, and **one host-side refactor — no kernel code**.
+   - **§3.13's prediction is SUPPORTED IN SIGN and FALSIFIED AS A COMPLETE
+     EXPLANATION.** The two 16-cell routes disagree by **+4.13 %**; the `dt`-only
+     term at the gap's own 684 substeps is **−1.56 %**; undoing it leaves **+2.50 %**.
+     So `dt` is **~39 %** of it and **~61 % is not**. The split **assumes no `dx`×`dt`
+     interaction** (it carries a term measured at 8 cells onto the 16-cell arm) —
+     the one term the design cannot reach, so it is an estimate with a known open
+     term. The residual's leading candidate is the thing §3.8 called "**mostly**
+     excluded": a real finite-diameter effect.
+   - **THE HEADLINE IS THE BY-PRODUCT: §3.13's transferable rule REPRODUCED ON A
+     SECOND FAMILY.** Decomposed, `dx` alone is **+17.46 %** (8→12) and **+20.27 %**
+     (8→16) where the confounded ladder reads +15.3 % and +18.4 % — the CFL-coupled
+     ladder **understates the grid effect by ~1.9 pp**. Different deck, target,
+     geometry and metric, so it is a property of the METHOD, not of
+     `heat_vs_composite`.
+   - **THE RATIO HIDES MOST OF WHAT dt DOES.** A finer substep suppresses both arms'
+     matched-fraction depth **3–6 %** while moving the quotient only **1.6–1.9 %** —
+     §3.8's headline metric is ~3× less `dt`-sensitive than the depths under it.
+     §3.13's falsifier was written on the ratio ALONE, and a ratio-only instrument
+     reports "no effect" for a solver that moved every depth it measures. **Report
+     both arms' depths, never only their quotient.**
+   - **The `dt` term SATURATES by 513 substeps** — the next 1.5× moves it back
+     **+0.31 %**, 1.5× the 0.2 % floor, so *saturated* is claimed and *turned over*
+     is named. **§3.13's spec named the wrong substep count** (dx250's 1.5×, where
+     the gap lives at dx188's 2×); both were baked, and the second point is what
+     distinguishes a slope from a plateau.
+   - **The premise cost zero GPU and holds bit-exactly:** `c_max` is `dx`-independent
+     (AV contributes `c_q·v_tip`), so `dt_cfl ∝ dx`, and the **fat-jet route runs a
+     substep BIT-IDENTICAL to the shipped arm's**. Isolate with the **deck `dt`**,
+     never `cfl_p_margin` (§3.11). The `ceil` window is narrow — **verify the substep
+     count BEFORE baking**, which `plan_substeps` now makes possible.
+   - **`mpm.plan_substeps` — the one code change**, a pure host-side extraction of
+     `bake`'s CFL block, which `bake` now calls. It exists so a test can pin the
+     pairing against the REAL sizing path; re-deriving the arithmetic in a test would
+     be satisfied by copying a bug (the `test_cfl_sizing` lesson). Behaviour-preserving
+     across **all 38 decks**, matching every runtime-printed substep count.
+   - **§3.8 WAS TWO REBAKES STALE — re-measured.** Its convergence table was never
+     re-read after M13 and M14: **1.229/1.383/1.429/1.501 → 1.2657/1.4573/1.4968/
+     1.5587**. Conclusions all hold; the **fat-jet row's sign flipped** (+1.5 % over
+     the prediction, was 2.3 % under) and the under-read is **~2.0×**, not 2.3× — now
+     **computed** by the tool instead of printed from the string that went stale.
+   - `tests/test_standoff_dt.py`, 20 tests, **seven mutations verified RED first**.
+     Fixture lesson: a 16-particle synthetic jet makes `consumed` a nine-step
+     staircase, and interpolating a staircase reads exactly like a tool defect — **a
+     fixture too thin to be smooth manufactures the failure it is testing for.**
+
 Don't rewrite from scratch. The full solver arc (milestones 1–13) is done.
 
 **Stale-number correction (measured 2026-07-16, updated 2026-07-17):** the "~16 %

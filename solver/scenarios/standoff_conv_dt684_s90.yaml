@@ -1,0 +1,89 @@
+# The TIMESTEP partner that tests §3.8's OPEN 5 % GAP — milestone 17.
+# Scenarios are DATA, not code (CLAUDE.md §9). Representative / illustrative
+# order-of-magnitude values, not any real system (CLAUDE.md §10).
+#
+# THIS IS THE LOAD-BEARING DECK OF THE PAIR. PHYSICS §3.8 reaches 16 cells across
+# the jet by two routes that disagree: `standoff_conv_dx188_*` (refine `dx`) reads
+# LOW against `standoff_conv_d6mm_*` (fatten the jet at the shipped `dx`). Milestone
+# 16 (§3.13) predicted why — the substep is CFL-bound, so refining the grid refines
+# the CLOCK with it, while fattening the jet does not touch `dt` at all
+# (`_impact_pressure` and `_eos_equilibrium_j` never see the diameter, and the d6mm
+# decks carry the shipped `grid_resolution: 1440`). A finer `dt` suppresses
+# penetration, and the `dx` route is the one reading low: the signs match.
+#
+# The gap lives at a 2x `dt` refinement — dx188 runs 684 substeps where the shipped
+# arm and the fat jet both run 114-at-the-same-`dt`. So THIS is the substep count
+# that partners the gap. §3.13 wrote the experiment down as "a deck `dt` set to the
+# `standoff_conv_dx250` arms' substep count", which is a 1.5x refinement partnering
+# 12 cells — it does not reach either arm in the disagreement. **The spec named the
+# wrong arm**; `standoff_conv_dt513_*` is kept as the second point (so the `dt`
+# effect can be seen saturating rather than having a slope read off one), and this
+# deck is the test.
+#
+# THE PAIRING IS EXACT (§3.13's transferable rule: a CFL-coupled ladder measures the
+# DIFFERENCE OF TWO OPPOSING ERRORS, and the fix is a substep-matched `dt` PARTNER
+# per arm, not more grids):
+#
+#   grid 1440 (dx=0.3750), 114 substeps  ->  `standoff_s90`             the shipped arm
+#   grid 1440 (dx=0.3750), 684 substeps  ->  THIS DECK                  dt alone
+#   grid 2880 (dx=0.1875), 684 substeps  ->  `standoff_conv_dx188_s90`  dx AND dt
+#   grid 1440 (dx=0.3750), 114 substeps  ->  `standoff_conv_d6mm_s90`   diameter alone
+#
+# The last row is not a typo and it is worth reading twice: the fat-jet deck runs a
+# `dt` BIT-IDENTICAL to the shipped arm's, verified through the real sizing path
+# (`c_max` is `dx`-independent here — the artificial-viscosity term contributes
+# `c_q*v_tip` — so all four standoff grids design to the same 64101 mm/ms and
+# `dt_cfl` is exactly proportional to `dx`). §3.13 asserted that by reading the code;
+# it holds end to end, cadence rounding included.
+#
+# ISOLATE WITH THE DECK dt, NEVER WITH `cfl_p_margin`. The margin works through the
+# EOS design state, and PHYSICS §3.11 is explicit that pushing the design `J` down
+# re-creates milestone 14's own defect (the bound gets read off the pole guard's
+# extrapolated backstop). A deck `dt` below the CFL bound simply wins in the `min`,
+# and nothing else moves. Do not "fix" this deck by reaching for the margin.
+#
+# READ THE DEPTHS, NOT ONLY THE RATIO. The published quantity is S90/S0, and a finer
+# `dt` could suppress BOTH depths while leaving the ratio flat — which is a different
+# finding from "no `dt` effect" and must not be reported as one. §3.13's falsifier is
+# written on the ratio alone; the tool reports both arms' matched-fraction depths.
+#
+# WHAT THIS PAIR STILL CANNOT REACH, stated so it is not claimed: the `dx` effect at
+# the SHIPPED arm's 114 substeps — fine `dx` at COARSE `dt` is unreachable by
+# construction, since `min(deck_dt, cfl_dt)` only ever lowers `dt` — and any
+# `dx` x `dt` INTERACTION, which is why each decomposed row is clean while the trend
+# between rows is not.
+#
+# DIAGNOSTIC deck, not for playback: `frame_count` is 75 to match the rest of the
+# `standoff_conv_*` family (cache size only — the measurement interpolates on
+# consumed fraction, not on frame index; decimating the shipped 225-frame caches to
+# this cadence moves the S90/S0 ratio -0.113 %, two orders below the effects here).
+# Everything physical is identical to `standoff_s90` except the substep.
+name: standoff_conv_dt684_s90
+
+domain: { xmin: 0, xmax: 540, ymin: 0, ymax: 120 }   # mm — identical to the shipped family
+
+projectile:
+  kind: heat_jet
+  material: copper_jet
+  length: 120.0
+  diameter: 3.0
+  velocity: 7000
+  tail_velocity: 2000
+  angle_deg: 0.0
+  nose_shape: blunt
+
+armor:
+  - { material: rha, thickness: 150.0, standoff: 90.0 }
+
+solver:
+  grid_resolution: 1440   # the SHIPPED dx = 0.375 mm — unchanged; the CLOCK is what changes
+  particles_per_cell: 4
+  # THE VARIABLE. Below the CFL bound (1.7550e-6 ms here), so `min(deck_dt, cfl_dt)`
+  # takes this. 6.0e-4 / 8.78e-7 = 683.4 -> ceil 684 substeps -> dt = 8.7719e-7 ms,
+  # bit-identical to `standoff_conv_dx188_s90`. The ceil window is narrow — any deck
+  # dt in (8.77193e-7, 8.78477e-7] ms lands on 684 — so verify the substep count
+  # before baking, never after. Refining `dt` costs no CFL headroom: §3.13's
+  # by-product table measured budget use FALLING as `dt` refines at fixed `dx`.
+  dt: 8.78e-10
+  total_time: 4.5e-5
+  frame_count: 75     # diagnostic: cache size only, NOT the 2.0e-7 playback convention

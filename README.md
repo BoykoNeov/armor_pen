@@ -276,12 +276,50 @@ and the shipped cache must not be quoted for breakout time or residual velocity.
 Its *kinematic* claims are untouched. **Zero kernel code** — five decks, one tool,
 ten tests, six mutations verified red.
 
-**Next:** two things, neither of them "refine the jet" again. **(1)** 16 cells is
-not enough for the **residual state** — velocity and mass-through are still growing
-there, so a 24-cell arm would say whether they turn over. **(2)** §3.13 makes a
-falsifiable prediction about §3.8's one open discrepancy — its two routes to 16
-cells disagree by 5 %, and the fat-jet route is the **dt-free** one — with the deck,
-the substep target and the falsifier all written down, untested. See the
+**§3.13's prediction was tested, and the answer is *partly*** (§3.14). §3.8's two
+routes to 16 cells across the jet disagree, and §3.13 predicted the cause: `dt` is
+CFL-bound, so refining `dx` refines the **clock** with it, while fattening the jet
+does not. Four new decks put a **substep-matched `dt` partner** at the shipped `dx`
+beside each `dx` arm — bit-identical substeps, verified through the real sizing path
+before any GPU was spent — so each pair differs in `dx` alone. The timestep turns out
+to account for **~39 % of the disagreement; ~61 % is not `dt`**, so the prediction is
+**supported in sign and falsified as a complete explanation**, and §3.8's "a real
+finite-diameter effect, *mostly* excluded" is left as the leading candidate by
+elimination — the hedge in that word was doing real work.
+
+Two by-products outrank the verdict. **The transferable rule reproduced on a second,
+independent family:** decomposed, the grid effect is **+17.5 %** and **+20.3 %**
+where the confounded ladder reads +15.3 % and +18.4 %, so a CFL-coupled study
+understates the grid by ~1.9 pp — M16 could only assert that from one deck. And
+**the ratio hides most of what the timestep does**: a finer substep suppresses both
+arms' depth **3–6 %** while moving their quotient only **1.6–1.9 %**, so §3.8's
+headline metric is ~3× less `dt`-sensitive than the depths underneath it. A
+ratio-only instrument would have reported "no effect" for a solver that moved every
+depth it measures; the test suite pins that with a synthetic pair whose depths both
+move 8 % while the ratio moves **0.0000 %**. The `dt` term is also **saturated by 513
+substeps** (the next 1.5× moves it back +0.31 %, only 1.5× the resolution floor) —
+which is why a second partner was baked where the spec asked for one, since a single
+point cannot tell a slope from a plateau.
+
+**§3.8 was two rebakes stale and is re-measured** — its convergence table had never
+been re-read after M13's EOS and M14's CFL margin. Today: **1.2657 / 1.4573 / 1.4968
+/ 1.5587** against 1.229 / 1.383 / 1.429 / 1.501. Every conclusion holds; the fat-jet
+row now **overshoots** the a-priori 1.5357 by +1.5 % where it used to sit 2.3 % under,
+and the under-read on the excess is ~2.0×, not ~2.3× — a figure the tool now
+**computes** rather than printing from the string that went stale. Seventh
+demonstration that absolutes here move and conclusions do not. **One code change,
+host-side only:** `bake`'s inline CFL sizing became `mpm.plan_substeps`, so a deck's
+substep count can be checked without a GPU and pinned against the real path rather
+than a copy of it; verified behaviour-preserving across all 38 decks. Twenty tests,
+seven mutations verified red.
+
+**Next:** two, and neither is "refine the jet" again. **(1)** Still open from §3.13:
+16 cells is not enough for `heat_vs_composite`'s **residual state** — velocity and
+mass-through are still growing there, so a 24-cell arm (with its own `dt` partner,
+per §3.14) would say whether they turn over. **(2)** Split the residual 61 %: the
+fat-jet route conflates *more cells* with *a bigger jet*, and a **6 mm jet at
+`dx=0.75`** — same diameter as the fat arm, same 8 cells as the shipped one — tells
+which of the two it is answering to, cheaply (a quarter of the particles). See the
 per-directory `CLAUDE.md` files for the build order.
 
 ## Quick start

@@ -1427,27 +1427,52 @@ decimal**.)
 
 ### 3.8 Standoff — the jet's energy-neutral depth experiment (milestone 10)
 
-**Read this first: the shipped decks under-read the effect they measure, by ~1.7×
+**Read this first: the shipped decks under-read the effect they measure, by ~2.0×
 on the excess, and they are not grid-converged.** `standoff_s00/s30/s60/s90` measure
-a depth ratio of **1.31** between S=90 and S=0 where the a-priori prediction is
+a depth ratio of **1.27** between S=90 and S=0 where the a-priori prediction is
 **1.536**. The cause is resolution, not physics: the jet is 3 mm across = **8 cells**
 at the shipped `dx=0.375`, and it *thins as it stretches* to ~1.1 mm ≈ **3 cells** by
 the end of the window. The quantitative claim below rests on the six
 `standoff_conv_*` decks, **not** on the four shipped ones. Same posture as §3.5's
 tip-`J`: quote the trend, never the value.
 
-> **⚠️ RE-MEASURED 2026-07-17 (milestone 13); the tables below are the
-> Murnaghan-era measurement.** Under Mie-Grüneisen (§3.10) + the §1.1.1 boundary
-> fix the shipped family reads **S90/S0 = 1.312** (was 1.229) against the unchanged
-> a-priori **1.536** — so the under-read on the *excess* improved from **~2.3× to
-> ~1.7×** (0.536 predicted vs 0.312 measured). MG resists the jet tip harder, which
-> is the same direction §3.7's sweep moved.
+> **⚠️ RE-MEASURED 2026-07-27 (milestone 17). Every number in this section is now
+> read off the SHIPPED P=4 caches; the older values are kept below as labelled
+> history, because the pattern they make is worth more than any one of them.**
+>
+> | S90/S0 | shipped | dx=0.250 | dx=0.1875 | 6 mm jet | vs a-priori 1.5357 |
+> |---|---|---|---|---|---|
+> | Murnaghan era (M10, `5b9cc5b`) | 1.229 | 1.383 | 1.429 | 1.501 | fat jet −2.3 % |
+> | MG era (M13, `39ffe35`) | 1.312 | *not re-measured* | | | |
+> | **today (P=4, M17)** | **1.2657** | **1.4573** | **1.4968** | **1.5587** | **fat jet +1.5 %** |
+>
+> The **conclusions are untouched** — monotone in `cells across the jet`, the two
+> 16-cell routes close on each other from different grids and different jets, the
+> shipped row worst — and the absolutes have now moved **three times**. Seventh
+> demonstration of the repo's own rule: treat every figure here as a reading of one
+> configuration, and **re-measure rather than translate**.
+>
+> Two things did change in kind, and neither is cosmetic:
+> * **The under-read on the *excess* is ~2.0×** (0.536 predicted vs 0.266 measured),
+>   not the ~2.3× of M10 or the ~1.7× M13 briefly recorded. `--convergence` now
+>   COMPUTES that figure instead of printing it from a string, which is how it went
+>   stale in the first place.
+> * **The fat-jet row's sign flipped: it now OVERSHOOTS the prediction by +1.5 %**
+>   where it used to sit 2.3 % under. The posture below is unchanged — it is inside
+>   the ±3.5 % per-fraction scatter either way, so it remains *consistent with* the
+>   prediction rather than confirming it — but the row must not keep its old gloss
+>   of "approaching from below".
+>
 > **This does not rescue the shipped decks and must not be read as convergence:**
 > the deficit is `cells across the jet`, and no EOS can add resolution. The
-> `standoff_conv_*` decks still carry the quantitative claim. The matched-fraction
-> trend (17.5 → 23.1 mm at f=0.15, 37.6 → 48.9 at f=0.30) and the lab-time trap
-> below (94.2 → 72.5 mm, *falling* with standoff) both reproduce unchanged in
-> shape.
+> `standoff_conv_*` decks still carry the quantitative claim. The lab-time trap
+> below (107.0 → 82.1 mm, *falling* with standoff) reproduces unchanged in shape.
+>
+> **And a new caveat that §3.8 never carried: the DEPTHS under this ratio are
+> `dt`-sensitive where the ratio is not** (§3.14). Refining the substep alone
+> suppresses both arms' matched-fraction depth by **3–6 %** while moving their
+> quotient only **1.6–1.9 %**. Anyone quoting a standoff *depth* from this family
+> inherits that; anyone quoting the *ratio* mostly does not.
 
 **Why this experiment exists.** §3.4 built the jet but deliberately **refused to
 compare its penetration depth** to anything, because every comparison available was
@@ -1497,7 +1522,7 @@ what `tools/measure_standoff.py` matches on.
 
 **The metric is the whole experiment — the obvious ones lie.** Depth at a fixed
 **lab time** is an artifact of the *opposite sign*, and it fires hard here: depth at
-the end of the window **falls** 105.0 → 80.1 mm as standoff rises, purely because a
+the end of the window **falls** 107.0 → 82.1 mm as standoff rises, purely because a
 longer standoff impacts later and penetrates for less of the window. Anyone
 measuring the obvious quantity would publish "standoff reduces penetration". Depth
 at a fixed **post-impact time** is honest but collapses the predicted spread to ~8 %.
@@ -1511,17 +1536,20 @@ perforates and would put a **ceiling** on the one quantity being measured:
 
 | S (mm) | Z = 168+S | f=0.15 | f=0.20 | f=0.25 | f=0.30 | ratio vs S=0 | predicted Z/Z₀ |
 |---|---|---|---|---|---|---|---|
-| 0  | 168 | 20.7 | 28.2 | 36.3 | 44.9 | 1.000 | 1.000 |
-| 30 | 198 | 22.7 | 31.1 | 39.9 | 49.3 | 1.099 | 1.179 |
-| 60 | 228 | 24.1 | 33.2 | 42.7 | 52.6 | 1.172 | 1.357 |
-| 90 | 258 | 25.1 | 34.9 | 44.8 | 55.4 | **1.229** | **1.536** |
+| 0  | 168 | 21.0 | 28.7 | 37.0 | 46.0 | 1.000 | 1.000 |
+| 30 | 198 | 23.3 | 32.1 | 41.5 | 51.3 | 1.116 | 1.179 |
+| 60 | 228 | 25.1 | 34.7 | 44.7 | 55.2 | 1.202 | 1.357 |
+| 90 | 258 | 26.3 | 36.6 | 47.2 | 58.0 | **1.2657** | **1.536** |
 
-Monotone, right sign, ~200× the 0.11 % run-to-run floor — and **short by more than
-half the predicted excess**. The premise test says why: at matched arriving-element
-velocity the sim's `u` is **not** a function of `v` alone — it falls from 2272 m/s
-(S=0) to 1960 (S=90) at v=5000, −14 %. Since `P ∝ Z` holds for any `u(v)`, that is
-where the proportionality is lost, and it is a real defect to be explained rather
-than a discrepancy to be shrugged at.
+Monotone, right sign, ~200× the 0.11 % run-to-run floor — and **short by half the
+predicted excess**. The premise test says why: at matched arriving-element velocity
+the sim's `u` is **not** a function of `v` alone — it fell from 2272 m/s (S=0) to
+1960 (S=90) at v=5000, −14 %. Since `P ∝ Z` holds for any `u(v)`, that is where the
+proportionality is lost, and it is a real defect to be explained rather than a
+discrepancy to be shrugged at. **Those two `u` figures are the one thing in this
+section NOT re-measured at M17** — they came from an ad-hoc probe that was never
+committed, so they are Murnaghan-era and the −14 % should be read as a sign and an
+order, not a value.
 
 **Three candidate causes, discriminated rather than guessed:**
 
@@ -1541,17 +1569,24 @@ than a discrepancy to be shrugged at.
 
 | configuration | cells across jet | mean S90/S0 ratio | vs predicted 1.536 |
 |---|---|---|---|
-| 3 mm jet, `dx=0.375` — **shipped** | 8 | **1.229** | −20 % |
-| 3 mm jet, `dx=0.250` | 12 | 1.383 | −10 % |
-| 3 mm jet, `dx=0.1875` | 16 | 1.429 | −7 % |
-| **6 mm jet, `dx=0.375`** | **16** | **1.501** | **−2.3 %** |
+| 3 mm jet, `dx=0.375` — **shipped** | 8 | **1.2657** | −18 % |
+| 3 mm jet, `dx=0.250` | 12 | 1.4573 | −5.1 % |
+| 3 mm jet, `dx=0.1875` | 16 | 1.4968 | −2.5 % |
+| **6 mm jet, `dx=0.375`** | **16** | **1.5587** | **+1.5 %** |
 
 `python tools/measure_standoff.py --convergence`. **Cells across the jet is the
 controlling parameter**, reached by refining the grid or by fattening the jet, and
 the shortfall is numerical. At 16 cells the fat jet sits within the per-fraction
 scatter (±3.5 %) of the a-priori 1.536 — **consistent with the prediction, which is
-not the same as confirming it**, and the two 16-cell routes still differ by 5 %, so
+not the same as confirming it.** It now sits *above* rather than below, and that
+changes nothing about the posture: a row inside the scatter band does not confirm a
+prediction from either side. The two 16-cell routes still differ, by **4.1 %**, so
 cells-across is dominant but not the only term.
+
+**Milestone 17 took that 4.1 % apart** (§3.14). The `cells` column above is no
+longer a hand-computed label either — `measure_standoff.py` reads it off the seeded
+lattice, so the two 16-cell rows are confirmed to be 16 cells by the cache rather
+than by the arithmetic that motivated them.
 
 **Honest limits.**
 
@@ -1562,7 +1597,7 @@ cells-across is dominant but not the only term.
   monotone trend plus the independent fat-jet route is the honest statement, and
   **"converges toward" is not "converged"**.
 - **A trap worth naming: the under-resolved curve looks like the textbook result.**
-  At the shipped `dx` the increments saturate (4.7 → 3.4 → 3.1 mm), which reads as a
+  At the shipped `dx` the increments saturate (5.3 → 3.9 → 2.8 mm at f=0.30), which reads as a
   curve bending toward a standoff *optimum*. It is a grid artifact. A real optimum
   requires particulation and dispersal at long standoff, which this jet does not do
   (§3.4) — so this family measures **the rising limb only**, and no optimum has been
@@ -2481,6 +2516,159 @@ penetrates at visibly different rates but ends the window in the same place, whi
 were verified RED first** ([[instruments-that-cannot-see-the-failure]]); the
 harnesses are `M:\claud_projects\temp\m16\red_check.py` and `red_check2.py`, which
 mutate the tool in memory and are cited rather than shipped.
+
+---
+
+### 3.14 Separating `dx` from the clock CFL drags along with it (milestone 17)
+
+§3.13 closed with a prediction and an experiment written down but untested: §3.8's
+two routes to 16 cells across the jet disagree, and the reason should be that
+**refining `dx` refines the substep too** while fattening the jet does not. This
+milestone built the missing controls and measured it. **Zero kernel code** — four
+decks (`standoff_conv_dt513_s00/s90`, `standoff_conv_dt684_s00/s90`), a
+`--dt-decomposition` mode on the existing tool, and one host-side refactor.
+
+#### The premise, verified before anything was baked
+
+`bake` sizes `dt = min(deck_dt, cfl_dt)`, and `c_max` carries **no `dx`
+dependence** — the artificial-viscosity contribution is `c_q·v_tip` (§3.9), so
+`dt_cfl ∝ dx` exactly. Replaying that sizing over the whole standoff family, on the
+host with no GPU:
+
+| arm | grid | `dx` | substeps | `dt` (ms) | bound by |
+|---|---|---|---|---|---|
+| `standoff_s00/s90` — shipped | 1440 | 0.3750 | 114 | 1.754386e-6 | CFL |
+| `standoff_conv_d6mm_*` | 1440 | 0.3750 | 342 | **1.754386e-6** | CFL |
+| `standoff_conv_dx250_*` | 2160 | 0.2500 | 513 | 1.169591e-6 | CFL |
+| `standoff_conv_dx188_*` | 2880 | 0.1875 | 684 | 8.771930e-7 | CFL |
+| **`standoff_conv_dt513_*`** | **1440** | **0.3750** | **513** | **1.169591e-6** | **deck** |
+| **`standoff_conv_dt684_*`** | **1440** | **0.3750** | **684** | **8.771930e-7** | **deck** |
+
+**The fat-jet route really is `dt`-free** — bit-identical to the shipped arm's
+substep, not merely close — and each new partner is bit-identical to the `dx` arm it
+pairs with, so **that pair differs in `dx` and in nothing else**. §3.13 asserted the
+first of those by reading the code; this is it through the real sizing path,
+including the AV term and the frame-cadence `ceil`.
+
+Two consequences worth stating separately. The partners are isolated by the **deck
+`dt`**, never by `cfl_p_margin` — §3.11 forbids pushing the design `J` down, since
+that re-creates M14's own defect. And the `ceil` window is narrow: any deck `dt` in
+`(1.16959e-6, 1.171875e-6]` ms lands on 513, and one that lands on 514 turns a
+measured pair back into an inference. **Verify the substep count before baking**,
+which `mpm.plan_substeps` now makes possible without a GPU.
+
+#### The headline: a CFL-coupled ladder understates the grid effect
+
+This is the result that generalizes, and it is not the question the milestone was
+opened to answer.
+
+| effect | measured | the joint ladder reads |
+|---|---|---|
+| `dx` alone, 8 → 12 cells (at 513 substeps) | **+17.46 %** | +15.3 % |
+| `dx` alone, 8 → 16 cells (at 684 substeps) | **+20.27 %** | +18.4 % |
+
+The confounded ladder **understates the grid effect by ~1.9 pp**, because the `dt`
+refinement it drags along pushes the other way and partially cancels it. That is
+§3.13's transferable rule — *a CFL-coupled refinement study measures the difference
+of two opposing errors* — **reproducing on a second, independent family**: a
+different deck, a different target, a different geometry, and a ratio metric instead
+of arrival times. M16 could only assert it from one family; it is now a property of
+the method rather than of `heat_vs_composite`.
+
+#### The `dt` term saturates, and may have turned over
+
+| substeps at the shipped `dx` | 114 | 513 | 684 |
+|---|---|---|---|
+| mean S90/S0 | 1.2643 | 1.2407 | 1.2445 |
+| vs the shipped arm | — | **−1.87 %** | **−1.56 %** |
+
+Refining the clock alone **suppresses the ratio**, the direction §3.13 predicted.
+But the effect is **saturated by 513 substeps**: going 1.5× finer again moves it
+back **+0.31 %**, which is only 1.5× the 0.2 % resolution floor. So *saturated* is
+claimed and *turned over* is **named, not claimed** — the same posture §3.13 took at
+x=160. This is why the second partner was baked despite §3.13's spec asking only for
+one: **with a single point there is no way to tell a slope from a plateau.**
+
+#### The ratio hides most of what `dt` does — a caveat §3.8 never carried
+
+| | S=0 depth at f=0.30 | S=90 depth at f=0.30 |
+|---|---|---|
+| 114 substeps (shipped) | 46.00 mm | 58.03 mm |
+| 513 substeps | 44.59 mm (−3.1 %) | 55.59 mm (−4.2 %) |
+| 684 substeps | 43.47 mm (−5.5 %) | 54.70 mm (−5.7 %) |
+
+**A finer substep suppresses both arms' depth by 3–6 %, while their quotient moves
+only 1.6–1.9 %.** The ratio is a partial common-mode cancellation, so §3.8's
+headline metric is roughly **3× less `dt`-sensitive than the quantity underneath
+it**. §3.13's falsifier was written on the ratio alone, and a ratio-only instrument
+would have reported "no `dt` effect" for a solver that moved every depth it
+measures. `test_standoff_dt.py` pins the general form with a synthetic pair whose
+depths both move 8 % while the ratio moves **0.0000 %**.
+
+Anyone quoting a standoff **depth** from this family inherits that sensitivity;
+anyone quoting the **ratio** mostly does not. Said in §3.8 as well as here.
+
+#### The verdict on §3.13's prediction: right in sign, insufficient in magnitude
+
+- the two 16-cell routes disagree by **+4.13 %** (dx188 1.4968 vs fat jet 1.5587)
+- the `dt`-only term at the gap's own 684 substeps is **−1.56 %**
+- undoing it puts dx188 at **1.5206**, leaving a residual gap of **+2.50 %**
+
+So **the timestep accounts for ~39 % of the disagreement and ~61 % is not `dt`.**
+§3.13's prediction is **supported in sign and falsified as a complete explanation** —
+which is a more useful outcome than either branch of the falsifier it wrote down
+("reproduces 1.229 ⇒ not about dt" / "moves down ⇒ supported"), because the answer
+was *partly*.
+
+**The 39/61 split rests on an assumption this design cannot test**, and that is
+stated rather than buried: it transfers a `dt` term measured at **8 cells** onto the
+**16-cell** arm, i.e. it assumes no `dx`×`dt` interaction — the one term §3.13 named
+as out of reach, for the same structural reason it still is (`dt = min(deck_dt,
+cfl_dt)` only ever *lowers* `dt`, so *fine `dx` at coarse `dt`* is unreachable). Read
+the split as an estimate with a known open term, not a closed account.
+
+**What the residual 61 % might be** is now the interesting question, and §3.8's own
+answer becomes the leading candidate by elimination: it called a real finite-diameter
+effect "**mostly** excluded", and this milestone says the hedge in that word was
+doing real work. A 6 mm jet is not a scaled 3 mm jet in a solver with an absolute
+grid, a fixed damage threshold, and a fixed window.
+
+#### One code change, and why it is not "zero code"
+
+`bake`'s inline CFL sizing became **`mpm.plan_substeps(scenario)`**, which `bake`
+now calls — a pure host-side extraction, no kernel touched. It exists because the
+claim "these two decks run the same `dt`" can only be pinned against the *real*
+sizing path: re-deriving `ceil(frame_dt / min(deck, cfl))` in a test would be
+satisfied by copying a bug, the mistake `test_cfl_sizing` was written to avoid. It
+also lets a deck be checked before an hour of GPU. Verified behaviour-preserving by
+re-sizing **all 38 decks** and matching every runtime-printed substep count,
+including M16's documented 110 / 171 / 228 / 230.
+
+#### A by-product: the CFL budget under temporal refinement
+
+All four new arms audit clean at P=4 — **28–34 % of the `c_max=64101 mm/ms`
+budget**, no J-floor or resolution-guard fires. Consistent with §3.13's by-product
+table: temporal refinement *buys* headroom where spatial refinement spends it, so no
+per-deck `cfl_p_margin` was needed and §3.11's rule stands.
+
+#### What is pinned
+
+`solver/tests/test_standoff_dt.py` — 20 tests split by what can check what. The deck
+pairing goes through `plan_substeps` because **no cache can check it**
+(CACHE_FORMAT §2 records `frame_dt`, never `dt` or a substep count). The tool's
+readings are pinned on synthetic caches, each against the defect the same assertion
+must catch: `cells across the jet` read off the seeded lattice must survive a
+manifest that **lies** about the diameter (§2.1 — provenance, not data); a stride
+that silently no-ops; and the mode's reason to exist, the ratio that cannot see an
+8 % move in every depth beneath it. **Seven mutations were verified RED first**
+([[instruments-that-cannot-see-the-failure]]); the harness is
+`M:\claud_projects\temp\m17\red_check.py`, cited rather than shipped, as in §3.13.
+
+One fixture lesson worth carrying: the first draft's synthetic jet had 16 particles,
+which made `consumed` a nine-step staircase, and interpolating a staircase is
+violently sensitive to which frames a stride keeps. It read exactly like a defect in
+the tool. **A fixture too thin to be smooth manufactures the failure it is testing
+for.**
 
 ---
 
