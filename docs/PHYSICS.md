@@ -2945,11 +2945,16 @@ comparison.**
 real limit on reading the three as a trend, since a smaller perturbation is
 generically a smaller violation.
 
-It is also testable. A violation whose size is set by the scale separation predicts
-**|12-cell| < |8-cell|**. Measured: **4.48 % vs 4.10 %** — *not* smaller. Across the
-whole window the two dt-free rows differ by 0.36–3.86 pp, the largest of that at
-f=0.15, the end §3.15 says is least trustworthy. So the scale factor is **not what
-sets the magnitude**, and the third point is not an artifact of being a 1.5× row.
+It is also testable, and the useful form of the test is quantitative rather than an
+inequality. If the violation scaled with the separation, a 1.5× row would read about
+**three quarters** of the 2× row's −4.10 %, i.e. **≈ −3 %**. Measured: **−4.48 %** —
+not merely "not smaller" but **larger**, and off the proportional prediction by
+~1.4 pp, **7× the 0.2 % floor**. Across the whole window the two dt-free rows differ
+by 0.36–3.86 pp, the largest of that at f=0.15, the end §3.15 says is least
+trustworthy. So the scale factor is **not what sets the magnitude**, and the third
+point is not an artifact of being a 1.5× row. (Stated that way rather than as "lands
+outside the bracket the other two span" — it does, by 0.38 pp, but a 0.38 pp margin
+at ~2× the floor is a weak instrument and the proportionality test is not.)
 
 What it still cannot say is **which** of two things makes 16 cells the outlier: a
 genuine resolution dependence appearing between 12 and 16 cells, or a `dt`
@@ -2994,6 +2999,14 @@ steps a first-order error gives 1.00.
   absolute terms at 16 cells"; the third rung reverses the increment. *Stopped
   growing* is claimed and *turned over* is **named, not claimed** — one reversal is
   one point, the posture §3.14 took on its own saturating `dt` term.
+  **The reversal's peak sits on the one inexact rung, and that cannot fake it.**
+  The 16-cell rung's partner runs 230 substeps against its arm's 228, and the
+  partner is the *finer* one, so it under-reads its residual and inflates that rung.
+  Sized from the `dt`-only series at the shipped `dx` (3208.5 / 2973.6 / 2831.1 /
+  2647.7 m/s at 110 / 171 / 230 / 342 substeps), the local slope near 200 substeps is
+  **−2.42 m/s per substep**, so two substeps are worth **0.151 pp** — against a
+  **−1.36 pp** reversal, i.e. **9×**. Correcting for it moves the 16-cell rung to
+  ~+45.0 % and the reversal to ~−1.21 pp. It survives.
 - **Mass-through has not.** Its increments decay at ratio **0.65 over equal `dx`
   steps**, so §3.13's verdict holds at 24 cells and the decay is *slower* than its
   two points could show. **Do not quote this quantity at any resolution in this
@@ -3047,25 +3060,46 @@ practical rather than hypothetical: more headroom means a **per-deck
 
 `heat_conv_dt342` records for **34 µs** where every other arm records 30. A finer
 `dt` breaks out *later* (§3.13: +2.42 % at 171 substeps, +4.55 % at 230), which
-extrapolates to ~26 µs at 342 against a window that must still contain
-breakout + 4 µs for the matched residual. That margin was ~0 or negative, and a
-missed residual would have cost the deck its entire reason to exist. Sized before
-baking rather than discovered after.
+extrapolated to ~26 µs at 342 substeps — against a window that must still contain
+breakout + 4 µs for the matched residual. Sized before baking rather than discovered
+after, and **the bake says it was necessary by 0.166 µs**:
 
-**Its `dx` partner was NOT extended to match, and that asymmetry is the right one.**
-The two arms fail in opposite directions: `dx125` breaks out *earlier* and its
-residual is the *fast* one, so 34 µs would fly it to x ≈ 295 mm against the domain's
-x=300 wall — retiring §1.1.2's clean negative that nothing in this repo has ever
-reached `x_hi`, in exchange for symmetry in a number nobody should read. Instead
-`measure_jet_grid.py` now carries `window_us` and **refuses to compare `depth_end`
-across arms that do not share a window**. Every quantity it does report is read off
-the penetration-front curve or at a matched time after each arm's own breakout, and
-neither depends on the recording length. **A window is a recording length as long as
-`frame_dt` is untouched — and `frame_dt` is what the test asserts.**
+| arm | breakout at x=235 | + 4 µs | standard window ends |
+|---|---|---|---|
+| shipped, 110 substeps | 24.093 µs | 28.093 | 29.8 µs |
+| `dt_fine`, 230 | 25.190 | 29.190 | 29.8 |
+| **`dt342`, 342** | **25.966** | **29.966** | **29.8 — MISSES** |
+
+At the family's standard 150 frames this deck's matched residual would have been
+**withheld**, and the exact 342-vs-342 pair would have produced no residual number at
+all. The extrapolation landed within 0.03 µs of the measured breakout, which is the
+argument for doing it on the host instead of finding out after an hour of GPU.
+
+**Its `dx` partner was NOT extended to match, and the asymmetry is right — but the
+reason first given for it was not, and the bakes falsify it.** The claim was that
+34 µs would fly `dx125`'s faster residual to x ≈ 295 mm against the domain's x=300
+wall, retiring §1.1.2's clean negative. Measured: `heat_conv_dx125` reaches
+**258.21 mm** at 30 µs, so four more microseconds would put it near **276 mm** —
+still ~24 mm clear, and **§1.1.2's figure is untouched** (closest approach across the
+new arms is 37.4 mm, on `dx188`; the two M19 heat arms sit at 41.8 and 44.3 mm). The
+wall was a legitimate *a priori* concern and it does not bind. The real reason to
+leave `dx125` at 30 µs is the plain one: it **does not need the window** — it breaks
+out at 23.697 µs with **2.10 µs of margin** — and extending it would have cost ~13 %
+more GPU on the family's most expensive bake plus ~1 GB of cache to move a number
+nobody should read.
+
+What the asymmetry does require is that nothing average over it. `measure_jet_grid.py`
+now carries `window_us` and **refuses to compare `depth_end` across arms that do not
+share a window** — the guard living in `_table`, so it covers `--family` and the
+**pairwise** path as well, since pairwise invocation is how §3.13 assembled its own
+tables and therefore how a reader will reach for this cache. Every other quantity is
+read off the penetration-front curve or at a matched time after each arm's own
+breakout, and neither depends on the recording length. **A window is a recording
+length as long as `frame_dt` is untouched — and `frame_dt` is what the test asserts.**
 
 #### What is pinned
 
-`solver/tests/test_route_difference.py` — 27 tests, split the usual way by what can
+`solver/tests/test_route_difference.py` — 28 tests, split the usual way by what can
 check what. The deck pairings go through `plan_substeps` because no cache can check
 them (CACHE_FORMAT §2 records `frame_dt` only), and every assertion states a
 **relation between decks** rather than re-deriving the sizing arithmetic, which a
@@ -3096,11 +3130,23 @@ it; the test shuffles all three and asserts §3.14's published split is unchange
 than reading a hand-written flag, so a row cannot be mislabelled "matched" and
 present a confounded comparison as a measurement.
 
-**Seventeen mutations verified RED first** ([[instruments-that-cannot-see-the-failure]]);
+**Eighteen mutations verified RED first** ([[instruments-that-cannot-see-the-failure]]);
 the harness is `M:\claud_projects\temp\m19\red_check.py`, cited rather than shipped,
 as in §3.13, §3.14 and §3.15. It checks the tree is restored afterwards, and it
 refuses a mutation whose pattern does not occur exactly once — §3.15's lesson that a
 mutation which does not land reads exactly like a test that does not care.
+
+> **That lesson recurred one level deeper, and this is the harness note worth
+> carrying.** One mutation — a rung's substep label, `342, 342` → `342, 300` — was
+> **RED on one run and GREEN on a later one**, with no change to the test or the
+> assertion. The tests load the tools through
+> `importlib.util.spec_from_file_location`, whose `SourceFileLoader` consults the
+> bytecode cache keyed on **(mtime, size)**, and that edit changes *neither*: same
+> byte count, and inside the same mtime second on a fast mutate-restore loop. The
+> mutant was on disk and the interpreter ran the stale `.pyc`. The harness now purges
+> `__pycache__` before every invocation. **"It changed the bytes on disk" is not proof
+> that a mutation reached the interpreter** — and an intermittent green is worse than
+> a reproducible one, because the first run is the one you believe.
 
 ---
 

@@ -383,6 +383,23 @@ def _table(arms: list[dict]) -> None:
     print("  times, so at a shared final frame they have had different amounts of")
     print("  free flight. Both are printed so the size of that correction is visible.")
 
+    # THE WINDOW GUARD LIVES HERE, not in one mode. `depth_end` is the only quantity
+    # this tool reports that depends on how long recording continued, and milestone 19
+    # baked an arm (`heat_conv_dt342`) that deliberately records 4 us longer than the
+    # rest. `--dt-ladder` knows that; `--family` and the pairwise path did not, and the
+    # pairwise path is exactly how §3.13 assembled its tables — so it is exactly how
+    # someone will reach for that cache. A spread printed across unequal windows is the
+    # recording length wearing a grid effect's label.
+    if len({round(r["window_us"], 6) for r in arms}) > 1:
+        print("\nTHE TRAP — 'depth' at the end of the window: WITHHELD.")
+        print("  These arms do not share a recording window ("
+              + ", ".join(f"{r['cells_across']:.0f}c: {r['window_us']:.1f} us" for r in arms) + "),")
+        print("  so `depth_end` differs by the recording length alone and a spread across")
+        print("  them would report that as physics. The arrival times above are read off")
+        print("  the front CURVE and the residual off each arm's OWN breakout, so neither")
+        print("  is affected. Read those.")
+        return
+
     print("\nTHE TRAP — 'depth' at the end of the window (the OBVIOUS metric):")
     print("  " + "   ".join(f"{r['cells_across']:.0f}c: {r['depth_end']:.1f} mm" for r in arms))
     spread = [r["depth_end"] for r in arms]

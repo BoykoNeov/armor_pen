@@ -234,8 +234,9 @@ def test_the_longer_window_moves_total_time_and_NOT_frame_dt():
     assert frame_dt(dt342) == pytest.approx(frame_dt(dx125)) == pytest.approx(frame_dt(ship))
     assert dt342.solver.total_time > dx125.solver.total_time
     assert dx125.solver.total_time == ship.solver.total_time, (
-        "the dx arm must NOT be extended: its residual is the fast one, and 34 us "
-        "would fly it at x~295 mm against the x=300 wall (PHYSICS §1.1.2)"
+        "the dx arm must NOT be extended: it breaks out at 23.7 us with 2.10 us of "
+        "margin, so the window buys it nothing and costs ~13 % more GPU on the "
+        "family's most expensive bake (PHYSICS §3.16)"
     )
     assert dt342.solver.grid_resolution == ship.solver.grid_resolution
 
@@ -456,6 +457,29 @@ def test_depth_end_differs_between_windows_that_are_otherwise_identical(tmp_path
     # ...while a quantity read off the CURVE is unmoved by the extra recording.
     x = 155.0
     assert jg.arrival_us(a, x) == pytest.approx(jg.arrival_us(b, x))
+
+
+def test_the_window_guard_covers_the_pairwise_path_not_just_the_ladder(tmp_path, capsys):
+    """THE HAZARD IS TOOL-WIDE, so the guard must be too.
+
+    `--dt-ladder` is not how anyone will first reach for `heat_conv_dt342`: §3.13
+    assembled its own tables by invoking this tool PAIRWISE, so that is the path a
+    reader will use, and it printed the `depth_end` spread with no window check at
+    all. The guard therefore lives in `_table`, which every path goes through.
+    """
+    rate = np.arange(51) * 0.4
+    a, b = jg.measure(_jet_cache(tmp_path, "w31", rate[:31])), \
+        jg.measure(_jet_cache(tmp_path, "w51", rate))
+    jg._table([a, b])
+    out = capsys.readouterr().out
+    assert "WITHHELD" in out
+    assert f"{a['depth_end']:.1f} mm" not in out.split("THE TRAP")[1]
+
+    # ...and the guard must NOT fire when the windows do match, or it would suppress
+    # the trap section on every honest comparison in the repo.
+    c = jg.measure(_jet_cache(tmp_path, "w31b", rate[:31] * 0.9))
+    jg._table([a, c])
+    assert "WITHHELD" not in capsys.readouterr().out
 
 
 def test_the_ladder_names_arms_that_exist_and_interfaces_it_may_quote():

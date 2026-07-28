@@ -675,10 +675,18 @@ def _route_difference(caches: Path) -> int:
     # The factor confound makes a DIRECTIONAL prediction, so it can be tested rather
     # than merely declared. A violation whose size is set by the scale separation must
     # be SMALLER at 1.5x than at 2.0x.
-    print("    CAN, 2 — the factor confound predicts |12-cell| < |8-cell|, since a 1.5x")
-    print("    perturbation is a smaller one than 2.0x. Measured:")
-    print(f"      |{d12:+.2f}| vs |{d8:+.2f}|  ->  the 1.5x row is "
-          f"{'SMALLER, as a factor-driven violation would be' if abs(d12) < abs(d8) else 'NOT smaller, so the factor is not what sets the magnitude'}")
+    # The QUANTITATIVE form, not the inequality. "Lands outside the bracket the other
+    # two span" is true here by 0.38 pp, which at ~2x the floor is a weak instrument.
+    # Proportionality makes a real prediction and misses by ~7 floors.
+    r12 = next(row.scale for row in ROUTE_ROWS if row.cells == 12)
+    r8 = next(row.scale for row in ROUTE_ROWS if row.cells == 8)
+    predicted = d8 * (r12 - 1.0) / (r8 - 1.0)
+    print(f"    CAN, 2 — if the violation scaled WITH the separation, the {r12}x row would")
+    print(f"    read about {predicted:+.2f} % against the {r8}x row's {d8:+.2f} %. Measured "
+          f"{d12:+.2f} %,")
+    print(f"    off that prediction by {abs(d12 - predicted):.2f} pp = "
+          f"{abs(d12 - predicted) / DT_RESOLUTION_PCT:.0f}x the floor, and in the wrong direction")
+    print("    (larger, not smaller). The scale factor is not what sets the magnitude.")
     across = [abs(a - b) for a, b in zip(rows[8][0], rows[12][0])]
     print(f"    The two dt-free rows differ by {min(across):.2f}-{max(across):.2f} pp across the window — "
           f"and the")

@@ -355,16 +355,17 @@ ratio **0.65 over equal `dx` steps**). One phrase had covered two quantities tha
 behave differently, and two rungs could not tell them apart. The **third route point**
 — a 4.5 mm jet at the shipped `dx`, pinned to `dx250`'s substep so the pair is
 `dt`-free — reads **−4.48 %** at f=0.30 against §3.15's −4.10 % at 8 cells. That
-kills this section's own confound: reaching 12 cells from 8 is a **1.5× scale row**
-where the others are 2×, and a factor-driven violation would have been *smaller*; it
-is not, so the scale factor is not what sets the magnitude. Three points on a
+settles this section's own confound: reaching 12 cells from 8 is a **1.5× scale row**
+where the others are 2×, so a violation scaling with the separation would read about
+−3 %; measured −4.48 % is *larger*, missing that prediction by 7× the resolution
+floor, so the scale factor is not what sets the magnitude. Three points on a
 two-factor grid are still **not a trend** — no crossing, no zero-point, no order.
 A correction fell out on the way: **§3.14's +2.50 % residual is a *mean* over a
 window the per-fraction quantity runs −3.66 → +8.67 % across**, and §3.15 compared
 its per-fraction figure to that mean. Same-statistic, the 16-cell reading is
 **+8.67 %** — M18's conclusion reinforced ~3.5×, not weakened. *Apply a rule to both
 sides of a comparison or it is not a comparison.* **Zero kernel code** — four decks,
-two tool modes, 27 tests, **seventeen mutations verified red**.
+two tool modes, 28 tests, **eighteen mutations verified red**.
 
 **Next:** **(1)** `heat_vs_composite`'s **mass-through is still not settling at 24
 cells**, and its increments decay more slowly than the two-rung view suggested — a

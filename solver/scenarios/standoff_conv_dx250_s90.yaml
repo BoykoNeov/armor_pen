@@ -40,12 +40,17 @@
 # of it is the TIMESTEP the dx ladder drags along (dt is CFL-bound), ~61 % is not.
 # See PHYSICS §3.8 and §3.14, and the `standoff_conv_dt*` partner decks.
 #
-# !! MILESTONE 19 ADDED THE 12-CELL DIAMETER ROW: 4.5 mm at the shipped dx, pinned to
-# dx250's 513 substeps, reading 1.3674. So each ROUTE is monotone toward the
-# prediction (1.2657 -> 1.4573 -> 1.4968 by dx; 1.2657 -> 1.3674 -> 1.5587 by
-# diameter) but THE TWO ROUTES DISAGREE AT BOTH 12 AND 16 CELLS. Do not read this
-# list as a single sequence in `cells`: `cells` IS diameter/dx, so that would be a
+# !! MILESTONE 19 ADDED THE 12-CELL DIAMETER ROW: 4.5 mm at the shipped dx, reading
+# 1.3674 -- so THE TWO ROUTES DISAGREE AT BOTH 12 AND 16 CELLS. Do not read this list
+# as a single sequence in `cells`: `cells` IS diameter/dx, so that would be a
 # scale-invariance assumption, and it fails by 4-9 % (PHYSICS §3.15, §3.16).
+#
+# AND DO NOT READ THE DIAMETER ROUTE AS A LADDER EITHER. Its middle point is the only
+# CLOCK-PINNED arm in this family: 4.5 mm at dx=0.375 is CFL-natural at 342 substeps
+# and its deck pins it to 513, because it exists to pair with `standoff_conv_dx250`
+# for `--route-difference`. By §3.14's dt-only term that pin is worth about -1.9 % on
+# the ratio, so at its own clock it would read ~1.393, not 1.3674. The pin is exactly
+# right for the route comparison and exactly wrong for a sequence read across.
 #
 # monotone toward the predicted 1.536, and the two 16-cell configurations land close
 # to each other despite sharing no grid and no jet — so **cells across the jet is the

@@ -48,15 +48,28 @@
 # missed residual would cost the deck its entire reason to exist. Sized before
 # baking rather than discovered after.
 #
+# VERIFIED NECESSARY, BY 0.166 us. This deck breaks out at x=235 at 25.966 us, so its
+# matched residual is read at 29.966 us — and the family's standard 150-frame window
+# ends at 29.8. At 30 us the residual would have been WITHHELD and the exact
+# 342-vs-342 pair would have produced no residual number at all. The pre-bake
+# extrapolation landed within 0.03 us of that, which is the argument for sizing on
+# the host rather than after an hour of GPU.
+#
 # WHY `heat_conv_dx125` WAS NOT EXTENDED TO MATCH. It fails the other way: a finer
-# `dx` breaks out EARLIER (§3.13), so 30 us already holds its whole event with room.
-# Extending it would push its fast residual — the `dx` ladder's residual velocity
-# grows +31.6 % -> +45.1 % — to x ~ 295 mm against the domain's x=300 wall, and
-# PHYSICS §1.1.2's clean negative is that NOTHING in this repo has ever reached
-# `x_hi`. Buying symmetry in a number nobody reads, at the price of a wall artifact
-# in the cache and a documented negative, is a bad trade. The arms differ in window
-# length; the measurements do not depend on it, and the tool now REFUSES to compare
-# the one quantity that does (`depth_end`) across unequal windows.
+# `dx` breaks out EARLIER (23.697 us, 2.10 us of margin), so 30 us already holds its
+# whole event with room, and extending it would cost ~13 % more GPU on the family's
+# most expensive bake plus ~1 GB of cache to move a number nobody should read.
+#
+# The far wall was the a-priori worry and it does NOT bind — stated because the first
+# draft of this header claimed it did. Measured, `heat_conv_dx125` reaches 258.21 mm
+# at 30 us, so 34 us would put it near 276 mm, still ~24 mm clear of x=300. PHYSICS
+# §1.1.2's clean negative (nothing here has ever reached `x_hi`) is untouched by any
+# M19 arm: closest approach is 37.4 mm, and that is `dx188`, not a new deck.
+#
+# The arms differ in window length; the measurements do not depend on it, and the
+# tool now REFUSES to compare the one quantity that does (`depth_end`) across unequal
+# windows — the guard living in `_table`, so it covers the PAIRWISE path too, which
+# is how §3.13 assembled its tables and therefore how a reader will reach for this.
 #
 # EVERYTHING ELSE IS IDENTICAL to `heat_vs_composite`.
 name: heat_conv_dt342

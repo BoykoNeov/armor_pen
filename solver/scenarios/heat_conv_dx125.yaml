@@ -44,7 +44,11 @@
 #
 # NOTE THE PARTNER RUNS A LONGER WINDOW (170 frames vs the 150 here) and this deck
 # does NOT follow it. That is not a second variable — see `heat_conv_dt342`'s header
-# for why, and why extending BOTH would have been the worse choice.
+# for why. In one line: the partner NEEDS it (its matched residual lands 0.166 us
+# past a 30 us window) and this deck does not (it breaks out at 23.697 us with
+# 2.10 us of margin). Every quantity the tool reports is read off the front curve or
+# off each arm's own breakout, and `depth_end` — the one that is not — is withheld
+# across unequal windows.
 #
 # EVERYTHING ELSE IS IDENTICAL to `heat_vs_composite`: one variable, the shipped
 # frame_dt = 2.0e-7 s kept so the arms align frame-for-frame.

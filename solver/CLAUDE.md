@@ -849,9 +849,11 @@ and the resolution guard **217 829 → 0** — neither was ever an EOS problem.
      comparison.**
    - **The scale-factor confound makes a prediction and it FAILS.** `cells ≡
      diameter/dx`, so reaching 12 cells from 8 is a **1.5× scale row** where M18's and
-     M17's are **2×** — a factor-driven violation would then be *smaller*. Measured
-     **−4.48 % vs −4.10 %** at f=0.30: not smaller. So the factor is not what sets the
-     magnitude, and the third point is not an artifact of being a 1.5× row. **Still no
+     M17's are **2×** — a violation scaling with the separation would then read about
+     **−3 %**. Measured **−4.48 %**: larger, off the proportional prediction by 1.4 pp
+     = **7× the floor**. So the factor is not what sets the magnitude, and the third
+     point is not an artifact of being a 1.5× row. (Not argued from "outside the
+     bracket" — it is, by 0.38 pp, which at ~2× the floor is a weak instrument.) **Still no
      crossing, no zero-point, no order** — three points on a two-factor grid are not a
      trend, and the 16-cell row's outlier status (resolution, or a `dt` correction
      that does not transfer?) stays unreachable.
@@ -867,19 +869,26 @@ and the resolution guard **217 829 → 0** — neither was ever an EOS problem.
      P=4, but §3.11's rule stops being hypothetical: a 32-cell arm is where the trend
      goes, and more headroom means a **per-deck `cfl_p_margin`**, never a bigger
      global P (hard ceiling ~4.05).
-   - **One window is longer ON PURPOSE and the tool now refuses to average over it.**
-     `heat_conv_dt342` records 34 µs because a finer `dt` breaks out LATER and the
-     matched residual needs breakout + 4 µs inside the window — sized before baking,
-     not discovered after. Its `dx` partner was **not** extended: it fails the other
-     way, and 34 µs would fly its fast residual to x≈295 against the x=300 wall,
-     retiring §1.1.2's clean negative. `measure_jet_grid` carries `window_us` and
-     **withholds `depth_end` across unequal windows**. **A window is a recording
-     length as long as `frame_dt` is untouched** — and `frame_dt` is what the test
-     asserts.
+   - **One window is longer ON PURPOSE, and the bake says it was necessary by
+     0.166 µs.** `heat_conv_dt342` records 34 µs because a finer `dt` breaks out LATER;
+     it breaks out at **25.966 µs**, so its matched residual is read at 29.966 against
+     a standard window ending at **29.8** — at 150 frames the exact 342-vs-342 pair
+     would have yielded **no residual at all**. The pre-bake extrapolation was within
+     0.03 µs. Its `dx` partner was **not** extended because it does not need one
+     (breakout 23.697 µs, 2.10 µs of margin) and it would have cost ~13 % more GPU on
+     the family's dearest bake. **⚠️ The first draft justified that by the far wall —
+     "34 µs would fly its residual to x≈295 against x=300" — and the bakes falsify it:
+     `dx125` reaches 258.21 mm at 30 µs, so 34 µs is ~276 mm, ~24 mm clear.
+     §1.1.2's clean negative is UNTOUCHED by any M19 arm** (closest approach 37.4 mm,
+     and that is `dx188`). `measure_jet_grid` carries `window_us` and **withholds
+     `depth_end` across unequal windows — the guard in `_table`, so it covers the
+     PAIRWISE path too**, which is how §3.13 assembled its tables and therefore how a
+     reader will reach for this cache. **A window is a recording length as long as
+     `frame_dt` is untouched** — and `frame_dt` is what the test asserts.
    - **M18's named positional hazard is REMOVED, not deferred again**: every arm table
      carries a stable `.key`, and dt-matching is **computed** from the arms' own
      `dt_ms` rather than read off a hand-written flag.
-   - `tests/test_route_difference.py`, 27 tests, **seventeen mutations verified RED
+   - `tests/test_route_difference.py`, 28 tests, **eighteen mutations verified RED
      first**. The `ceil` band is found by **bisecting the real sizing path** (0.29 %
      wide, the deck's dt at 47 % of it) — the first draft assumed a 0.5 % nudge would
      stay inside and went red, so §3.14's "narrow" was an understatement.
