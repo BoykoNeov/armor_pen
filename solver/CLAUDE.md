@@ -311,7 +311,10 @@ Grow the reference MLS-MPM incrementally, validating visually with
      `standoff_conv_*` decks; the shipped ones are for playback and the trend's shape.
    - **The jet is only 8 cells across, and stretching thins it to ~3.** This is the
      transferable lesson: `cells across the jet` is the controlling parameter for any
-     jet DEPTH claim, and it is reached identically by refining `dx` (1.229 → 1.383 →
+     jet DEPTH claim — **⚠️ dominant but APPROXIMATE: `cells ≡ diameter/dx`, so that
+     phrase is a SCALE-INVARIANCE claim, and M18's third 8-cell arm disagrees with the
+     shipped one by 4–12 % (milestone 18 below). Not an identity.** — and it is
+     reached identically by refining `dx` (1.229 → 1.383 →
      1.429 at 8/12/16 cells) or by fattening the jet (6 mm at the shipped `dx` = 16
      cells → 1.501, within scatter of the prediction). The derivation is
      diameter-independent, which is what licenses the second route. **M17 decomposed
@@ -769,6 +772,56 @@ and the resolution guard **217 829 → 0** — neither was ever an EOS problem.
      Fixture lesson: a 16-particle synthetic jet makes `consumed` a nine-step
      staircase, and interpolating a staircase reads exactly like a tool defect — **a
      fixture too thin to be smooth manufactures the failure it is testing for.**
+
+16. **Milestone 18 — the diameter, and the scale invariance §3.8 assumed (PHYSICS
+   §3.15).** The candidate §3.14 was left with. Two decks
+   (`standoff_conv_d6mm_dx750_s00/s90`), a `--diameter-decomposition` mode, one
+   helper extracted — **no kernel code, no rebake of anything existing**.
+   - **`cells across the jet` IS NOT A VARIABLE — it is the ratio `diameter/dx`**, so
+     §3.8's "the controlling parameter" is a **scale-invariance hypothesis** that had
+     never been tested (every row in that table reaches a cell count by moving one
+     factor). The new arm is a **third 8-cell configuration** — 6 mm at `dx=0.75`,
+     the same discretization scaled 2× — and the scale row would read **0.00 %** if
+     the hypothesis held. It reads **−4.10 % at f=0.30 and −12.28 % at f=0.15**,
+     because the standoff, the plate and the process zone do **not** scale with the
+     jet. **The claim survives as an approximation good to a few percent, not an
+     identity** — and the residual is the same order as the 4.1 % it explained.
+   - **§3.14's finite-diameter candidate is NOT SUPPORTED — and that is deliberately
+     weaker than "falsified".** The route difference is **+2.50 % at 16 cells** and
+     **negative at 8**, changing sign *and* size with resolution: the signature of
+     discretization error, not of a roughly resolution-independent physical offset.
+     **But both arms here are coarser than both arms there**, and a
+     numerically-dominated coarse pair cannot overturn a finer measurement. Do not
+     write it up as a refutation.
+   - **THE HEADLINE IS THE DEPTHS, NOT THE RATIO: the S=0 arm barely notices either
+     knob.** At f=0.30 the S=0 depths span **7 %** across three configurations
+     differing 2× in grid *and* diameter; S=90 spans **37 %** (fat **+22.65 %**,
+     coarse fat **−10.35 %**). The S=90 jet flies 90 mm and **thins** before arriving,
+     so it is the marginally-resolved arm and the quotient is nearly an S=90
+     measurement wearing a ratio's clothes. §3.14 said report both arms; here that is
+     the mechanism, not a caveat.
+   - **The scale row varies 3× across the matching window — quote it at a stated
+     fraction, never as a mean.** `route_difference` is per-fraction by construction
+     (the §3.13 x=160 lesson applied rather than restated).
+   - **All three arms run a BIT-IDENTICAL `dt`, so no read needs a correction** —
+     which §3.14's two-route comparison could not say of itself. The pin is
+     load-bearing: unpinned, `dx=0.75` is CFL-bound at **twice** the shipped substep.
+     Isolate with the deck `dt`, never `cfl_p_margin` (§3.11). **`particles_per_cell`
+     also matches** — 16 particles across both 8-cell jets, so the scale row carries
+     no third variable. Verified via `--dry-run` **before** the GPU; both arms audit
+     clean at P=4 (43 % / 38 %), guards zero, 129 920 particles.
+   - **TWO POINTS ARE NOT A TREND.** There are exactly two route-difference readings.
+     No crossing, no zero-point, no extrapolation ([[convergence-claims-need-real-evidence]]).
+     The third point is a **4.5 mm jet at `dx=0.375`** partnered to `dx250`'s 513
+     substeps — 12 cells by both routes.
+   - `tests/test_diameter_scale.py`, 14 tests, **seven mutations verified RED first**.
+     `_dt_residual` **re-derives** §3.14's split from the caches instead of quoting it
+     and keys `DT_ARMS` **by NAME** — `_dt_decomposition` indexes that same list
+     **positionally**, so a reordering would silently re-key the published
+     decomposition and stay green. Harness lesson: the `particles_per_cell` mutation
+     first came back green because a `replace(…, 1)` hit the deck header's **prose**
+     quoting the field. **A mutation that does not land reads exactly like a test that
+     does not care.**
 
 Don't rewrite from scratch. The full solver arc (milestones 1–13) is done.
 

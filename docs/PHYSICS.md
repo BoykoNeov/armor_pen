@@ -1588,6 +1588,18 @@ longer a hand-computed label either — `measure_standoff.py` reads it off the s
 lattice, so the two 16-cell rows are confirmed to be 16 cells by the cache rather
 than by the arithmetic that motivated them.
 
+> **⚠️ "CELLS ACROSS THE JET IS THE CONTROLLING PARAMETER" IS AN APPROXIMATION, AND
+> MILESTONE 18 MEASURED THE ERROR** (§3.15). `cells ≡ diameter/dx`, so that sentence
+> is a **scale-invariance hypothesis** — a claim the response depends on the ratio
+> alone — and it had never been tested, because every row above reaches a cell count
+> by moving one factor. A **third 8-cell arm** (6 mm jet at `dx=0.75`, `dt` pinned to
+> the shipped clock) is the same discretization scaled 2× against a standoff, a plate
+> and a process zone that do **not** scale with the jet. It disagrees with the shipped
+> 8-cell row by **−4.10 % at f=0.30 and −12.28 % at f=0.15**. So the claim is good to
+> a few percent and is **not an identity** — and the residual scale dependence is the
+> same order as the 4.1 % it was invoked to explain. Read the fourth row as
+> *consistent with* the prediction, never as reaching it.
+
 **Honest limits.**
 
 - **Do not quote a Richardson extrapolation from these four points.** The observed
@@ -2649,6 +2661,15 @@ effect "**mostly** excluded", and this milestone says the hedge in that word was
 doing real work. A 6 mm jet is not a scaled 3 mm jet in a solver with an absolute
 grid, a fixed damage threshold, and a fixed window.
 
+> **✅ TESTED at M18 (§3.15), and the candidate is NOT SUPPORTED at that resolution.**
+> The same route comparison one scale coarser reads **−4.10 % to −12.28 %** against
+> this **+2.50 %**: the route difference changes sign *and* size with resolution,
+> which is the signature of discretization error rather than of a physical offset.
+> **Not a refutation** — both M18 arms are coarser than both arms here, and a
+> numerically-dominated coarse pair cannot overturn a finer measurement. The last
+> sentence above is the part that survives, and M18 turned it into a measurement:
+> a 6 mm jet is not a scaled 3 mm jet, by **4–12 %**.
+
 #### One code change, and why it is not "zero code"
 
 `bake`'s inline CFL sizing became **`mpm.plan_substeps(scenario)`**, which `bake`
@@ -2695,6 +2716,130 @@ which made `consumed` a nine-step staircase, and interpolating a staircase is
 violently sensitive to which frames a stride keeps. It read exactly like a defect in
 the tool. **A fixture too thin to be smooth manufactures the failure it is testing
 for.**
+
+### 3.15 The diameter, and the scale invariance §3.8 assumed (milestone 18)
+
+§3.14 left the residual +2.50 % with one named candidate — §3.8's own hedge, "a real
+finite-diameter effect, **mostly** excluded" — and no deck able to test it, because
+the fat-jet route to 16 cells changes the **cell count** and the **diameter**
+together. This milestone built the arm that unpicks them. **Zero kernel code**: two
+decks (`standoff_conv_d6mm_dx750_s00/s90`), a `--diameter-decomposition` mode, and
+one helper extracted in the same tool.
+
+The new arm is a **6 mm jet at `dx=0.75`** — the fat arm's diameter at the shipped
+arm's 8 cells — with the deck `dt` pinned so all three arms run
+`dt = 1.754386e-6 ms` bit-identically. Verified through `plan_substeps` before any
+GPU (§3.14's gate): the pin is load-bearing, since at `dx=0.75` the CFL bound is
+`3.5088e-6 ms` and an unpinned arm would have run **twice** the shipped substep.
+`particles_per_cell=4` also puts **16 particles across** this 6 mm jet, exactly as
+the shipped 3 mm jet is 16 across at `dx=0.375`, so particle resolution is matched
+and not a third variable. Both arms bake at 129 920 particles, audit clean at P=4
+(**43 % / 38 %** of the `c_max=64101 mm/ms` budget), J-floor and resolution guard
+zero.
+
+#### The headline: the S=0 arm barely notices either knob
+
+| depth at f=0.30, vs the shipped arm | S=0 | S=90 |
+|---|---|---|
+| shipped — 3 mm, `dx=0.3750`, 8 cells | 46.00 mm | 58.03 mm |
+| fat jet — 6 mm, `dx=0.3750`, 16 cells | 44.53 mm (**−3.19 %**) | 71.17 mm (**+22.65 %**) |
+| coarse fat — 6 mm, `dx=0.7500`, 8 cells | 43.00 mm (**−6.52 %**) | 52.03 mm (**−10.35 %**) |
+
+**Both knobs are spent almost entirely on the S=90 arm.** The S=0 depths span 7 %
+across three configurations that differ by a factor of two in grid and in diameter;
+the S=90 depths span 37 %. That is a physical reading rather than a numerical one:
+the S=90 jet flies 90 mm and **thins** before it arrives, so it is the arm whose
+resolution is actually marginal, and the S90/S0 quotient is close to an S=90
+measurement wearing a ratio's clothes. §3.14 said report both arms and never only
+the quotient; here that is not a caveat, it is the mechanism.
+
+#### The three reads, none of them `dt`-confounded
+
+| | mean S90/S0 | |
+|---|---|---|
+| `dx` alone at 6 mm, 0.7500 → 0.3750 (8 → 16 cells) | 1.1740 → 1.5587 | **+32.77 %** |
+| diameter alone at `dx=0.3750`, 3 → 6 mm (8 → 16 cells) | 1.2643 → 1.5587 | **+23.29 %** |
+| **SCALE**, both doubled at **fixed 8 cells** | 1.2643 → 1.1740 | **−7.14 %** |
+
+All three arms share a bit-identical substep, so no row needs a correction —
+**§3.14's two-route comparison could not say that of itself**, and its residual rests
+on transferring a `dt` term measured at 8 cells onto the 16-cell arm. That asymmetry
+in trustworthiness is a real by-product of this design and is why the third row is
+worth more than its size suggests.
+
+#### The scale row is the test, and §3.8's claim is what it tests
+
+`cells across the jet` is **not an independent variable — it is the ratio
+`diameter/dx`**. So §3.8's "cells across the jet is the controlling parameter" is a
+claim that the response depends on that ratio **alone**, i.e. a **scale-invariance
+hypothesis**. It is testable and it had never been tested: the two 8-cell arms are
+the *same discretization scaled by 2×* against physics that does not scale with it —
+the 90 mm standoff, the 150 mm plate, `damage_threshold`, the process zone. If the
+hypothesis held, the scale row would read 0.00 %.
+
+| scale row, per matched fraction | f=0.15 | f=0.20 | f=0.25 | f=0.30 |
+|---|---|---|---|---|
+| coarse fat vs shipped | **−12.28 %** | −6.75 % | −5.49 % | **−4.10 %** |
+
+**It varies 3× across the window and is not one number.** Quote it at a stated
+fraction — **−4.10 % at f=0.30**, still 20× the 0.2 % floor. This is §3.13's x=160
+lesson applied rather than restated: a mean over a quantity that is not constant
+reports one figure with no hint that the figure depends on where you stood, so
+`route_difference` is per-fraction by construction. §3.8's claim therefore survives
+as an **approximation, not an identity** — good to a few percent, and the residual
+scale dependence is of the same order as the two-route disagreement it was invoked to
+explain.
+
+#### The reading on §3.14's candidate — weaker than it looks, and better
+
+The same route comparison one scale coarser reads **−4.10 % to −12.28 %** where
+§3.14's dt-corrected residual reads **+2.50 %**. The route difference **changes sign
+and changes size with resolution**, and a physical finite-diameter effect would be a
+roughly resolution-**independent** offset. So this behaves like discretization error —
+which *characterizes* the residual rather than merely ruling a candidate out.
+
+**It does not refute the fine-pair reading, and must not be written as if it did.**
+Both arms here (`dx` 0.375 and 0.75) are coarser than both arms there (0.1875 and
+0.375), and a numerically-dominated coarse pair cannot overturn a measurement made at
+finer resolution. The honest statement is that the finite-diameter candidate is
+**not supported at this resolution**, not that it is falsified.
+
+#### What this does not settle
+
+- **Two points are not a trend.** There are exactly two route-difference readings, at
+  8 and at 16 cells. Do not read a crossing between them, do not say where it would
+  vanish, do not extrapolate. This repo has been bitten three times by exactly that
+  ([[convergence-claims-need-real-evidence]]), and a sign flip between two points is
+  the most inviting version of it.
+- **Diameter-at-fixed-cells is inseparable in principle.** `cells ≡ diameter/dx`, so
+  holding the ratio and moving one factor moves the other: the scale row is
+  *(diameter + dx-at-fixed-cells)* and no deck can make it anything else. The two
+  actually-free variables are `diameter` and `dx`; `cells` is their quotient and was
+  never a knob.
+- §3.14's `dx`-only rows (+17.46 %, +20.27 %) are at 3 mm and 684 substeps where the
+  row above is at 6 mm and the shipped clock, so comparing **slopes** still carries
+  the `dx`×`dt` interaction — the same open term §3.14 declared, not a new one.
+
+#### What is pinned
+
+`solver/tests/test_diameter_scale.py` — 14 tests. The deck design goes through
+`plan_substeps` because no cache can check it (CACHE_FORMAT §2 records `frame_dt`
+only), and the assertions state **relations between decks** rather than re-deriving
+the sizing arithmetic, which a copied bug would satisfy. The load-bearing one asserts
+the asymmetry directly: the scale move scales `dx` and `diameter` by 2×, and the
+standoff, thickness, material, jet length, velocities and domain are **identical**.
+
+Instrument-side, `_dt_residual` **re-derives** §3.14's published split from the caches
+rather than quoting it (§3.8 went two rebakes stale for exactly that reason) and keys
+`DT_ARMS` **by name** — `_dt_decomposition` indexes the same list positionally, so a
+reordering is a live hazard that would re-key the published decomposition and stay
+green. **Seven mutations verified RED first**; harness at
+`M:\claud_projects\temp\m18\red_check.py`, cited rather than shipped, as in §3.13.
+
+One harness lesson worth carrying, the same shape as the defects being hunted: the
+`particles_per_cell` mutation first came back **green** because a `replace(…, 1)` hit
+the deck header's prose quoting `particles_per_cell: 4` rather than the YAML line.
+**A mutation that does not land reads exactly like a test that does not care.**
 
 ---
 

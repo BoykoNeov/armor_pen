@@ -320,14 +320,39 @@ substep count can be checked without a GPU and pinned against the real path rath
 than a copy of it; verified behaviour-preserving across all 38 decks. Twenty tests,
 seven mutations verified red.
 
-**Next:** two, and neither is "refine the jet" again. **(1)** Still open from §3.13:
-16 cells is not enough for `heat_vs_composite`'s **residual state** — velocity and
-mass-through are still growing there, so a 24-cell arm (with its own `dt` partner,
-per §3.14) would say whether they turn over. **(2)** Split the residual 61 %: the
-fat-jet route conflates *more cells* with *a bigger jet*, and a **6 mm jet at
-`dx=0.75`** — same diameter as the fat arm, same 8 cells as the shipped one — tells
-which of the two it is answering to, cheaply (a quarter of the particles). See the
-per-directory `CLAUDE.md` files for the build order.
+**The candidate §3.14 was left with is not supported, and §3.8's controlling
+parameter turns out to be an approximation** (§3.15). A third 8-cell arm — a **6 mm
+jet at `dx=0.75`**, the fat arm's diameter at the shipped arm's cell count, with the
+deck `dt` pinned so all three arms run a bit-identical substep — separates *more
+cells* from *a bigger jet* for the first time. `dx` alone at 6 mm is **+32.77 %**,
+diameter alone at the shipped `dx` is **+23.29 %**, and the **scale** row (both
+doubled, cells held at 8) is **−4.10 % at f=0.30, −12.28 % at f=0.15**. That row is
+the result: `cells ≡ diameter/dx`, so "cells across the jet is the controlling
+parameter" is a **scale-invariance hypothesis**, it would read 0.00 % if it held, and
+it doesn't — the two 8-cell arms are the same discretization scaled 2× against a
+standoff and a process zone that don't scale with the jet. The claim survives as an
+approximation good to a few percent, **not an identity**.
+
+On §3.14's residual, the reading is deliberately the weaker one: the route difference
+is **+2.50 % at 16 cells and negative at 8**, changing sign *and* size with
+resolution — the signature of discretization error, not of a physical
+finite-diameter offset. That **characterizes** the residual rather than merely ruling
+a candidate out, but it is **not a refutation**: both arms here are coarser than both
+arms there. Two by-products. **These reads need no `dt` correction** where §3.14's
+had to transfer one across resolutions. And the depths say **the S=0 arm barely
+notices either knob** (7 % spread across all three configurations, against **37 %**
+on S=90) — the effect lives where the jet has flown 90 mm and thinned, which is a
+mechanism, not a caveat. **Zero kernel code** — two decks, one tool mode, 14 tests,
+**seven mutations verified red**.
+
+**Next:** **(1)** Still open from §3.13: 16 cells is not enough for
+`heat_vs_composite`'s **residual state** — velocity and mass-through are still
+growing there, so a 24-cell arm (with its own `dt` partner, per §3.14) would say
+whether they turn over. **(2)** A **third point** on route-difference-vs-resolution:
+§3.15 has exactly two, at 8 and 16 cells, which is why it refuses to call the sign
+change a crossing. A **4.5 mm jet at `dx=0.375`** paired with `dx250`'s 513 substeps
+reaches 12 cells by both routes and would be that point. See the per-directory
+`CLAUDE.md` files for the build order.
 
 ## Quick start
 

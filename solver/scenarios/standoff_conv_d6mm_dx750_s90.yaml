@@ -1,0 +1,124 @@
+# The DIAMETER control for the standoff convergence study — milestone 18.
+# Scenarios are DATA, not code (CLAUDE.md §9). Representative / illustrative
+# order-of-magnitude values, not any real system (CLAUDE.md §10).
+#
+# WHY THIS EXISTS. Milestone 17 (PHYSICS §3.14) decomposed the disagreement between
+# §3.8's two routes to 16 cells across the jet: +4.13 %, of which the timestep the
+# `dx` ladder drags along accounts for ~39 %, leaving a residual +2.50 % that is NOT
+# `dt`. §3.8's own hedge became the leading candidate by elimination — it called a
+# real finite-diameter effect "MOSTLY excluded", and M17 said the hedge in that word
+# was doing work. But no deck in the family can test it, because the fat-jet route
+# changes TWO things at once: it goes from 8 cells to 16 cells AND from a 3 mm jet to
+# a 6 mm one. This deck separates them.
+#
+#   THE FOUR CONFIGURATIONS, all at the SAME dt = 1.754386e-6 ms:
+#
+#     jet    dx        cells   deck
+#     3 mm   0.3750     8      `standoff_s90`               the shipped arm
+#     6 mm   0.3750    16      `standoff_conv_d6mm_s90`     the fat-jet route
+#     6 mm   0.7500     8      THIS DECK
+#     3 mm   0.7500     4      NOT BUILT — see the degeneracy note below
+#
+# THREE READS COME OUT OF THIS PAIR, and the README's framing ("which of the two is
+# the fat arm answering to") is the weakest of them, because it is an attribution
+# rather than a measurement:
+#
+#   1. vs `standoff_conv_d6mm_*` — 6 mm both, dt-matched, same 75-frame cadence: a
+#      PURE dx-ONLY measurement AT 6 mm DIAMETER. Every dx-only row M17 published
+#      (+17.46 %, +20.27 %) was measured at 3 mm. If the slope here matches, "cells
+#      across the jet" is diameter-independent as a NUMERICAL parameter, which is a
+#      structural claim about the whole family and not just about this deck.
+#   2. vs `standoff_s90` — 8 cells both, dt-matched: the finite-diameter effect at
+#      MATCHED CELLS, i.e. §3.14's named candidate for the residual 61 %. Compare it
+#      to that residual (+2.50 %). Landing near it reproduces the candidate on an
+#      independent pair; landing near zero FALSIFIES it, and the remaining suspect is
+#      the `dx` x `dt` interaction the M17 design admits it cannot reach.
+#   3. the attribution the README asked for, which follows from 1 and 2.
+#
+# WHAT READ 2 ACTUALLY MEASURES — state this, do not let a reader assume otherwise.
+# It is (DIAMETER + dx-AT-FIXED-CELLS), not diameter alone, and the second term
+# cannot be eliminated by construction. Doubling `dx` at fixed cells-across-the-jet
+# halves the resolution of everything whose length scale is NOT the jet diameter: the
+# 90 mm of standoff over which the jet stretches and thins (240 -> 120 cells), and the
+# spall/damage process zone, which is set by `dx` numerically and by
+# `damage_threshold` materially. Neither scales with the diameter. The S=90 arm is the
+# more `dx`-sensitive of the two (its jet has thinned further by impact) and the metric
+# is their QUOTIENT, so this lands directly on the reported ratio.
+#
+# WHAT IS MATCHED, and it is not only the cells: `particles_per_cell: 4` gives a
+# particle spacing of dx/2 = 0.375 mm, so this jet is **16 particles across**, exactly
+# as the shipped arm's 3 mm jet is 16 across at dx=0.375. Particle resolution is
+# matched, not just grid resolution. Were it not, read 2 would carry a third variable.
+#
+# WHY THERE IS NO 3 mm / dx=0.75 CORNER. It would complete a 2x2 factorial and give
+# the interaction term directly, and it is deliberately NOT built: a 3 mm jet at
+# dx=0.75 is 4 cells across and thins to ~1.1 mm ~ 1.5 cells, NARROWER THAN THE
+# QUADRATIC B-SPLINE STENCIL. That is not a coarser measurement of the same thing, it
+# is a different regime where the jet stops being a resolvable body — and an
+# interaction computed against a degenerate corner is not usable. If it is ever
+# wanted, bake it as a labelled degeneracy check, never as a factorial corner.
+#
+# THE dt IS PINNED, AND THAT IS THE WHOLE POINT (PHYSICS §3.13/§3.14: a CFL-coupled
+# refinement measures the DIFFERENCE OF TWO OPPOSING ERRORS). Left alone this deck
+# would be CFL-bound at dx=0.75 and run 171 substeps — twice the shipped `dt` — which
+# would confound every read above with exactly the term M17 spent four decks
+# removing. The deck `dt` below wins the `min(deck_dt, cfl_dt)` and reproduces the
+# shipped/fat substep to the last bit. ISOLATE WITH THE DECK dt, NEVER WITH
+# `cfl_p_margin` (§3.11: pushing the design `J` down re-creates milestone 14's own
+# defect).
+#
+# INHERITED, NEGLIGIBLE, AND SAID ANYWAY: read 2 compares a 75-frame diagnostic cache
+# to the shipped family's 225-frame one. Decimating the shipped caches to this cadence
+# moves the S90/S0 ratio -0.113 % (measured at M17), two orders below the effects here.
+#
+# THE RESULT (measured 2026-07-28, `python tools/measure_standoff.py
+# --diameter-decomposition`). Mean S90/S0: shipped 1.2643, fat jet 1.5587, THIS ARM
+# 1.1740. So dx alone at 6 mm is +32.77 %, diameter alone at dx=0.375 is +23.29 %,
+# and the SCALE row -- both doubled at fixed 8 cells -- is -7.14 % mean, varying
+# -12.28 % (f=0.15) to -4.10 % (f=0.30). It would read 0.00 % if `cells across the
+# jet` were sufficient, so §3.8's controlling-parameter claim is an APPROXIMATION
+# good to a few percent, not an identity.
+#
+# READ 2's verdict on §3.14: the route difference is +2.50 % at 16 cells and
+# -4.10 %..-12.28 % here, i.e. it CHANGES SIGN AND SIZE with resolution -- the
+# signature of discretization error, not of a physical finite-diameter offset. NOT a
+# refutation of the fine pair: both arms here are coarser than both arms there. And
+# the effect lives almost entirely in the S=90 arm (S=0 depths span 7 % across all
+# three configurations, S=90 spans 37 %), because that jet flies 90 mm and thins
+# before it arrives. Full writeup: PHYSICS §3.15.
+#
+# DIAGNOSTIC deck, not for playback. Everything physical is identical to
+# `standoff_s90` except the two variables named in the deck name.
+name: standoff_conv_d6mm_dx750_s90
+
+domain: { xmin: 0, xmax: 540, ymin: 0, ymax: 120 }   # mm — identical to the shipped family
+
+projectile:
+  kind: heat_jet
+  material: copper_jet
+  length: 120.0
+  diameter: 6.0            # VARIABLE 1: the fat jet, matching `standoff_conv_d6mm_s90`
+  velocity: 7000
+  tail_velocity: 2000
+  angle_deg: 0.0
+  nose_shape: blunt
+
+armor:
+  - { material: rha, thickness: 150.0, standoff: 90.0 }
+
+solver:
+  grid_resolution: 720    # VARIABLE 2: dx = 540/720 = 0.750 mm -> 6 mm jet = 8 cells across,
+                          # the SHIPPED arm's cell count reached with the FAT arm's diameter
+  particles_per_cell: 4
+  # NOT a variable — pinned so it is not one. The CFL bound at dx=0.75 is 3.5088e-6 ms
+  # (twice the shipped arm's, since `c_max` is dx-independent and `dt_cfl` is exactly
+  # proportional to `dx`), so without this the deck would run 171 substeps and confound
+  # the diameter with the clock. 6.0e-4 ms / 1.756e-6 = 341.7 -> ceil 342 substeps ->
+  # dt = 1.754386e-6 ms, bit-identical to `standoff_conv_d6mm_s90` and `standoff_s90`.
+  # The ceil window is 0.3 % wide — any deck dt in (1.754386e-6, 1.759531e-6] ms lands
+  # on 342 — so VERIFY THE SUBSTEP COUNT BEFORE BAKING, with
+  #   python -m ballistics_solver.run <this deck> --out /dev/null --dry-run
+  # which must print 342 substeps, dt=1.754386e-06, and "bound by the DECK".
+  dt: 1.756e-9
+  total_time: 4.5e-5
+  frame_count: 75     # diagnostic: cache size only, NOT the 2.0e-7 playback convention
