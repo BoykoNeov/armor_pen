@@ -893,6 +893,72 @@ and the resolution guard **217 829 → 0** — neither was ever an EOS problem.
      wide, the deck's dt at 47 % of it) — the first draft assumed a 0.5 % nudge would
      stay inside and went red, so §3.14's "narrow" was an understatement.
 
+18. **Milestone 20 — the 32-cell rung, the statistic it broke, and the pole it found
+   (PHYSICS §3.17).** The first of §3.16's two Next items. Three decks
+   (`heat_conv_dx094`, `heat_conv_dt456`, control `heat_conv_dx094_dt770`), a
+   `--breach-control` mode, a changed published statistic — **no kernel code, no
+   rebake of anything existing.**
+   - **`SolverParams.cfl_p_margin` ALREADY EXISTED (M14).** §3.16's Next item is not
+     "build the knob", it is a rule about which knob to reach for. Third time a Next
+     item has read as a build request for a thing already shipped (§3.12, §3.15) —
+     **check the body before inheriting one.**
+   - **THE RUNG BROKE THE LADDER'S STATISTIC BEFORE IT BROKE ANY PHYSICS, and the
+     repo's own guard caught it.** `dx` steps are 0.0625, 0.0625, **0.03125** — the
+     new one is HALF — so §3.16's increment ratio has null **0.50** here, not 1.00.
+     `test_the_ladder_rungs_are_equally_spaced_in_dx` asserted the property and its
+     docstring named this exact failure a milestone earlier. **Not widened:** the
+     column is now a **SLOPE** (increment ÷ step), null 1.00 at any spacing, and
+     identical to the old ratio over equal steps, so §3.16's 0.35 / 0.10 / 0.65 are
+     reproduced. **The choice is not cosmetic — the two conventions return OPPOSITE
+     verdicts on the new rung** (raw 0.48 vs slope 0.97 against a 0.50 threshold), so
+     the old column would have published "mass-through converged". The tool COMPUTES
+     that comparison rather than asserting it.
+   - **Both halves of §3.13's "residual state" now have answers and neither is
+     convergence.** `v_resid` **TURNED OVER** — §3.16 saw one reversal and refused to
+     call it one, the fourth rung supplies the repeat (+13.55, −1.36, **−3.69** pp) —
+     but its latest ratio is **WITHHELD** (near-zero denominator), so no settling
+     verdict exists for it. `through` is **STILL NOT SETTLING**, slope ratio **0.97**
+     against a null of 1.00: the decay has essentially stopped. **Never quote
+     mass-through at any resolution here.**
+   - **THE REPO'S FIRST CFL BREACH, and the mechanism is the transferable part.**
+     Budget 63 → 66 → 73 → 84 → **160 %**. Decomposed: `copper_jet` reaches
+     **J=0.3981, 0.0025 above its own MG pole switch (0.3956)**, where the EOS
+     stiffens without bound — live c 1.95× the design. AV is ruled out arithmetically
+     (2 222 of 102 797). **Spatial refinement drives the jet tip into the pole
+     guard**, which M13 said was load-bearing on nera and must never name the jet.
+   - **⚠️ THE PER-DECK REMEDY IS ~85 % CONSUMED AT THE FIRST RUNG THAT NEEDS IT.**
+     `era_filler` is not in this deck so the global ~4.05 ceiling does not apply and
+     §3.11's remedy is genuinely available — but this deck demands **P≈10** against
+     its own ceiling of **11.5**. Headroom **1.15×**, not the 2.9× that comparing to
+     the global constant suggests. **A 48-cell rung is NOT reachable under this
+     sizing scheme** — "just add rungs" is retired for this family.
+   - **A breach is not a divergence, and it was MEASURED not argued.** 1.60× is a
+     Courant of **0.48** against a limit near 1; guards all zero, no NaN. The control
+     (same `dx`, 1.69× finer `dt`, thresholds written into the deck header BEFORE the
+     bake was read) shows the breached arm moves **0.11–0.55×** of its own family's
+     `dt` sensitivity against a deliberately conservative scaling. **Less sensitive,
+     not more.** That licenses quoting the rung; it does **not** license ignoring the
+     audit, and it says nothing about convergence.
+   - **The control reaches its substep through the DECK dt, never `cfl_p_margin`**
+     (§3.11). The margin was used only as a host-side calculator to pick the target;
+     a test pins the two paths agreeing.
+   - **⚠️ NAMED, NOT FIXED: the audit compares SPEEDS, not Courant numbers.** On a
+     deck-`dt`-bound arm the substep is finer than the CFL bound, so the printed ratio
+     is pessimistic by `dt/dt_cfl` — the control prints "BREACHED 1.47×" at a real
+     Courant of **0.26**, and every `dt` partner in §3.13/§3.16 is deck-bound. Not
+     changed here on purpose: it touches `mpm.py` and moves the reported number on all
+     30 decks, inside the milestone whose headline is a budget sequence in the current
+     convention.
+   - `tests/test_ladder_slope.py`, 25 tests, **nineteen mutations verified RED first**.
+     **A WITHHELD RATIO WAS REPORTED AS "SETTLING"** — `None` compared against `>= 0.5`
+     via a NaN, for a quantity the same function had suppressed as unreadable two lines
+     earlier, and it reached the real ladder output. **The harness lesson from §3.16
+     repeated itself**: a same-length mutation served from a stale `__pycache__` came
+     back green. §3.16 diagnosed and fixed that — but the harnesses are *cited rather
+     than shipped*, so the fix lived in a `temp/` script and the next harness could not
+     inherit it. **A lesson in a document plus a patch in a throwaway did not survive
+     one milestone.**
+
 Don't rewrite from scratch. The full solver arc (milestones 1–13) is done.
 
 **Stale-number correction (measured 2026-07-16, updated 2026-07-17):** the "~16 %

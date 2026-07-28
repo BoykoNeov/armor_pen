@@ -367,17 +367,45 @@ its per-fraction figure to that mean. Same-statistic, the 16-cell reading is
 sides of a comparison or it is not a comparison.* **Zero kernel code** — four decks,
 two tool modes, 28 tests, **eighteen mutations verified red**.
 
-**Next:** **(1)** `heat_vs_composite`'s **mass-through is still not settling at 24
-cells**, and its increments decay more slowly than the two-rung view suggested — a
-32-cell arm with its own `dt` partner is the next rung, but it is also where the CFL
-budget trend (63 → 66 → 73 → **84 %** of `c_max`) would go looking for
-`EOS_CFL_P_MARGIN`'s ceiling, so it needs a **per-deck `cfl_p_margin`** rather than a
-bigger global P (§3.11). **(2)** The 16-cell route difference is the outlier of the
-three and it is the only `dt`-corrected one; separating "resolution" from "a `dt`
-correction that does not transfer" needs the `dx`×`dt` interaction term, which
-`dt = min(deck_dt, cfl_dt)` still puts out of reach. A **6 mm jet at `dx=0.5`** would
-at least add the 2× scale row at 12 cells. See the per-directory `CLAUDE.md` files
-for the build order.
+**The first of those two Next items was built** (§3.17), and it broke the ladder's own
+statistic before it broke any physics. The 32-cell rung is a **0.03125 mm `dx` step,
+half of the two below it**, and §3.16's increment ratio was readable only over equal
+steps — so its null moves 1.00 → 0.50 and the old column would have been one statistic
+under two conventions. **The repo's own guard caught it**, having named the failure a
+milestone earlier ("a fourth rung chosen for round cell counts rather than for equal
+`dx` would silently break this"), and it was **not widened**: the published column is
+now a **slope** (increment ÷ step), null 1.00 at any spacing, identical to the old
+ratio wherever the steps are equal. That was not cosmetic — on the new rung the two
+conventions return **opposite verdicts** (raw **0.48**, slope **0.97**, threshold
+0.50), so §3.16's column would have announced mass-through had converged. It has not:
+**mass-through is still not settling at 32 cells** and its decay has essentially
+stopped, while **residual velocity has now TURNED OVER** — §3.16 saw one reversal and
+refused to call it one, and the fourth rung supplies the repeat.
+
+**The budget did not approach its ceiling, it went through it — and the mechanism is
+the finding.** 63 → 66 → 73 → 84 → **160 %**: the repo's first CFL breach, and
+decomposed it is `copper_jet` compressed to **J=0.3981, 0.0025 above its own
+Mie-Grüneisen pole switch**. *Spatial refinement drives the jet tip into the pole
+guard.* A per-deck `cfl_p_margin` really is the right remedy (the global ~4.05 ceiling
+is `era_filler`'s, and that material is not in this deck) — but this deck demands
+**P≈10** against its own ceiling of **11.5**, so the remedy is **~85 % consumed at the
+first rung that needs it** and a 48-cell rung is not reachable at all under this
+sizing scheme. A **control at the same `dx` with a 1.69× finer `dt`** (threshold
+written down before the bake was read) shows the breached arm is **not** unusually
+`dt`-sensitive — it moves 0.11–0.55× of what its family does at the shipped grid — so
+the breach behaves like ordinary `dt` error rather than an instability. **Zero kernel
+code** — three decks, one new tool mode, 25 tests, **nineteen mutations verified red**.
+
+**Next:** **(1)** The 16-cell route difference is the outlier of the three and it is
+the only `dt`-corrected one; separating "resolution" from "a `dt` correction that does
+not transfer" needs the `dx`×`dt` interaction term, which `dt = min(deck_dt, cfl_dt)`
+still puts out of reach. A **6 mm jet at `dx=0.5`** would at least add the 2× scale row
+at 12 cells. **(2)** The CFL audit reports a **speed ratio, not a Courant number**, so
+every deck-`dt`-bound arm (all the `dt` partners) reads pessimistic by `dt/dt_cfl` —
+the control prints "BREACHED 1.47×" at a real Courant of 0.26. Fixing it touches
+`mpm.py` and moves the reported number on all 30 decks, so it was deliberately not
+done inside the milestone whose headline is a budget sequence in the current
+convention. See the per-directory `CLAUDE.md` files for the build order.
 
 ## Quick start
 

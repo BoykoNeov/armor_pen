@@ -490,7 +490,7 @@ def test_the_ladder_names_arms_that_exist_and_interfaces_it_may_quote():
     for cells, dx_cache, dt_cache, dx_sub, dt_sub in jg.LADDER:
         assert dx_cache.startswith("heat_conv_dx")
         assert dt_cache.startswith("heat_conv_dt")
-    assert [row[0] for row in jg.LADDER] == [12.0, 16.0, 24.0]
+    assert [row[0] for row in jg.LADDER] == [12.0, 16.0, 24.0, 32.0]
 
 
 def test_the_rung_delta_is_normalised_by_the_baseline_not_the_partner(tmp_path):
@@ -511,22 +511,40 @@ def test_the_rung_delta_is_normalised_by_the_baseline_not_the_partner(tmp_path):
     assert out[-1] == pytest.approx(-30.0)
 
 
-def test_the_ladder_rungs_are_equally_spaced_in_dx():
-    """WHAT MAKES THE INCREMENT RATIO READABLE.
+def test_the_ladder_rungs_are_ordered_and_the_spacing_claim_is_computed():
+    """WHAT MADE THE INCREMENT RATIO READABLE, AND WHAT HAPPENED TO IT.
 
-    12 / 16 / 24 cells is dx 0.2500 / 0.1875 / 0.1250 — two steps of 0.0625 mm. Over
-    EQUAL steps a first-order error gives an increment ratio of 1.00, so a ratio well
-    under 1 means something. Over unequal steps it would mean nothing, and the mode
-    prints the ratio as if it did. A fourth rung chosen for round cell counts rather
-    than for equal `dx` would silently break this.
+    This test used to assert the rungs were EQUALLY SPACED in `dx` (12/16/24 cells is
+    0.2500 / 0.1875 / 0.1250 — two steps of 0.0625 mm), because over equal steps a
+    first-order error gives an increment ratio of 1.00, so a ratio well under 1 means
+    something. Its own docstring warned: "A fourth rung chosen for round cell counts
+    rather than for equal `dx` would silently break this."
+
+    **That is exactly what milestone 20's 32-cell rung does** — dx=0.09375 is a
+    0.03125 mm step, half of the two before it — so the guard fired as designed. The
+    resolution is NOT to widen it: §3.17 changes the published statistic to a SLOPE
+    (increment/step), whose null is 1.00 at any spacing, and `test_ladder_slope.py`
+    pins that it is genuinely step-agnostic. What survives here is the half that is
+    still a property of the LADDER rather than of the statistic: the rungs must run
+    coarse to fine, and the mode must never CLAIM equal spacing it does not have.
     """
     dxs = [_plan(dx_cache)["dx"] for _, dx_cache, *_ in jg.LADDER]
-    steps = [dxs[k - 1] - dxs[k] for k in range(1, len(dxs))]
-    assert steps[0] == pytest.approx(steps[1]), (
-        f"rung spacing {steps} is not equal; the d24/d16 ratio the mode prints is "
-        "then not a convergence reading at all"
-    )
     assert dxs == sorted(dxs, reverse=True), "rungs must be ordered coarse -> fine"
+
+    steps = [dxs[k - 1] - dxs[k] for k in range(1, len(dxs))]
+    equal = max(steps) - min(steps) < 1e-9
+    assert not equal, (
+        "the rungs are equally spaced again; that is not a failure, but the mode's "
+        "unequal-spacing prose and the reconciliation block are then dead code and "
+        "this test is no longer checking anything — re-read §3.17 before deleting it"
+    )
+    # The prose is COMPUTED from the steps, so it cannot go stale the way §3.8's table
+    # did. A mode that types "EQUALLY SPACED" over these rungs is asserting a null of
+    # 1.00 for a ratio whose real null is 0.50.
+    src = (Path(jg.__file__).read_text(encoding="utf-8"))
+    assert 'equal else " — NOT EQUAL."' in src, (
+        "the equal-spacing sentence is no longer derived from the measured steps"
+    )
 
 
 def test_the_ladder_baseline_is_the_shipped_deck():

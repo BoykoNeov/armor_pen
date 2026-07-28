@@ -3121,6 +3121,14 @@ Three are worth naming:
 - **Equal `dx` spacing is asserted**, because the printed increment ratio is only
   readable over equal steps and a future rung chosen for a round cell count would
   silently break it.
+  > **✅ IT FIRED, ONE MILESTONE LATER, EXACTLY AS WRITTEN — §3.17.** Milestone 20's
+  > 32-cell rung is a 0.03125 mm step, half of these two, and this test went red on
+  > the day it was added. It was **not widened**: the published statistic changed to a
+  > SLOPE (increment ÷ step), whose null is 1.00 at any spacing and which reduces to
+  > this ratio exactly where the steps are equal — so the 0.35 / 0.10 / **0.65** below
+  > are reproduced rather than superseded. **The choice was not cosmetic: on the new
+  > rung the two conventions return OPPOSITE verdicts** (raw 0.48, slope 0.97, against
+  > a 0.50 threshold).
 
 **Instrument-side, milestone 18's named hazard is removed rather than deferred
 again.** Every arm table (`DT_ARMS`, `DIAM_ARMS`, the new `ROUTE_ARMS`, and
@@ -3147,6 +3155,276 @@ mutation which does not land reads exactly like a test that does not care.
 > `__pycache__` before every invocation. **"It changed the bytes on disk" is not proof
 > that a mutation reached the interpreter** — and an intermittent green is worse than
 > a reproducible one, because the first run is the one you believe.
+
+---
+
+### 3.17 The 32-cell rung, the statistic it broke, and the pole it found (milestone 20)
+
+§3.16 closed with two Next items and this milestone took the first: *"mass-through is
+still not settling at 24 cells, and its increments decay more slowly than the two-rung
+view suggested — a 32-cell arm with its own `dt` partner is the next rung, but it is
+also where the CFL budget trend would go looking for `EOS_CFL_P_MARGIN`'s ceiling."*
+
+Both halves of that sentence came true, and the second one came true much harder than
+predicted. **Zero kernel code**: three decks (`heat_conv_dx094`, `heat_conv_dt456`,
+and the control `heat_conv_dx094_dt770`), a change of published statistic in
+`--dt-ladder`, a `--breach-control` mode, and 25 tests.
+
+A scoping note first, because §3.15 and §3.12 both lost a milestone to it:
+**`SolverParams.cfl_p_margin` already existed** (M14). §3.16's Next item is not a
+request to build the knob — it is a rule about which knob to reach for. Nothing in
+this milestone needed a new solver field.
+
+#### The rung breaks the ladder's own statistic before it breaks any physics
+
+The `dx` ladder is 0.3906 → 0.2500 → 0.1875 → 0.1250 → **0.09375** mm, so its steps
+are 0.1406, 0.0625, 0.0625, **0.03125**. §3.16's increment-over-increment ratio was
+readable *because* its two rungs were equally spaced, and it said so in as many words:
+*"over equal steps a first-order error gives 1.00."* Over a halved step that same
+first-order error gives **0.50**. Quoting a new ratio against the old null would be
+one statistic under two conventions — precisely the defect §3.16 corrected in §3.15's
+headline, recurring one milestone later inside this repo's own table.
+
+**The repo's own guard caught it, and it was written to.** `test_route_difference.py`
+asserted the equal spacing and its docstring named the failure mode exactly: *"A
+fourth rung chosen for round cell counts rather than for equal `dx` would silently
+break this."* It went red the day the rung was added.
+
+The resolution is not to widen the guard, and not to move the rung. 48 cells
+(dx=0.0625) would restore equal spacing, but the CFL budget is the other deliverable
+here and that arm is far past it — buying a tidy null by destroying the measurement.
+Instead the **statistic changed to a slope**. If the discretisation error is first
+order, `value(h) = value* + C·h`, so a rung's effect against the shipped grid is
+`e(h) = C·(h − h_shipped)` — linear in `h`. Then
+
+- **increment ÷ step** recovers `C` at any spacing, and
+- consecutive slopes have a null of **1.00 everywhere**, equal steps or not.
+
+Over equal steps the step cancels and the slope ratio *is* the increment ratio, so
+§3.16's 0.35 / 0.10 / 0.65 are **reproduced, not superseded** — which is what makes
+this a change of convention rather than of answer, and the mode's regression check.
+
+#### The choice of statistic flips this milestone's headline verdict
+
+This is not presentational. On the real four caches, mass-through reads increments
+−12.69, −8.24, **−3.99** pp over steps 0.0625, 0.0625, **0.03125** mm:
+
+| statistic | value at the 32-cell rung | null | verdict |
+|---|---|---|---|
+| raw increment ratio (§3.16's column) | **0.48** | 0.50 here | *settling* |
+| slope ratio (§3.17's column) | **0.97** | 1.00 always | **not settling** |
+
+**Same four caches, opposite conclusions, and the statistic is the only thing that
+differs.** Publishing §3.16's column on §3.17's rung would have announced that
+mass-through had converged, of a quantity whose slope had barely moved. The tool
+**computes** that comparison and prints `<-- OPPOSITE VERDICTS from the same caches`
+rather than leaving it to prose, because §3.8's table is what happens to a
+measurement restated in prose.
+
+#### The four-rung ladder
+
+Each row differences a `dx` arm against a `dt` partner at the shipped grid running the
+same substep count, so each row is a **measured** `dx`-only effect (§3.13's rule).
+The 32-cell rung is the family's **second exact pair** (456 vs 456, after M19's 342).
+
+| cells | substeps | x=215 | x=234.9 | v_resid | through |
+|---|---|---|---|---|---|
+| 12.0 | 171 vs 171 | −4.23 % | −7.45 % | +31.6 % | −23.3 % |
+| 16.0 | 228 vs 230 | −4.24 % | −8.97 % | +45.1 % | −36.0 % |
+| 24.0 | 342 vs 342 | −5.29 % | −9.51 % | +43.8 % | −44.2 % |
+| **32.0** | **456 vs 456** | **−6.62 %** | **−10.42 %** | **+40.1 %** | **−48.2 %** |
+
+and as slopes (pp per mm of `dx`), which is the column that means the same thing at
+every rung:
+
+| quantity | s16c | s24c | s32c | r24c | r32c |
+|---|---|---|---|---|---|
+| x=215 | −0.2 | −16.8 | −42.5 | (—) | 2.54 |
+| x=235 | −24.4 | −8.6 | −29.1 | 0.35 | (—) |
+| v_resid | +216.9 | −21.8 | −118.2 | 0.10 | (—) |
+| **through** | −203.0 | −131.8 | **−127.8** | 0.65 | **0.97** |
+
+**§3.13's "16 cells is NOT enough for the residual state" now has an answer for both
+halves, and neither half is convergence.**
+
+- **`v_resid` TURNED OVER, and the turnover is now claimed rather than named.** §3.16
+  saw one reversal (+13.55 then −1.36 pp) and correctly refused to call it a turnover:
+  *"one reversal is one point."* The fourth rung supplies the second point — −3.69 pp,
+  the same sign, and **larger**. So the quantity peaked at 16 cells and is now falling
+  at an accelerating rate. Its latest ratio is **withheld** (the 24-cell increment is
+  3 % of the value it moved, a near-zero denominator), so *no settling verdict is
+  available for it at all* — the direction is readable and the rate is not.
+- **`through` is STILL NOT SETTLING**, and less so than §3.16 could see: the slope
+  ratio is **0.97 against a null of 1.00**, i.e. the decay has essentially stopped.
+  §3.16 read 0.65 and said the decay was slower than two rungs could show. It is
+  slower than three could show. **Do not quote mass-through at any resolution here.**
+
+`x=215` remains unreadable as a ladder (§3.16 said so; the 12- and 16-cell rungs land
+on top of each other, and the 2.54 above sits on a denominator the previous rung's
+guard already withheld once).
+
+#### The budget did not approach its ceiling — it went through it, and the reason is the EOS pole
+
+§3.16 published this trend at the shipped P=4 and named the 32-cell arm as where it
+would go looking for a limit:
+
+| | 7.5 cells | 12 | 16 | 24 | **32** |
+|---|---|---|---|---|---|
+| along the `dx` ladder | 63 % | 66 % | 73 % | 84 % | **160 %** |
+| at fixed `dx`, refining `dt` (110/171/230/342/**456**) | 63 % | 59 % | 57 % | 53 % | **52 %** |
+
+**The first breach in this repo's history**, and not by a little: `dt` was sized for
+`c_max = 64101 mm/ms` and live material reached `c_eff = 102797`.
+
+**The mechanism is the finding.** Decomposed by material, the breach is `copper_jet`
+compressed to **J = 0.3981 — 0.0025 above its own Mie-Grüneisen pole switch at
+J_sw = 0.3956**. Near the pole the EOS stiffens without bound, so the live sound speed
+(63 750 mm/ms) is 1.95× the 32 761 the design state predicted. The AV term is not the
+culprit and can be ruled out arithmetically: it contributes 2 222 mm/ms of the 102 797.
+
+So the transferable statement is not "the budget trend continued." It is:
+**spatial refinement drives the jet tip into the pole guard.** M13 established the
+guard was load-bearing on `nera_filler`; at 32 cells it becomes load-bearing on the
+*jet*, which is the deck the guard's own comment said it should never name.
+
+**And the remedy §3.16 named is ~85 % consumed at the very first rung that needs it.**
+Sweeping `EOS_CFL_P_MARGIN` on this deck's own materials (host-side, no GPU):
+
+| P | c_max | vs the measured c_eff | J_d(copper) |
+|---|---|---|---|
+| 4 (shipped) | 64 101 | **1.60×** | 0.4440 |
+| 8 | 94 623 | 1.09× | 0.4094 |
+| **10** | **108 280** | **0.95× — clears** | 0.4006 |
+| 11.5 | 118 057 | 0.87× | **0.3956 — past the switch** |
+
+The global ~4.05 ceiling is `era_filler`'s and `era_filler` is not in this deck, so a
+per-deck `cfl_p_margin` genuinely is the right instrument (§3.11) — but this deck's
+own ceiling is **11.5** against a **demand of 10**. Headroom **1.15×**, not the 2.9×
+that comparing against the global constant suggests. The corollary is concrete:
+**a 48-cell rung is not reachable under this sizing scheme**, and "just add rungs" is
+retired for this family rather than left as an open invitation.
+
+**A breach is not a divergence, and the arithmetic is the first thing to read.** The
+audit ratio is a fraction of the **CFL = 0.3 safety factor**, not of the stability
+limit (§3.11), so 1.60× is a Courant number of **0.48** against a limit near 1. The
+bake is finite and its own guards agree: J floor **0**, resolution guard **0**, no
+NaN, and the `e < 0` clamp firing only at roundoff (5.8e-09 of the bake's own
+`e_max`). That is exactly the state that needs a measurement rather than a paragraph.
+
+> **⚠️ A NAMED FOLLOW-UP, NOT FIXED HERE: the audit compares SPEEDS, not Courant
+> numbers.** It reports `c_eff / c_max`, where `c_max` is the speed the CFL bound was
+> sized from — which is the right reading only when `dt` is CFL-bound. On a
+> **deck-`dt`-bound** arm the substep is finer than the CFL bound and the real Courant
+> is lower by `dt/dt_cfl`; on `heat_conv_dx094_dt770` that factor is 0.59, so the line
+> will print a breach the substep already covers. Every `dt`-partner deck in §3.13 and
+> §3.16 is deck-bound, so their budget percentages are **pessimistic** by that factor.
+> Not changed in this milestone on purpose: it touches `mpm.py`, moves the reported
+> number on all 30 decks, and would make this ladder incomparable to the three rungs
+> already published in the current convention.
+
+#### Did the breach move the readings? Measured, and the threshold was written first
+
+`heat_conv_dx094_dt770` is the same `dx` with a 1.69× finer `dt` and nothing else — a
+`dt`-only pair at fixed `dx` needs no partner, it *is* the pair. It runs the substep a
+`cfl_p_margin: 10` would have produced (the margin used purely as a **host-side
+calculator**, since §3.11 forbids isolating with it) reached through the deck `dt`, so
+no design state moves. A test pins the two paths agreeing.
+
+**What this can and cannot show was written into the deck header before the bake was
+read.** A `dt`-only pair measures a difference, never a truth: it cannot show the arm
+is *correct*. It can show whether the arm is unusually `dt`-sensitive — and that needs
+a reference, because ordinary `dt` error here is several percent (§3.13), so a bare
+difference proves nothing. The floors were stated in advance too: **0.0024 %** on the
+front-curve percentile readings, **0.11 %** on the aggregates.
+
+| pair | ratio | x=215 | x=235 | v_resid | through |
+|---|---|---|---|---|---|
+| 110→171 @ dx=0.3906 | 1.55× | +1.70 % | +2.42 % | −7.32 % | +8.07 % |
+| 230→342 @ dx=0.3906 | 1.49× | +2.39 % | +3.09 % | −6.48 % | +7.48 % |
+| 342→456 @ dx=0.3906 | 1.33× | +1.93 % | +2.47 % | −4.41 % | +6.62 % |
+| **456→770 @ dx=0.0938 (the breached arm)** | **1.69×** | **+0.38 %** | **+0.82 %** | **−4.98 %** | **+1.22 %** |
+
+Scaled linearly to the control's own 1.69× — which **overstates** the reference, since
+§3.14 measured the `dt` term saturating, so it makes an indictment harder rather than
+easier — the breached arm moves **0.11× / 0.19× / 0.55× / 0.12×** of what its family
+does at the shipped grid.
+
+**The breached arm is not unusually `dt`-sensitive. It is markedly LESS sensitive than
+the family**, on every quantity, against a deliberately generous reference. So the
+1.60× breach is behaving like ordinary `dt` discretisation error, not like an
+instability — which is what the guards (J floor 0, resolution guard 0, no NaN) and the
+Courant arithmetic (0.48 against a limit near 1) already suggested, now measured
+rather than argued.
+
+Two things this does **not** license, stated because the temptation is obvious:
+
+- It is **not** evidence the 32-cell arm is converged. That is a different question and
+  the ladder's own answer to it is *no* — mass-through's slope ratio is 0.97.
+- It is **not** a general licence to ignore the audit. The finding is about *this*
+  breach at *this* magnitude, and the mechanism (the EOS pole) is one whose next
+  increment of refinement is not bounded by anything measured here.
+
+The control also confirms the reporting defect flagged above: it prints `BREACHED …
+1.47×` while being **deck-`dt`-bound at a real Courant of 0.26**. Its live `c_eff`
+falls 102 797 → 94 275 and its peak compression relaxes J 0.3981 → 0.4033, i.e. a
+finer clock backs the jet tip away from the pole — the same sign as §3.16's
+`dt`-refinement column.
+
+#### By-products
+
+**The window was necessary again, and the extrapolation that sized it was weak on
+purpose.** `heat_conv_dt456` records 34 µs. The `dt`-only breakout sequence (24.093 →
+24.675 → 25.190 → 25.966 µs at 110/171/230/342 substeps) has a slope that **steepens**
+rather than saturating, so extrapolating it to 456 is extrapolating a sequence that
+has not turned over — the deck header says so and quotes a range (26.4–27.6 µs)
+instead of a value. Measured: **26.608 µs**, inside the stated range. Its matched
+residual falls at **30.600 µs**, so at the family's standard 150-frame window (ending
+29.8 µs) the exact 456-vs-456 pair would have produced **no residual at all**.
+Necessary by **0.8 µs**. Its `dx` partner shares the 34 µs window here — unlike M19's
+rung — because at 32 cells the `dx` arm breaks out at 24.123 µs with 5.6 µs to spare
+and matching costs one deck header rather than a second bake.
+
+**§1.1.2 is untouched.** Nothing on either new arm reached `x_hi`; closest approach is
+**27.00 mm** (`heat_conv_dx094`), against the repo record of 10.65 mm on
+`sweep_tungsten_v3500`. The mirror is working: worst mid-height asymmetry **0.007 mm**
+on 3 157 336 particles, and direct wall participation is 0 particles, 0.00 % on both
+residual velocity and spall.
+
+#### What is pinned
+
+`solver/tests/test_ladder_slope.py` — 25 tests, split the usual way. The statistic
+lives in a pure `_slope_table` and the verdict in a pure `_settling_verdict`
+specifically so both can be pinned **without a cache**, and the deck relations go
+through `plan_substeps` because no cache records a substep.
+
+Three worth naming:
+
+- **A withheld ratio must never produce a settling verdict — and it did.** The first
+  draft compared `None` against `>= 0.5` via a NaN, which is False, and printed
+  **SETTLING** for `v_resid`, whose ratio the same function had suppressed as
+  unreadable two lines earlier. That reached the real ladder output. A verdict
+  computed from evidence already ruled inadmissible is the sharpest form of
+  [[instruments-that-cannot-see-the-failure]] this repo has produced.
+- **The step really reaches the ratio.** Feeding the same values with a mislabelled
+  step must move the answer, or the division is decorative.
+- **The withholding rule is tested on the INCREMENT, never the slope.** A guard
+  rewritten in slope terms changes meaning with the step: dividing by a small step
+  inflates the slope, so a negligible increment stops being withheld merely because
+  the rung below it was finer.
+
+**Nineteen mutations verified RED first**; the harness is
+`M:\claud_projects\temp\m20\red_check.py`.
+
+> **THE HARNESS LESSON REPEATED ITSELF, AND THAT IS THE FINDING — not the defect.**
+> One mutation (`SETTLING_THRESHOLD = 0.5` → `0.4`) came back **green**, and the cause
+> is the one §3.16 already diagnosed and fixed: a same-length edit inside the same
+> mtime tick is served from a stale `__pycache__`. §3.16 wrote it up, and its harness
+> purges bytecode. **This harness did not, because it is a new file** — the harnesses
+> are *cited rather than shipped*, so the fix lived in a `temp/` script outside the
+> repo and could not be inherited. A lesson recorded in a document and patched in a
+> throwaway did not survive one milestone. Either the harness belongs in the repo, or
+> every future one starts by purging bytecode; the note is here so the next author
+> reads it before writing the third copy.
 
 ---
 

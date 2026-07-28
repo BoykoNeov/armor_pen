@@ -448,6 +448,13 @@ def _plot(arms: list[dict], out: Path) -> None:
     print(f"\n  wrote {out}")
 
 
+# `heat_conv_dx094` is DELIBERATELY ABSENT, and the reason is the tool's own posture.
+# That arm BREACHED its CFL audit by 1.60x (§3.17) — and a cache does not record the
+# audit (CACHE_FORMAT §2 stores `frame_dt`, not a substep, a `c_max` or a warning), so
+# this mode has no way to see it and no way to flag it. `--family` is the CONFOUNDED
+# joint ladder, quoted for shape rather than for numbers, and printing a breached arm
+# in it unflagged is exactly [[instruments-that-cannot-see-the-failure]]. The 32-cell
+# arm is reported by `--dt-ladder`, where §3.17's prose carries the breach with it.
 FAMILY = ("heat_vs_composite", "heat_conv_dx250", "heat_conv_dx188", "heat_conv_dx125")
 
 
@@ -472,6 +479,7 @@ LADDER = [
     (12.0, "heat_conv_dx250", "heat_conv_dt_mid", 171, 171),
     (16.0, "heat_conv_dx188", "heat_conv_dt_fine", 228, 230),
     (24.0, "heat_conv_dx125", "heat_conv_dt342", 342, 342),
+    (32.0, "heat_conv_dx094", "heat_conv_dt456", 456, 456),
 ]
 
 # The interfaces worth quoting, per §3.13's own sensitivity sweep: at x=160 the front
@@ -484,6 +492,93 @@ LADDER_INTERFACES = (215.0, 235.0)
 
 def _pct(new: float, old: float) -> float:
     return 100.0 * (new - old) / old
+
+
+def _slope_table(vals: list[float], steps: list[float]) -> dict:
+    """A ladder quantity's increments, its SLOPES in ``dx``, and consecutive-slope ratios.
+
+    THE STATISTIC, IN ONE PLACE, SO A TEST CAN PIN IT WITHOUT A CACHE. §3.16 published
+    an increment RATIO and could, because its two rungs were equally spaced in ``dx``.
+    §3.17's rung halves the step, and over unequal steps a raw increment ratio has a
+    different null at every rung (``h_new/h_old``) — so the same number would mean two
+    things in one table. That is §3.16's own "apply a rule to BOTH SIDES" defect.
+
+    If the discretisation error is first order, ``value(h) = value* + C*h`` and a rung's
+    effect against the shipped grid is ``e(h) = C*(h - h_shipped)`` — LINEAR in ``h``.
+    So ``increment/step`` recovers ``C`` at any spacing, and consecutive slopes have a
+    null of 1.00 everywhere. Over EQUAL steps the step cancels and the slope ratio is
+    identically the increment ratio, which is what makes this a change of convention
+    rather than of answer: §3.16's 0.35 / 0.10 / 0.65 are reproduced exactly.
+
+    ``ratios`` carries ``None`` where the denominator is not a reading — see the
+    near-zero-denominator note in ``_dt_ladder``.
+    """
+    incs = [vals[k] - vals[k - 1] for k in range(1, len(vals))]
+    slopes = [inc / s for inc, s in zip(incs, steps)]
+    ratios = []
+    for k in range(1, len(slopes)):
+        if abs(incs[k - 1]) < 0.10 * abs(vals[k - 1]):
+            ratios.append(None)
+        else:
+            ratios.append(abs(slopes[k] / slopes[k - 1]))
+    return {"incs": incs, "slopes": slopes, "ratios": ratios}
+
+
+SETTLING_THRESHOLD = 0.5
+
+
+def _settling_verdict(vals: list[float], slopes: list[float], ratios: list,
+                      order: list[float]) -> tuple[str, str]:
+    """Is this ladder quantity settling, and which way is it moving? Two questions.
+
+    Kept apart because they fail independently and one of them survives when the other
+    does not: a ratio can be WITHHELD as noise-amplified while the sequence's direction
+    is still perfectly readable off the increments' signs.
+
+    A WITHHELD RATIO IS NOT A SMALL RATIO. The first draft let ``None`` fall through a
+    ``>= 0.5`` comparison as NaN — which is False — and printed SETTLING for a quantity
+    whose ratio had been suppressed as unreadable two lines earlier. That is the
+    strongest form of [[instruments-that-cannot-see-the-failure]]: a verdict computed
+    from evidence the same function had already declared inadmissible.
+
+    §3.16 saw one reversal and correctly refused to call it a turnover ("one reversal
+    is one point"). Whether it REPEATS is a property of the sequence, not of any ratio,
+    so it is reported for every quantity either way.
+    """
+    seq = ", ".join(f"{s:+.1f}" for s in slopes)
+    r = ratios[-1] if ratios else None
+    if r is None:
+        verdict = (f"RATIO WITHHELD — slopes (pp/mm) {seq}, but the denominator "
+                   "increment\n        is under 10 % of the value it moved, so the "
+                   "latest ratio is noise\n        amplified rather than a reading. "
+                   "NO settling verdict is available;\n        what is readable is "
+                   "the direction line below.")
+    elif len(slopes) > 1 and slopes[-1] * slopes[-2] < 0:
+        verdict = (f"SLOPE REVERSED at the newest rung (pp/mm: {seq}).\n        "
+                   "A reversal is a turnover only once it repeats; with one of them\n"
+                   "        *stopped growing* is claimed and *turned over* is only "
+                   "named\n        — the posture §3.14 took on its own saturating dt "
+                   "term.")
+    elif r >= SETTLING_THRESHOLD:
+        verdict = (f"STILL NOT SETTLING — slopes (pp/mm) {seq}, latest ratio "
+                   f"{r:.2f}\n        against a null of 1.00. The decay is slower than "
+                   "the rungs below\n        it could show. Do not quote this quantity "
+                   "at any resolution here.")
+    else:
+        verdict = f"SETTLING — slopes (pp/mm) {seq}, latest ratio {r:.2f}."
+
+    incs = [vals[k] - vals[k - 1] for k in range(1, len(vals))]
+    shown = ", ".join(f"{v:+.2f}" for v in incs)
+    flips = [k for k in range(1, len(incs)) if incs[k] * incs[k - 1] < 0]
+    if not flips:
+        direction = f"MONOTONE across all {len(incs)} increments ({shown} pp)."
+    else:
+        after = len(incs) - flips[-1]
+        direction = (f"reversed at rung {int(order[flips[-1] + 1])}c ({shown} pp), and "
+                     f"has held that sign for\n              {after} increment(s) since "
+                     "— " + ("TURNED OVER, the repeat §3.16 said it needed."
+                             if after >= 2 else "one reversal is still one point."))
+    return verdict, direction
 
 
 def _rung_delta(dx_arm: dict, dt_arm: dict, base: dict, faces) -> list[float]:
@@ -513,10 +608,24 @@ def _dt_ladder(caches: Path) -> int:
     print("  §3.13 closed with a specific unfinished statement — '16 cells is NOT")
     print("  enough for the residual state' — because residual velocity and")
     print("  mass-through were still GROWING in absolute terms at 16 cells, with two")
-    print("  rungs to read increments from. This mode adds a third at 24 cells.")
+    print("  rungs to read increments from. §3.16 added a third at 24 cells and split")
+    print("  the claim in two; §3.17 adds a fourth at 32, where the `dx` step HALVES")
+    print("  and the statistic has to stop being an increment ratio to survive it.")
     print("  Every rung differences a `dx` arm against a dt PARTNER at the SHIPPED")
     print("  grid running the same substep count, so each row is a MEASURED dx-only")
     print("  effect rather than the difference of two opposing errors (§3.13's rule).\n")
+
+    # Name what is missing rather than dying on the first `open`. A rung is TWO bakes
+    # and the expensive one can be hours; a reader who baked half the ladder should be
+    # told which half. Refuses either way — a ladder silently one rung short would
+    # publish a settling verdict computed from fewer points than its own prose claims.
+    wanted = [LADDER_BASELINE] + [n for _, dx, dt, *_ in LADDER for n in (dx, dt)]
+    missing = [n for n in dict.fromkeys(wanted) if not (caches / n / "manifest.json").exists()]
+    if missing:
+        print("  !! missing cache(s): " + ", ".join(missing))
+        print("     Every rung of this ladder is a dx arm AND its dt partner; the mode")
+        print("     will not report a shorter ladder than the one it describes.")
+        return 2
 
     arms = {LADDER_BASELINE: measure(caches / LADDER_BASELINE)}
     for cells, dx_cache, dt_cache, dx_sub, dt_sub in LADDER:
@@ -593,38 +702,96 @@ def _dt_ladder(caches: Path) -> int:
     # THE POINT OF THE THIRD RUNG. With two rungs an increment can be computed but not
     # read: there is one of them, and one number cannot say whether a sequence is
     # settling. Three rungs give two increments and a ratio between them.
+    #
+    # AND THE POINT OF THE FOURTH — plus the trap it walks into. 32 cells is dx =
+    # 0.09375, which is HALF the step the 16- and 24-cell rungs were spaced by. §3.16
+    # read its ratio against a null of 1.00 and said so explicitly ("over equal steps a
+    # first-order error gives 1.00"); the same first-order error over a half step gives
+    # 0.50. Publishing a new ratio against the old null would be one statistic under
+    # two conventions — the exact defect §3.16 corrected in §3.15's headline, so it is
+    # applied here rather than restated.
+    #
+    # THE FIX IS THE SLOPE, not a different ladder. If the underlying discretisation
+    # error is first order, value(h) = value* + C*h, so a rung's effect (measured
+    # against the SHIPPED grid at matched dt) is e(h) = C*(h - h_shipped): LINEAR in h
+    # with slope C. Then increment/step = C is constant at ANY spacing, and the ratio
+    # of consecutive slopes has a null of 1.00 at every rung, equal steps or not.
+    # Where the steps ARE equal the slope ratio is identically the increment ratio, so
+    # §3.16's 0.65 is REPRODUCED by the new column rather than superseded by it — which
+    # is what makes this a change of convention and not a change of answer.
     names = [f"x={x:.0f}" for x in faces] + ["v_resid", "through"]
     order = [c for c, *_ in LADDER]
     dxs = [arms[dx_cache]["dx"] for _, dx_cache, *_ in LADDER]
     steps = [dxs[k - 1] - dxs[k] for k in range(1, len(dxs))]
-    print("\nIS IT SETTLING? — the increment between rungs, and the ratio BETWEEN")
-    print("INCREMENTS. The two rungs are EQUALLY SPACED IN dx "
-          f"({steps[0]:.4f} and {steps[1]:.4f} mm),")
-    print("which is what makes their ratio readable at all: over equal steps a")
-    print("first-order error gives 1.00, and anything well under 1 is decaying faster.")
+    equal = max(steps) - min(steps) < 1e-9
+    print("\nIS IT SETTLING? — the increment between rungs, DIVIDED BY THE dx STEP THAT")
+    print("PRODUCED IT. The rungs are spaced "
+          + ", ".join(f"{s:.5f}" for s in steps) + " mm in dx"
+          + (", equal throughout." if equal else " — NOT EQUAL."))
+    if not equal:
+        print("A raw increment ratio therefore has a DIFFERENT NULL AT EVERY RUNG (1.00")
+        print("where the steps are equal, h_new/h_old where they are not), and quoting")
+        print("one against another compares two conventions. The published statistic is")
+        print("the SLOPE, increment/step in pp per mm of dx: a first-order error gives a")
+        print("CONSTANT slope at any spacing, and consecutive slopes have a null of 1.00.")
+        print("Over equal steps the slope ratio IS the increment ratio, so §3.16's")
+        print("figures are reproduced by this column, not replaced by it.")
     print(f"  {'quantity':>10}  " + "  ".join(f"{int(c):>7}c" for c in order)
-          + "   " + "  ".join(f"{'d' + str(int(b)) + 'c':>8}" for b in order[1:])
-          + "   d24/d16")
+          + "  | " + "  ".join(f"{'s' + str(int(b)) + 'c':>8}" for b in order[1:])
+          + "  | " + "  ".join(f"{'r' + str(int(b)) + 'c':>6}" for b in order[2:]))
     suppressed = False
+    slopes_by_q, ratios_by_q, incs_by_q = {}, {}, {}
     for i, q in enumerate(names):
         vals = [eff[c][i] for c in order]
-        incs = [vals[k] - vals[k - 1] for k in range(1, len(vals))]
         # A RATIO WITH A NEAR-ZERO DENOMINATOR IS NOT A SMALL RATIO, IT IS NOISE
         # AMPLIFIED. Two consecutive rungs that happen to land on top of each other
         # make the next ratio arbitrarily large, and printing it beside the real ones
         # invites reading a divergence off an accident. Withheld, loudly, rather than
         # printed with a caveat nobody reads — the same posture §3.13 took at x=160.
-        if abs(incs[0]) < 0.10 * abs(vals[0]):
-            cell, suppressed = "   (—)", True
-        else:
-            cell = f"{abs(incs[1] / incs[0]):6.2f}"
-            if incs[1] * incs[0] < 0:
-                cell += "  SIGN FLIP"
+        # The test is on the INCREMENT against the value it moved, so it does not
+        # change meaning when the increment is rescaled into a slope.
+        tab = _slope_table(vals, steps)
+        slopes, ratios = tab["slopes"], tab["ratios"]
+        slopes_by_q[q], ratios_by_q[q] = slopes, ratios
+        incs_by_q[q] = tab["incs"]
+        cells = []
+        for k, r in enumerate(ratios, start=1):
+            if r is None:
+                cells.append("   (—)")
+                suppressed = True
+            else:
+                cells.append(f"{r:6.2f}" + ("*" if slopes[k] * slopes[k - 1] < 0 else " "))
         print(f"  {q:>10}  " + "  ".join(f"{v:+7.2f} " for v in vals)
-              + "   " + "  ".join(f"{v:+8.2f}" for v in incs) + "   " + cell)
+              + " | " + "  ".join(f"{v:+8.1f}" for v in slopes)
+              + " | " + " ".join(cells))
     if suppressed:
-        print("  (—) the first increment is under 10 % of the 12-cell value, so the")
+        print("  (—) that rung's increment is under 10 % of the value it moved, so the")
         print("      ratio is a near-zero denominator rather than a reading. Withheld.")
+    print("  (*) marks a slope that reversed sign against the one before it.")
+    print("  Slopes are pp per mm of dx; ratios are consecutive slopes, null 1.00.")
+    if not equal:
+        print("\n  RECONCILIATION with the raw increment ratio §3.16 published, so the two")
+        print("  can be told apart on sight. Each rung's raw-ratio null is h_new/h_old:")
+        for k in range(1, len(steps)):
+            print(f"    r{int(order[k + 1])}c: steps {steps[k - 1]:.5f} -> {steps[k]:.5f} mm, "
+                  f"raw-ratio null {steps[k] / steps[k - 1]:.2f}, slope-ratio null 1.00"
+                  + ("   (identical here)" if abs(steps[k] - steps[k - 1]) < 1e-9 else ""))
+        # AND WHETHER IT ACTUALLY MATTERED, computed rather than asserted. The
+        # verdict block calls a ratio >= 0.5 "not settling", so a rung where the raw
+        # and slope ratios land on opposite sides of 0.5 is one where the OLD
+        # statistic would have published the OPPOSITE conclusion from the same caches.
+        print("  Raw vs slope at the unequal rung, and whether the choice changes the")
+        print("  verdict (the block below calls >= 0.50 'not settling'):")
+        k = len(steps) - 1
+        for q in names:
+            incs, ratios = incs_by_q[q], ratios_by_q[q]
+            if ratios[k - 1] is None:
+                print(f"    {q:>10}  slope ratio withheld — no verdict either way")
+                continue
+            raw = abs(incs[k] / incs[k - 1])
+            flip = (raw >= 0.5) != (ratios[k - 1] >= 0.5)
+            print(f"    {q:>10}  raw {raw:5.2f}  slope {ratios[k - 1]:5.2f}   "
+                  + ("<-- OPPOSITE VERDICTS from the same caches" if flip else "same verdict"))
 
     print("\n  A NOTE ON WHAT §3.13's '0.20 / 0.43 / 0.55' WERE, because they are NOT")
     print("  the column above. With two rungs there is one increment, so the only ratio")
@@ -645,30 +812,20 @@ def _dt_ladder(caches: Path) -> int:
     # data point must not hardcode what that point said.
     print("\n  THE VERDICT ON §3.13's CLOSING CLAIM — '16 cells is NOT enough for the")
     print("  RESIDUAL STATE'. It named two quantities together. They do not agree.")
+    print("  Read on the SLOPE, which is the only column that means the same thing at")
+    print("  every rung of an unequally-spaced ladder.")
     for i, q in enumerate(names):
         if q not in ("v_resid", "through"):
             continue
         vals = [eff[c][i] for c in order]
-        incs = [vals[k] - vals[k - 1] for k in range(1, len(vals))]
-        r = abs(incs[1] / incs[0]) if incs[0] else float("nan")
-        if incs[1] * incs[0] < 0:
-            verdict = (f"STOPPED GROWING — the increment REVERSES ({incs[0]:+.2f} then "
-                       f"{incs[1]:+.2f} pp).\n        §3.13 said this was still growing "
-                       "at 16 cells; at 24 it is not. One\n        reversal is one point, "
-                       "so *stopped growing* is claimed and *turned over*\n        is named "
-                       "— the posture §3.14 took on its own saturating dt term.")
-        elif r >= 0.5:
-            verdict = (f"STILL NOT SETTLING — increments {incs[0]:+.2f} then {incs[1]:+.2f} pp, "
-                       f"ratio {r:.2f} over\n        EQUAL dx steps. §3.13's verdict holds at "
-                       "24 cells and the decay is\n        slower than its two points could "
-                       "show. Do not quote this quantity.")
-        else:
-            verdict = (f"SETTLING — increments {incs[0]:+.2f} then {incs[1]:+.2f} pp, ratio "
-                       f"{r:.2f}.")
+        verdict, direction = _settling_verdict(
+            vals, slopes_by_q[q], ratios_by_q[q], order)
         print(f"    {q:>8}: {verdict}")
+        print(f"    {'':>8}  direction: {direction}")
     print("    So 'the residual state' was one phrase over two quantities that behave")
-    print("    differently, and two rungs could not tell them apart. That is the third")
-    print("    rung's deliverable — NOT a convergence claim for either of them.")
+    print("    differently, and two rungs could not tell them apart. That was the third")
+    print("    rung's deliverable, and the fourth tests whether it survives a rung that")
+    print("    is NOT equally spaced — NOT a convergence claim for either of them.")
 
     print("\n  WHAT THIS STILL CANNOT REACH — unchanged from §3.13, and not narrowed:")
     print("    * the `dx` effect at the SHIPPED arm's 110 substeps. `dt = min(deck_dt,")
@@ -681,12 +838,138 @@ def _dt_ladder(caches: Path) -> int:
     return 0
 
 
+# --- milestone 20: did the CFL breach contaminate the 32-cell rung? ------------
+#
+# `heat_conv_dx094` is the first deck here to breach its CFL audit (1.60x, §3.17). A
+# breach is not a divergence — it is a fraction of the CFL=0.3 safety factor, so 1.60x
+# is a Courant number of 0.48 against a limit near 1 — and the bake is finite with
+# every guard at zero. "Not obviously wrong" is exactly the state that needs a
+# measurement rather than a paragraph.
+#
+# THE PAIR IS dt-ONLY AT FIXED dx, so it needs no partner: it IS the pair. What it can
+# show is whether the breached arm is UNUSUALLY dt-sensitive, which requires a
+# reference — ordinary `dt` error is real and large in this family. The reference rows
+# are the dt-only pairs at the SHIPPED dx over comparable refinement ratios.
+#
+# The floors are stated here rather than chosen after the numbers: §3.13 measured
+# run-to-run scatter on the front-curve percentile readings at <= 0.0024 %, and the
+# repo's aggregate figure floor is 0.11 % (residual velocity, mass-through).
+BREACH_ARM, BREACH_CONTROL = "heat_conv_dx094", "heat_conv_dx094_dt770"
+BREACH_REFERENCE = [
+    ("heat_vs_composite", "heat_conv_dt_mid", 110, 171),
+    ("heat_conv_dt_fine", "heat_conv_dt342", 230, 342),
+    ("heat_conv_dt342", "heat_conv_dt456", 342, 456),
+]
+FLOOR_CURVE, FLOOR_AGGREGATE = 0.0024, 0.11
+
+
+def _dt_pair(coarse: dict, fine: dict, faces) -> list[float]:
+    """A dt-only pair's effect: the finer arm against the coarser, in percent."""
+    out = [_pct(arrival_us(fine, x), arrival_us(coarse, x)) for x in faces]
+    out.append(_pct(fine["residual_v_matched"], coarse["residual_v_matched"]))
+    out.append(_pct(fine["frac_through_matched"], coarse["frac_through_matched"]))
+    return out
+
+
+def _breach_control(caches: Path) -> int:
+    print("DID THE CFL BREACH CONTAMINATE THE 32-CELL RUNG? (PHYSICS §3.17)")
+    print("  `heat_conv_dx094` breached its audit 1.60x. This mode differences it")
+    print("  against a same-`dx`, finer-`dt` control and puts that beside the SAME")
+    print("  family's known `dt` sensitivity at the shipped grid, because ordinary")
+    print("  `dt` error here is several percent and a bare difference proves nothing.")
+    print("  A dt-only pair measures a DIFFERENCE, never a truth: this cannot show the")
+    print("  arm is correct, only whether it responds like its own family.\n")
+
+    wanted = [BREACH_ARM, BREACH_CONTROL] + [n for a, b, *_ in BREACH_REFERENCE
+                                             for n in (a, b)]
+    missing = [n for n in dict.fromkeys(wanted)
+               if not (caches / n / "manifest.json").exists()]
+    if missing:
+        print("  !! missing cache(s): " + ", ".join(missing))
+        return 2
+
+    arms = {n: measure(caches / n) for n in dict.fromkeys(wanted)}
+    for r in arms.values():
+        _report_arm(r)
+
+    ref = arms[BREACH_ARM]["faces"]
+    faces = []
+    for x in LADDER_INTERFACES:
+        near = [f for f in ref if abs(x - f) < 0.5]
+        if not near:
+            print(f"\n  !! x={x} is not an interface of this stack")
+            return 2
+        faces.append(near[0])
+
+    hdr = "".join(f"  x={x:<7.1f}" for x in faces)
+    print(f"\nTHE dt-ONLY EFFECT (finer arm against coarser, same `dx` in every row)")
+    print(f"  {'pair':>34} {'ratio':>7}  {hdr}   {'v_resid':>10} {'through':>10}")
+    rows = []
+    for coarse, fine, cs, fs in BREACH_REFERENCE:
+        row = _dt_pair(arms[coarse], arms[fine], faces)
+        rows.append((f"{cs}->{fs} @ dx={arms[coarse]['dx']:.4f}", fs / cs, row))
+    control = _dt_pair(arms[BREACH_ARM], arms[BREACH_CONTROL], faces)
+    for label, ratio, row in rows:
+        print(f"  {label:>34} {ratio:>6.2f}x  "
+              + "".join(f"  {v:+7.2f} % " for v in row[:len(faces)])
+              + f"   {row[-2]:+9.2f} % {row[-1]:+9.2f} %")
+    control_label = f"456->770 @ dx={arms[BREACH_ARM]['dx']:.4f}"
+    print(f"  {control_label:>34} {770 / 456:>6.2f}x  "
+          + "".join(f"  {v:+7.2f} % " for v in control[:len(faces)])
+          + f"   {control[-2]:+9.2f} % {control[-1]:+9.2f} %   <-- THE BREACHED ARM")
+
+    # THE VERDICT, COMPUTED. "Unusually sensitive" needs a number: the control is
+    # compared against the LARGEST reference row per quantity, scaled to a common
+    # refinement ratio, because the reference ratios are not identical to the
+    # control's. Scaling assumes the dt error is roughly linear in the refinement,
+    # which §3.14 measured SATURATING — so this scaling is CONSERVATIVE (it inflates
+    # the reference's expectation, making an indictment harder, not easier).
+    names = [f"x={x:.0f}" for x in faces] + ["v_resid", "through"]
+    print("\nIS THE BREACHED ARM UNUSUALLY dt-SENSITIVE? — the control against the")
+    print("largest reference row for the same quantity, each scaled to the control's")
+    print(f"{770 / 456:.2f}x refinement. Scaling linearly OVERSTATES the reference")
+    print("(§3.14 measured the dt term saturating), so it is the conservative test.")
+    print(f"  {'quantity':>10} {'control':>10} {'worst ref':>11} {'ref scaled':>11} "
+          f"{'control/ref':>12}   floor")
+    flagged = []
+    for i, q in enumerate(names):
+        floor = FLOOR_AGGREGATE if q in ("v_resid", "through") else FLOOR_CURVE
+        worst, worst_ratio = 0.0, 1.0
+        for _, ratio, row in rows:
+            if abs(row[i]) > abs(worst):
+                worst, worst_ratio = row[i], ratio
+        scaled = worst * (770 / 456 - 1.0) / (worst_ratio - 1.0)
+        rel = abs(control[i]) / abs(scaled) if scaled else float("inf")
+        note = "" if abs(control[i]) > floor else "  (under the floor — not a reading)"
+        if abs(control[i]) > floor and rel > 2.0:
+            flagged.append(q)
+            note = "  <-- MORE THAN 2x ITS FAMILY"
+        print(f"  {q:>10} {control[i]:+10.2f} {worst:+11.2f} {scaled:+11.2f} "
+              f"{rel:>12.2f}   {floor:.4f} %{note}")
+    print()
+    if flagged:
+        print("  VERDICT: " + ", ".join(flagged) + " respond to `dt` more than twice as")
+        print("  strongly as this family does at the shipped grid. The 32-cell rung's")
+        print("  reading of those quantities is NOT safe to quote (§3.17).")
+    else:
+        print("  VERDICT: every quantity moves within twice its family's own `dt`")
+        print("  sensitivity, so the 1.60x breach is behaving like ordinary `dt` error")
+        print("  rather than like an instability. That is evidence the rung is")
+        print("  quotable; it is NOT evidence that the arm is converged, which is a")
+        print("  different question and the ladder's own answer to it is 'no'.")
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("cache_dirs", type=Path, nargs="*")
     ap.add_argument("--family", action="store_true", help="the heat_conv_* ladder")
     ap.add_argument("--dt-ladder", action="store_true",
-                    help="milestone 19: the matched-dt dx ladder, 12 / 16 / 24 cells")
+                    help="the matched-dt dx ladder, 12 / 16 / 24 / 32 cells")
+    ap.add_argument("--breach-control", action="store_true",
+                    help="milestone 20: did the 32-cell arm's 1.60x CFL breach move "
+                         "its readings? A dt-only pair at fixed dx, against the same "
+                         "family's known dt sensitivity")
     ap.add_argument("--caches", type=Path, default=Path("caches"))
     ap.add_argument("--sensitivity", action="store_true", help="re-read at three percentiles")
     ap.add_argument("--plot", type=Path, help="write the front-vs-time curves to a PNG")
@@ -694,6 +977,9 @@ def main(argv=None) -> int:
 
     if args.dt_ladder:
         return _dt_ladder(args.caches)
+
+    if args.breach_control:
+        return _breach_control(args.caches)
 
     if args.family:
         dirs = [args.caches / d for d in FAMILY]

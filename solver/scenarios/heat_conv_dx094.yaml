@@ -1,0 +1,128 @@
+# Jet GRID-RESOLUTION study on the SHIPPED composite deck — the 32-cell arm,
+# milestone 20. Read `heat_conv_dx250.yaml`'s header first: it carries the family's
+# rationale, the ladder, and why the metric is an arrival-time CURVE rather than
+# depth at the end of a window this stack perforates. Then `heat_conv_dx125.yaml`'s,
+# which is the rung immediately below this one.
+#
+# WHY A FIFTH GRID. Milestone 19 answered §3.13's "16 cells is NOT enough for the
+# RESIDUAL STATE" by splitting it, and only half of it closed (PHYSICS §3.16):
+#
+#     residual velocity  +31.6 -> +45.1 -> +43.8 %   the increment REVERSES
+#     mass-through       -23.3 -> -36.0 -> -44.2 %   still growing, ratio 0.65
+#
+# One reversal closed the velocity half. The mass-through half did not: its
+# increments decay at 0.65 over equal `dx` steps, which is slower than the
+# two-rung view had suggested, and §3.16 explicitly says "never quote mass-through
+# at any resolution here". This deck is the fourth rung of that ladder.
+#
+#   3 mm jet, grid_resolution  768 -> dx = 0.3906 ->  7.5 cells  (`heat_vs_composite`)
+#   3 mm jet, grid_resolution 1200 -> dx = 0.2500 -> 12.0 cells  (`heat_conv_dx250`)
+#   3 mm jet, grid_resolution 1600 -> dx = 0.1875 -> 16.0 cells  (`heat_conv_dx188`)
+#   3 mm jet, grid_resolution 2400 -> dx = 0.1250 -> 24.0 cells  (`heat_conv_dx125`)
+#   3 mm jet, grid_resolution 3200 -> dx = 0.0938 -> 32.0 cells  (this deck)
+#
+# The cells figure is the SEEDED one, not `diameter/dx`: `spacing = dx/2` at
+# `particles_per_cell: 4`, so the lattice pitch here is 0.046875 and `_fill_rect`
+# lays exactly 64 rows across a 3 mm jet = 32 cells. §3.13 caught that arithmetic
+# disagreeing with the seed once (15 rows = 7.5 cells where the domain implies
+# 7.68), so the tool reads the lattice and this comment is not the authority.
+#
+# ⚠️ THIS RUNG'S `dx` STEP IS HALF THE PREVIOUS TWO, AND THAT CHANGES THE
+# STATISTIC. The ladder's steps are 0.1406, 0.0625, 0.0625, **0.03125** mm.
+# §3.16's increment-over-increment ratio was readable precisely BECAUSE the 16-
+# and 24-cell rungs were equally spaced ("over equal steps a first-order error
+# gives 1.00"); here the same first-order error gives **0.50**, so quoting a new
+# ratio against the old null would compare two conventions — the exact defect M19
+# corrected in M18's headline (§3.16, "apply a rule to BOTH SIDES"). The tool
+# therefore publishes **increment ÷ step**, a finite-difference slope in `dx` that
+# is step-agnostic, and prints each rung's own ratio null beside the ratio so
+# §3.16's 0.65 stays reconcilable. Decided BEFORE this bake, not after seeing it.
+#
+# 48 CELLS WOULD HAVE RESTORED EQUAL SPACING AND WAS REJECTED. dx = 0.0625 keeps
+# the 0.03125 step twice over, but the CFL budget is the other deliverable here
+# (below) and that arm would be far past it — buying a tidy null by destroying the
+# measurement the milestone exists to take.
+#
+# ITS dt PARTNER IS `heat_conv_dt456`, AND THE PAIRING IS EXACT. `dt` is CFL-bound,
+# so this deck's finer grid drags the clock from 110 to 456 substeps — and §3.13's
+# transferable rule is that refining `dx` and refining `dt` move every metric in
+# OPPOSITE directions, so a lone `dx` arm measures their difference rather than the
+# grid effect. `heat_conv_dt456` holds `grid_resolution` at the shipped 768 and sets
+# a deck `dt` that lands on 456 substeps too, verified through `mpm.plan_substeps`
+# before any GPU. That pair differs in `dx` and in nothing else.
+#
+# THE CFL BUDGET IS A DELIVERABLE, SO THIS DECK RUNS THE SHIPPED P=4 DELIBERATELY.
+# Budget use along this ladder runs 63 -> 66 -> 73 -> **84 %** of `c_max`, and §3.16
+# named a 32-cell arm as where that trend goes looking for `EOS_CFL_P_MARGIN`'s
+# ceiling. Setting a per-deck `cfl_p_margin` here *a priori* would destroy the
+# number this arm is baked to read. It is a PREDICTION and `bake` measures whether
+# it held (§3.11) — so the audit line on this bake is the measurement. Two things
+# to know if it breaches:
+#
+#   * A BREACH IS NOT A DIVERGENCE. The ratio is a fraction of the CFL=0.3 SAFETY
+#     FACTOR, not of the stability limit: 105 % is Courant 0.315 against a limit
+#     near 1 (§3.11). Report it with that arithmetic; do not engineer it away.
+#   * THE REMEDY IS A PER-DECK `cfl_p_margin`, NEVER A BIGGER GLOBAL P. The global
+#     ~4.05 ceiling is `era_filler`'s (it designs to J=0.5504 against a guard switch
+#     at 0.5500) and `era_filler` is not in this deck. This deck's OWN ceiling is
+#     P≈11.5, where `copper_jet`'s design J crosses its J_sw=0.3956. That gap is the
+#     whole argument for the field being per-deck.
+#
+# ⚠️ IT BREACHED, BY 1.60x — AND THE REMEDY IS ~85 % CONSUMED AT THE FIRST RUNG THAT
+# NEEDS IT. Measured: live `copper_jet` reached **J=0.3981, which is 0.0025 above its
+# own MG pole switch (0.3956)**, giving c_eff=102797 against the c_max=64101 this deck
+# designed for. Covering that needs **P≈10** — against this deck's ceiling of 11.5.
+# So the sentence above ("this deck's own ceiling is far above the global one") is
+# true and no longer comfortable: the headroom against what this deck now DEMANDS is
+# 1.15x, not 2.9x. The transferable finding is not that the budget trend continued,
+# it is that **spatial refinement drives the jet tip into the pole guard**, and a
+# 48-cell rung is therefore not reachable under this sizing scheme at all.
+#
+# The bake is finite and the guards agree: J floor 0, resolution guard 0, no NaN, the
+# `e<0` clamp firing only at roundoff (5.8e-09 of the bake's own e_max). A breach is
+# a fraction of the CFL=0.3 SAFETY FACTOR, not of the stability limit — 1.60x is a
+# Courant number of 0.48 against a limit near 1 (§3.11). Whether that CONTAMINATED
+# the readings is not an argument, it is a measurement: `heat_conv_dx094_dt770` is the
+# control, same `dx`, finer `dt`, nothing else.
+#
+# 32 CELLS IS NOT A CONVERGENCE CLAIM, and must not be written as one. The
+# deliverable is a fourth point on a ladder whose slope can then be read; if
+# mass-through is still growing here, that is the finding, and §3.4's refusal to
+# quote this deck's depth stands on firmer ground rather than being retired.
+#
+# THE WINDOW IS 34 us, MATCHING ITS PARTNER — see `heat_conv_dt456`'s header for
+# the sizing, which is driven by the partner (a finer `dt` breaks out LATER; a
+# finer `dx` breaks out EARLIER). `heat_conv_dx125` was left at the family's 30 us
+# because it had 2.10 us of margin; this arm's own margin at 30 us would be ~1.2 us
+# on a NON-MONOTONE `dx` breakout sequence (24.093 -> 22.892 -> 23.044 -> 23.697),
+# and a residual withheld for 1 us costs the bake its reason to exist. Matching the
+# partner costs ~13 % more GPU and ~1.5 GB, and makes the rung share a window.
+# `frame_dt` is UNCHANGED at the repo's uniform 2.0e-7 s (3.4e-5 / 170), so this is
+# a recording length and not a second variable (§3.16).
+#
+# EVERYTHING ELSE IS IDENTICAL to `heat_vs_composite`: one variable.
+name: heat_conv_dx094
+
+domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 120 }   # mm — identical to the shipped deck
+
+projectile:
+  kind: heat_jet
+  material: copper_jet
+  length: 120.0
+  diameter: 3.0
+  velocity: 7000
+  tail_velocity: 2000
+  angle_deg: 0.0
+  nose_shape: blunt
+
+armor:
+  - { material: rha,     thickness: 10.0 }                 # front plate   x=150..160
+  - { material: ceramic, thickness: 25.0, standoff: 30.0 } # spaced ceramic x=190..215
+  - { material: rha,     thickness: 20.0 }                 # backing plate x=215..235
+
+solver:
+  grid_resolution: 3200   # THE VARIABLE: dx = 300/3200 = 0.09375 mm -> 32 cells across the jet
+  particles_per_cell: 4
+  dt: 5.0e-8          # far above the CFL bound, as on every arm here; CFL wins the min
+  total_time: 3.4e-5
+  frame_count: 170    # frame_dt = 2.0e-7 s — the shipped cadence, window matched to the partner

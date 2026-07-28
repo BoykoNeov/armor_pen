@@ -1,0 +1,93 @@
+# DID THE CFL BREACH CONTAMINATE THE 32-CELL RUNG? — the control, milestone 20.
+# Scenarios are DATA, not code (CLAUDE.md §9). Representative / illustrative
+# order-of-magnitude values, not any real system (CLAUDE.md §10).
+#
+# WHY THIS EXISTS. `heat_conv_dx094` is the first deck in this repo to BREACH the CFL
+# audit: sized for c_max=64101 mm/ms at the shipped P=4, its live material reached
+# c_eff=102797 — **1.60x the budget**, where the previous record along this ladder was
+# 84 % of it. §3.16 predicted the 32-cell arm was where the trend would go; it did not
+# predict it would go this far past.
+#
+# A BREACH IS NOT A DIVERGENCE, and the arithmetic matters before anything else. The
+# audit ratio is a fraction of the CFL=0.3 SAFETY FACTOR, not of the stability limit
+# (§3.11), so 1.60x is a Courant number of **0.48** against a limit near 1. The bake
+# is finite: J floor 0, resolution guard 0, no NaN, and the `e<0` clamp fires only at
+# roundoff (5.8e-09 of the bake's own e_max). So the arm is not obviously wrong — and
+# "not obviously wrong" is exactly the state that needs a measurement rather than a
+# paragraph.
+#
+# THIS DECK IS THAT MEASUREMENT: same `dx`, finer `dt`, nothing else. A dt-only
+# comparison at fixed `dx` needs no partner — it IS the pair. If the readings move,
+# the 32-cell rung is contaminated and the ladder's newest row cannot be quoted; if
+# they do not, the breach is benign and MEASURED to be so.
+#
+# IT RUNS THE SUBSTEP A PER-DECK `cfl_p_margin: 10` WOULD HAVE PRODUCED, REACHED
+# THROUGH THE DECK dt. §3.11 is explicit: isolate with the deck `dt`, NEVER with the
+# margin, because the margin works through the EOS design state and pushing the design
+# `J` down re-creates milestone 14's own defect. So the margin was used only as a
+# HOST-SIDE CALCULATOR — `cfl_p_margin: 10` sizes to 770 substeps (c_max=108280, which
+# clears the measured c_eff=102797 with 5 % to spare) — and the deck `dt` below then
+# lands on that same 770. `bake` takes `min(deck_dt, cfl_dt)`, so the deck dt simply
+# wins and no design state moves.
+#
+#   ceil band for 770 substeps, bisected through `mpm.plan_substeps` itself:
+#   [2.597403e-10, 2.600780e-10] s — **0.130 % wide**, and the value below sits at
+#   50 % of it. Verified with `--dry-run` before the GPU (§3.14's gate).
+#
+# ⚠️ THE AUDIT LINE WILL STILL SAY "BREACHED" ON THIS DECK, AND IT WILL BE WRONG.
+# The audit compares SPEEDS (`c_eff` vs `c_max`), not Courant numbers, and `c_max` is
+# the speed the CFL bound was sized from — not the speed the substep actually used
+# implies. On a deck-`dt`-bound arm the substep is FINER than the CFL bound, so the
+# real Courant is lower than the ratio printed by the factor `dt/dt_cfl`. Here that
+# factor is 0.59, so a printed 1.6x is a real Courant near 0.28. Read the audit's
+# ratio as a speed ratio on this arm, and see §3.17.
+#
+# WHAT THIS CONTROL CAN AND CANNOT SHOW — written down BEFORE the bake was read, so
+# the threshold is not chosen after the number. A dt-only pair measures a DIFFERENCE,
+# never a truth: it cannot show the 32-cell arm is "correct".
+#
+#   * It CAN show whether that arm is unusually `dt`-sensitive. Ordinary `dt`
+#     discretisation error is real and known here — §3.13 measured breakout at the
+#     SHIPPED `dx` moving +2.42 % over a 1.55x refinement (110 -> 171 substeps) and
+#     +4.55 % over 2.09x (110 -> 230). This control is a 1.69x refinement, so a few
+#     percent is the EXPECTED reading and is not evidence of anything. What would
+#     indict the breach is a response much larger than that, or an erratic one.
+#   * THE FLOOR, stated in advance: §3.13 measured run-to-run scatter on this family's
+#     front-curve percentile readings at **<= 0.0024 %**, and the repo's aggregate
+#     figure floor is **0.11 %** (residual velocity, mass-through). A difference under
+#     those is not a reading in either direction.
+#
+# THE WINDOW IS 34 us, MATCHING `heat_conv_dx094`, and it has to be: a finer `dt`
+# breaks out LATER (§3.13), so the arm this deck is differenced against is the one
+# with the EARLIER breakout. `frame_dt` is unchanged at the repo's uniform 2.0e-7 s
+# (3.4e-5 / 170), so the window is a recording length and not a second variable.
+#
+# EVERYTHING ELSE IS IDENTICAL to `heat_conv_dx094`: one variable, the clock.
+name: heat_conv_dx094_dt770
+
+domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 120 }   # mm — identical to the shipped deck
+
+projectile:
+  kind: heat_jet
+  material: copper_jet
+  length: 120.0
+  diameter: 3.0
+  velocity: 7000
+  tail_velocity: 2000
+  angle_deg: 0.0
+  nose_shape: blunt
+
+armor:
+  - { material: rha,     thickness: 10.0 }                 # front plate   x=150..160
+  - { material: ceramic, thickness: 25.0, standoff: 30.0 } # spaced ceramic x=190..215
+  - { material: rha,     thickness: 20.0 }                 # backing plate x=215..235
+
+solver:
+  grid_resolution: 3200   # UNCHANGED from `heat_conv_dx094` — dx = 0.09375 mm, 32 cells
+  particles_per_cell: 4
+  # THE VARIABLE. Below the CFL bound (4.388e-7 ms here), so `min(deck_dt, cfl_dt)`
+  # takes this and the bake runs 770 substeps/frame instead of 456. NOT a
+  # `cfl_p_margin` — see the header. Mid-band of the 0.130 % ceil window.
+  dt: 2.5991e-10
+  total_time: 3.4e-5
+  frame_count: 170    # frame_dt = 2.0e-7 s — matched to `heat_conv_dx094`

@@ -1,0 +1,97 @@
+# The TIMESTEP partner for the 32-cell arm — milestone 20.
+# Scenarios are DATA, not code (CLAUDE.md §9). Representative / illustrative
+# order-of-magnitude values, not any real system (CLAUDE.md §10).
+#
+# WHY THIS EXISTS. Read `heat_conv_dt_fine.yaml`'s header first — it carries the
+# family's rationale in full. In one line: the substep is CFL-bound, so refining
+# `grid_resolution` refines the CLOCK with it, and §3.13 measured those two
+# refinements moving every metric in OPPOSITE directions. A lone `dx` arm therefore
+# reports the DIFFERENCE OF TWO OPPOSING ERRORS, not the grid effect. The fix is one
+# substep-matched `dt` PARTNER per `dx` arm. This deck is `heat_conv_dx094`'s.
+#
+#   grid_resolution  768,  110 substeps -> `heat_vs_composite`  (the shipped arm)
+#   grid_resolution  768,  171 substeps -> `heat_conv_dt_mid`   (dt alone)
+#   grid_resolution  768,  230 substeps -> `heat_conv_dt_fine`  (dt alone)
+#   grid_resolution  768,  342 substeps -> `heat_conv_dt342`    (dt alone)
+#   grid_resolution  768,  456 substeps -> THIS DECK            (dt alone)
+#   grid_resolution 1200,  171 substeps -> `heat_conv_dx250`    (dx AND dt)
+#   grid_resolution 1600,  228 substeps -> `heat_conv_dx188`    (dx AND dt)
+#   grid_resolution 2400,  342 substeps -> `heat_conv_dx125`    (dx AND dt)
+#   grid_resolution 3200,  456 substeps -> `heat_conv_dx094`    (dx AND dt)
+#
+# THE PAIRING IS EXACT — the family's second exact pair, after M19's 342. Both decks
+# run dt = 4.385965e-07 ms, bit-identically, and `c_max` is `dx`-INDEPENDENT on this
+# family (64101 mm/ms on every arm, §3.13's by-product), which is why the CFL bound
+# scales as `dt ∝ dx` and a round grid ratio lands on a round substep ratio:
+# 3200/2400 = 4/3 and 456/342 = 4/3 exactly.
+#
+# THE ceil BAND WAS BISECTED THROUGH THE REAL SIZING PATH, not nudged. `substeps =
+# ceil(frame_dt / dt)`, so only a narrow window of deck `dt` lands on 456: measured
+# by bisecting `mpm.plan_substeps` itself, it is [4.385965e-10, 4.395604e-10] s,
+# **0.220 % wide**. M19 assumed a 0.5 % nudge would stay inside a band and went red,
+# so the band is measured rather than estimated. The value below sits at 50 % of it,
+# and `--dry-run` confirms 456 BEFORE any GPU — which is the gate §3.14 established.
+#
+# ISOLATE WITH THE DECK dt, NEVER WITH `cfl_p_margin`. `bake` takes
+# `min(deck_dt, cfl_dt)`, so a deck dt below the CFL bound simply wins and nothing
+# else moves. The margin instead works through the EOS design state, and PHYSICS
+# §3.11 is explicit that pushing the design `J` down re-creates milestone 14's own
+# defect (the bound gets read off the pole guard's extrapolated backstop). Do not
+# "fix" this deck by reaching for the margin.
+#
+# THE WINDOW IS 34 us, AS `heat_conv_dt342`'s IS, AND HERE ITS dx PARTNER MATCHES IT.
+# `frame_dt` is unchanged at the repo's uniform 2.0e-7 s (3.4e-5 / 170), the substep
+# is unchanged at 456, and every quantity `tools/measure_jet_grid.py` reports is read
+# off the penetration-front CURVE or at a matched elapsed time after each arm's OWN
+# breakout. A window is a recording length (§3.16).
+#
+# ⚠️ THE SIZING IS WEAKER EVIDENCE THAN M19's, AND SAYING SO IS THE POINT.
+# `heat_conv_dt342` was sized by extrapolating the dt-only breakout sequence and the
+# bake then verified it necessary by 0.166 us. The same sequence is:
+#
+#     110 substeps -> 24.093 us    171 -> 24.675    230 -> 25.190    342 -> 25.966
+#
+# and its slope IS NOT SATURATING — per unit relative `dt` it steepens (-1.63, -3.12,
+# -4.97), so extrapolating it to 456 is an extrapolation of a sequence that has not
+# turned over. Estimates land at 26.4-27.6 us, hence a matched residual (breakout
+# + 4 us) at 30.4-31.6 us. **34 us is chosen because it survives the extrapolation
+# being wrong**, by >= 2.2 us even at the pessimistic end, rather than because the
+# estimate is trusted. Contrast M19, where 30 us would have missed by 0.166 us: the
+# same reasoning, run with a wider stated uncertainty and a bigger margin bought.
+#
+# The far wall is not expected to bind — §1.1.2's clean negative is that nothing in
+# this repo has ever reached `x_hi`, closest approach 37.4 mm (`heat_conv_dx188`) —
+# and M19's first draft claimed a wall constraint that the bakes then falsified, so
+# this one is stated as an expectation to be MEASURED with `tools/measure_wall_contact.py`
+# after the bake, not as a justification for anything.
+#
+# EVERYTHING ELSE IS IDENTICAL to `heat_vs_composite`.
+name: heat_conv_dt456
+
+domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 120 }   # mm — identical to the shipped deck
+
+projectile:
+  kind: heat_jet
+  material: copper_jet
+  length: 120.0
+  diameter: 3.0
+  velocity: 7000
+  tail_velocity: 2000
+  angle_deg: 0.0
+  nose_shape: blunt
+
+armor:
+  - { material: rha,     thickness: 10.0 }                 # front plate   x=150..160
+  - { material: ceramic, thickness: 25.0, standoff: 30.0 } # spaced ceramic x=190..215
+  - { material: rha,     thickness: 20.0 }                 # backing plate x=215..235
+
+solver:
+  grid_resolution: 768   # UNCHANGED from the shipped deck — dx = 0.3906 mm, 7.5 cells
+  particles_per_cell: 4
+  # THE VARIABLE. Below the CFL bound (1.828167e-6 ms here), so `min(deck_dt, cfl_dt)`
+  # takes this and the bake runs 456 substeps/frame instead of 110 — bit-identical to
+  # `heat_conv_dx094`'s CFL-bound substep. At 50 % of the ceil band described above;
+  # verify with `--dry-run` before baking, never after.
+  dt: 4.3908e-10
+  total_time: 3.4e-5
+  frame_count: 170    # frame_dt = 2.0e-7 s — the repo's uniform cadence, longer window
