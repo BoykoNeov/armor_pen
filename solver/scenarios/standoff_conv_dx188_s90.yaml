@@ -16,9 +16,10 @@
 # the jet, because the derivation in PHYSICS §3.8 is DIAMETER-INDEPENDENT:
 #
 #   route 1, refine the grid      3 mm jet, dx = 0.375 (shipped) ->  8 cells
-#                                 3 mm jet, dx = 0.250 (this)    -> 12 cells
+#                                 3 mm jet, dx = 0.250           -> 12 cells
 #                                 3 mm jet, dx = 0.1875          -> 16 cells
-#   route 2, fatten the jet       6 mm jet, dx = 0.375           -> 16 cells
+#   route 2, fatten the jet       4.5 mm jet, dx = 0.375         -> 12 cells  (M19)
+#                                 6 mm jet, dx = 0.375           -> 16 cells
 #
 # Measured mean S90/S0 depth ratio at matched consumed fraction
 # (`python tools/measure_standoff.py`):
@@ -38,6 +39,13 @@
 # then decomposed what remains of the two 16-cell routes' 4.1 % disagreement: ~39 %
 # of it is the TIMESTEP the dx ladder drags along (dt is CFL-bound), ~61 % is not.
 # See PHYSICS §3.8 and §3.14, and the `standoff_conv_dt*` partner decks.
+#
+# !! MILESTONE 19 ADDED THE 12-CELL DIAMETER ROW: 4.5 mm at the shipped dx, pinned to
+# dx250's 513 substeps, reading 1.3674. So each ROUTE is monotone toward the
+# prediction (1.2657 -> 1.4573 -> 1.4968 by dx; 1.2657 -> 1.3674 -> 1.5587 by
+# diameter) but THE TWO ROUTES DISAGREE AT BOTH 12 AND 16 CELLS. Do not read this
+# list as a single sequence in `cells`: `cells` IS diameter/dx, so that would be a
+# scale-invariance assumption, and it fails by 4-9 % (PHYSICS §3.15, §3.16).
 #
 # monotone toward the predicted 1.536, and the two 16-cell configurations land close
 # to each other despite sharing no grid and no jet — so **cells across the jet is the

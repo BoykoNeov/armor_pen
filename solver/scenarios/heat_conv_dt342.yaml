@@ -1,0 +1,90 @@
+# The TIMESTEP partner for the 24-cell arm — milestone 19.
+# Scenarios are DATA, not code (CLAUDE.md §9). Representative / illustrative
+# order-of-magnitude values, not any real system (CLAUDE.md §10).
+#
+# WHY THIS EXISTS. Read `heat_conv_dt_fine.yaml`'s header first — it carries the
+# family's rationale in full. In one line: the substep is CFL-bound, so refining
+# `grid_resolution` refines the CLOCK with it, and §3.13 measured those two
+# refinements moving every metric in OPPOSITE directions. A lone `dx` arm therefore
+# reports the DIFFERENCE OF TWO OPPOSING ERRORS, not the grid effect. The fix is one
+# substep-matched `dt` PARTNER per `dx` arm. This deck is `heat_conv_dx125`'s.
+#
+#   grid_resolution  768,  110 substeps -> `heat_vs_composite`  (the shipped arm)
+#   grid_resolution  768,  171 substeps -> `heat_conv_dt_mid`   (dt alone)
+#   grid_resolution  768,  230 substeps -> `heat_conv_dt_fine`  (dt alone)
+#   grid_resolution  768,  342 substeps -> THIS DECK            (dt alone)
+#   grid_resolution 1200,  171 substeps -> `heat_conv_dx250`    (dx AND dt)
+#   grid_resolution 1600,  228 substeps -> `heat_conv_dx188`    (dx AND dt)
+#   grid_resolution 2400,  342 substeps -> `heat_conv_dx125`    (dx AND dt)
+#
+# THE PAIRING IS EXACT, AND THIS IS THE FIRST TIME IN THIS FAMILY IT IS. `dt_mid`
+# partners the 12-cell arm exactly (171 each), but `dt_fine` partners the 16-cell
+# arm only to within 0.9 % (230 vs 228) — the closest that deck grid allowed. Here
+# both land on 342: dt = 5.847953e-7 ms on this deck and on `heat_conv_dx125`,
+# bit-identically. Verified through `mpm.plan_substeps` BEFORE any GPU, which is
+# the gate §3.14 established, because `ceil` makes the window narrow: any deck dt in
+# [5.847953e-10, 5.865103e-10) s lands on 342 and one that lands on 343 turns a
+# measured pair back into an inference. The value below sits mid-window.
+#
+# ISOLATE WITH THE DECK dt, NEVER WITH `cfl_p_margin`. `bake` takes
+# `min(deck_dt, cfl_dt)`, so a deck dt below the CFL bound simply wins and nothing
+# else moves. The margin instead works through the EOS design state, and PHYSICS
+# §3.11 is explicit that pushing the design `J` down re-creates milestone 14's own
+# defect (the bound gets read off the pole guard's extrapolated backstop). Do not
+# "fix" this deck by reaching for the margin.
+#
+# THE WINDOW IS LONGER HERE — 34 us against the family's 30 — AND THAT IS NOT A
+# SECOND VARIABLE. `frame_dt` is unchanged at the repo's uniform 2.0e-7 s
+# (3.4e-5 / 170 = 2.0e-7), the substep is unchanged at 342, and every quantity
+# `tools/measure_jet_grid.py` reports is read off the penetration-front CURVE:
+# arrival time at each interface, and the residual tip 4 us after THIS ARM'S OWN
+# breakout. None of those depends on how long recording continues afterwards. A
+# window is a recording length.
+#
+# It is longer because the `dt` arms are the ones that need it. §3.13's dt-only rows
+# push breakout at x=235 LATER — +2.42 % at 171 substeps, +4.55 % at 230 — which
+# extrapolates to ~26 us at 342, against a 30 us window that must still contain
+# breakout + 4 us for the matched residual. That margin was ~0 or negative, and a
+# missed residual would cost the deck its entire reason to exist. Sized before
+# baking rather than discovered after.
+#
+# WHY `heat_conv_dx125` WAS NOT EXTENDED TO MATCH. It fails the other way: a finer
+# `dx` breaks out EARLIER (§3.13), so 30 us already holds its whole event with room.
+# Extending it would push its fast residual — the `dx` ladder's residual velocity
+# grows +31.6 % -> +45.1 % — to x ~ 295 mm against the domain's x=300 wall, and
+# PHYSICS §1.1.2's clean negative is that NOTHING in this repo has ever reached
+# `x_hi`. Buying symmetry in a number nobody reads, at the price of a wall artifact
+# in the cache and a documented negative, is a bad trade. The arms differ in window
+# length; the measurements do not depend on it, and the tool now REFUSES to compare
+# the one quantity that does (`depth_end`) across unequal windows.
+#
+# EVERYTHING ELSE IS IDENTICAL to `heat_vs_composite`.
+name: heat_conv_dt342
+
+domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 120 }   # mm — identical to the shipped deck
+
+projectile:
+  kind: heat_jet
+  material: copper_jet
+  length: 120.0
+  diameter: 3.0
+  velocity: 7000
+  tail_velocity: 2000
+  angle_deg: 0.0
+  nose_shape: blunt
+
+armor:
+  - { material: rha,     thickness: 10.0 }                 # front plate   x=150..160
+  - { material: ceramic, thickness: 25.0, standoff: 30.0 } # spaced ceramic x=190..215
+  - { material: rha,     thickness: 20.0 }                 # backing plate x=215..235
+
+solver:
+  grid_resolution: 768   # UNCHANGED from the shipped deck — dx = 0.3906 mm, 7.5 cells
+  particles_per_cell: 4
+  # THE VARIABLE. Below the CFL bound (1.828167e-6 ms here), so `min(deck_dt, cfl_dt)`
+  # takes this and the bake runs 342 substeps/frame instead of 110 — bit-identical to
+  # `heat_conv_dx125`'s CFL-bound substep. Mid-window of the `ceil` band described
+  # above; verify with `--dry-run` before baking, never after.
+  dt: 5.856e-10
+  total_time: 3.4e-5
+  frame_count: 170    # frame_dt = 2.0e-7 s — the repo's uniform cadence, longer window

@@ -816,7 +816,7 @@ and the resolution guard **217 829 → 0** — neither was ever an EOS problem.
    - **TWO POINTS ARE NOT A TREND.** There are exactly two route-difference readings.
      No crossing, no zero-point, no extrapolation ([[convergence-claims-need-real-evidence]]).
      The third point is a **4.5 mm jet at `dx=0.375`** partnered to `dx250`'s 513
-     substeps — 12 cells by both routes.
+     substeps — 12 cells by both routes. ✅ **BUILT AT M19 — see below.**
    - `tests/test_diameter_scale.py`, 14 tests, **seven mutations verified RED first**.
      `_dt_residual` **re-derives** §3.14's split from the caches instead of quoting it
      and keys `DT_ARMS` **by NAME** — `_dt_decomposition` indexes that same list
@@ -825,6 +825,64 @@ and the resolution guard **217 829 → 0** — neither was ever an EOS problem.
      first came back green because a `replace(…, 1)` hit the deck header's **prose**
      quoting the field. **A mutation that does not land reads exactly like a test that
      does not care.**
+
+17. **Milestone 19 — the third route point, and the 24-cell rung (PHYSICS §3.16).**
+   The two experiments M18 and M16 wrote down and left unbuilt. Four decks
+   (`standoff_conv_d4p5mm_dt513_s00/s90`, `heat_conv_dx125`, `heat_conv_dt342`), a
+   `--route-difference` mode, a `--dt-ladder` mode — **no kernel code, no rebake of
+   anything existing.**
+   - **§3.13's "16 cells is NOT enough for the RESIDUAL STATE" named two quantities
+     and they DISAGREE.** Residual velocity **stops growing** (+45.1 → **+43.8 %**,
+     the increment reversing +13.55 → −1.36 pp — *stopped growing* claimed, *turned
+     over* only **named**, one reversal being one point); mass-through **does not**
+     (−36.0 → **−44.2 %**, increments decaying at ratio **0.65 over EQUAL `dx`
+     steps**). **Never quote mass-through at any resolution here.** x=215 is not
+     readable as a ladder at all — the 12- and 16-cell rungs land on top of each
+     other, and the ratio is withheld because **a near-zero denominator is not a
+     small ratio, it is noise amplified**.
+   - **A STATISTICS MISMATCH IN M18's HEADLINE COMPARISON, corrected.** §3.14's
+     residual is **+2.50 % as a MEAN** over a window the per-fraction quantity runs
+     **−3.66 → +8.67 %** across, changing sign inside it. M18 compared its
+     *per-fraction* f=0.30 figure to that *mean*. Same-statistic at f=0.30 the
+     16-cell reading is **+8.67 %**, so M18's conclusion is **reinforced ~3.5×**, not
+     weakened. **Apply a rule to BOTH SIDES of a comparison or it is not a
+     comparison.**
+   - **The scale-factor confound makes a prediction and it FAILS.** `cells ≡
+     diameter/dx`, so reaching 12 cells from 8 is a **1.5× scale row** where M18's and
+     M17's are **2×** — a factor-driven violation would then be *smaller*. Measured
+     **−4.48 % vs −4.10 %** at f=0.30: not smaller. So the factor is not what sets the
+     magnitude, and the third point is not an artifact of being a 1.5× row. **Still no
+     crossing, no zero-point, no order** — three points on a two-factor grid are not a
+     trend, and the 16-cell row's outlier status (resolution, or a `dt` correction
+     that does not transfer?) stays unreachable.
+   - **The 24-cell rung is the family's FIRST EXACT `dt` pair** (342 vs 342, where
+     §3.13's is 228 vs 230), and the 12- and 16-cell rows **reproduce §3.13's table
+     exactly** — that is the mode's regression check. **The denominator is the SHIPPED
+     arm, not the partner**: normalising by the partner gives +34.1 % where §3.13
+     published +31.6 %, and two figures for one cache is a mismatch until someone says
+     why. That defect was in the first draft and was caught by reconciling against
+     §3.13, not by a test; the test exists so it cannot come back.
+   - **Budget use hits 84 %, the highest any deck here has recorded** (63 → 66 → 73 →
+     **84 %** along `dx`; 63 → 59 → 57 → **53 %** refining `dt`). Nothing breached at
+     P=4, but §3.11's rule stops being hypothetical: a 32-cell arm is where the trend
+     goes, and more headroom means a **per-deck `cfl_p_margin`**, never a bigger
+     global P (hard ceiling ~4.05).
+   - **One window is longer ON PURPOSE and the tool now refuses to average over it.**
+     `heat_conv_dt342` records 34 µs because a finer `dt` breaks out LATER and the
+     matched residual needs breakout + 4 µs inside the window — sized before baking,
+     not discovered after. Its `dx` partner was **not** extended: it fails the other
+     way, and 34 µs would fly its fast residual to x≈295 against the x=300 wall,
+     retiring §1.1.2's clean negative. `measure_jet_grid` carries `window_us` and
+     **withholds `depth_end` across unequal windows**. **A window is a recording
+     length as long as `frame_dt` is untouched** — and `frame_dt` is what the test
+     asserts.
+   - **M18's named positional hazard is REMOVED, not deferred again**: every arm table
+     carries a stable `.key`, and dt-matching is **computed** from the arms' own
+     `dt_ms` rather than read off a hand-written flag.
+   - `tests/test_route_difference.py`, 27 tests, **seventeen mutations verified RED
+     first**. The `ceil` band is found by **bisecting the real sizing path** (0.29 %
+     wide, the deck's dt at 47 % of it) — the first draft assumed a 0.5 % nudge would
+     stay inside and went red, so §3.14's "narrow" was an understatement.
 
 Don't rewrite from scratch. The full solver arc (milestones 1–13) is done.
 

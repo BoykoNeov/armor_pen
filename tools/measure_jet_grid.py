@@ -277,6 +277,12 @@ def measure(cache_dir: Path, percentile: float = FRONT_PERCENTILE) -> dict:
         "frac_through_matched": frac_through_matched,
         "t_break": t_break,
         "t_matched": t_matched,
+        # The RECORDING length, not a physical one. Kept so `--dt-ladder` can refuse
+        # to compare the one quantity that depends on it (`depth_end`) across arms
+        # that do not share it: milestone 19's `heat_conv_dt342` runs a longer window
+        # than the arm it partners, deliberately (its header says why), and a table
+        # that quietly differenced their depth_end would report the window as physics.
+        "window_us": float(t_us[-1]),
     }
 
 
@@ -425,17 +431,252 @@ def _plot(arms: list[dict], out: Path) -> None:
     print(f"\n  wrote {out}")
 
 
-FAMILY = ("heat_vs_composite", "heat_conv_dx250", "heat_conv_dx188")
+FAMILY = ("heat_vs_composite", "heat_conv_dx250", "heat_conv_dx188", "heat_conv_dx125")
+
+
+# --- milestone 19: the matched-dt dx ladder ------------------------------------
+#
+# §3.13 built the dt PARTNERS but assembled its decomposition table by invoking this
+# tool pairwise and copying numbers into prose. That is exactly how §3.8's table went
+# two rebakes stale, so the ladder is a mode now — and NAME-KEYED from the first
+# line, because milestone 18 found a published decomposition one `sort()` away from
+# being silently re-keyed by positional indexing.
+#
+# Each rung is (cells LABEL, dx arm, its dt partner, substeps each). `cells` here is
+# a label only: the tool MEASURES cells off the seeded lattice and the table below
+# prints the measured value, so a wrong label shows up rather than propagating.
+#
+# The substep columns are labels too — no cache records `dt`, `grid_resolution` or a
+# substep count (CACHE_FORMAT §2 records `frame_dt` only) and this tool imports
+# nothing from the solver (CLAUDE.md §3). What they encode is pinned against the real
+# sizing path in `solver/tests/`.
+LADDER_BASELINE = "heat_vs_composite"
+LADDER = [
+    (12.0, "heat_conv_dx250", "heat_conv_dt_mid", 171, 171),
+    (16.0, "heat_conv_dx188", "heat_conv_dt_fine", 228, 230),
+    (24.0, "heat_conv_dx125", "heat_conv_dt342", 342, 342),
+]
+
+# The interfaces worth quoting, per §3.13's own sensitivity sweep: at x=160 the front
+# is a few hundred nanoseconds old and the percentile DEFINITION dominates (that cell
+# swung 2.3 pp against a 0.9 pp effect), and x=190 is marginal. Read x=215 and the
+# breakout at x=235. Nominal — each is resolved to the BASELINE arm's own measured
+# face, see `_dt_ladder`.
+LADDER_INTERFACES = (215.0, 235.0)
+
+
+def _pct(new: float, old: float) -> float:
+    return 100.0 * (new - old) / old
+
+
+def _rung_delta(dx_arm: dict, dt_arm: dict, base: dict, faces) -> list[float]:
+    """One rung's dx-only effect, as a percentage OF THE SHIPPED ARM.
+
+    THE DENOMINATOR IS THE SHIPPED ARM, NOT THE PARTNER, and that is not a detail.
+    §3.13 published every row of its decomposition — the dt-only rows, the joint
+    ladder rows and the matched-dt dx rows — against the shipped arm, which is what
+    makes them ADDITIVE: dt-only plus dx-only compares against the joint row because
+    all three divide by the same thing. Normalising a rung by its own partner instead
+    yields a different number for the same measurement (+34.1 % where §3.13 published
+    +31.6 %), and two figures for one cache is a mismatch until someone says why.
+    So: same convention, and the 12- and 16-cell rungs reproduce §3.13 exactly, which
+    is this mode's own regression check.
+    """
+    out = [100.0 * (arrival_us(dx_arm, x) - arrival_us(dt_arm, x)) / arrival_us(base, x)
+           for x in faces]
+    out.append(100.0 * (dx_arm["residual_v_matched"] - dt_arm["residual_v_matched"])
+               / base["residual_v_matched"])
+    out.append(100.0 * (dx_arm["frac_through_matched"] - dt_arm["frac_through_matched"])
+               / base["frac_through_matched"])
+    return out
+
+
+def _dt_ladder(caches: Path) -> int:
+    print("MATCHED-dt LADDER: is the residual state converging in `dx`?")
+    print("  §3.13 closed with a specific unfinished statement — '16 cells is NOT")
+    print("  enough for the residual state' — because residual velocity and")
+    print("  mass-through were still GROWING in absolute terms at 16 cells, with two")
+    print("  rungs to read increments from. This mode adds a third at 24 cells.")
+    print("  Every rung differences a `dx` arm against a dt PARTNER at the SHIPPED")
+    print("  grid running the same substep count, so each row is a MEASURED dx-only")
+    print("  effect rather than the difference of two opposing errors (§3.13's rule).\n")
+
+    arms = {LADDER_BASELINE: measure(caches / LADDER_BASELINE)}
+    for cells, dx_cache, dt_cache, dx_sub, dt_sub in LADDER:
+        for name in (dx_cache, dt_cache):
+            if name not in arms:
+                arms[name] = measure(caches / name)
+
+    print("ARMS (geometry read from frame 0, before anything moves)")
+    for name, r in arms.items():
+        _report_arm(r)
+
+    # Same geometry guard `--family` applies: a shared face set is only shared if the
+    # arms are the same scenario.
+    ref = arms[LADDER_BASELINE]["faces"]
+    for r in arms.values():
+        if len(r["faces"]) != len(ref) or max(abs(a - b) for a, b in zip(ref, r["faces"])) > 0.5:
+            print("\n  !! arms disagree on the stack geometry — they are not the same scenario")
+            return 2
+
+    # THE WINDOW GUARD. Arrival times and the MATCHED residual are read off the
+    # penetration-front curve and off each arm's own breakout, so neither depends on
+    # how long recording continued. `depth_end` and the final-frame residual DO.
+    windows = {round(r["window_us"], 6) for r in arms.values()}
+    print(f"\nRECORDING WINDOWS: " + ", ".join(
+        f"{r['cache']} {r['window_us']:.1f} us" for r in arms.values()))
+    if len(windows) > 1:
+        print("  !! THE ARMS DO NOT SHARE A WINDOW, so `depth_end` and the final-frame")
+        print("     residual are NOT comparable across them and are WITHHELD below.")
+        print("     Everything reported is read off the front CURVE (arrival at an x)")
+        print("     or at a matched elapsed time after each arm's OWN breakout, and")
+        print("     neither depends on the recording length. `heat_conv_dt342` runs a")
+        print("     longer window on purpose — its deck header says why, and the")
+        print("     alternative (extending its dx partner to match) would have pushed")
+        print("     that arm's faster residual into the far wall, PHYSICS §1.1.2.")
+    else:
+        print("  (all equal — `depth_end` would be comparable, though §3.13 says not to")
+        print("   quote it: past the back face it is free flight, not depth.)")
+
+    # Every arm is timed to the BASELINE arm's own measured faces, never to its own.
+    # Each arm reads an interface half a lattice pitch inside the true face and that
+    # pitch shrinks with the grid, so per-arm faces would put a ~0.05 mm systematic
+    # INTO the difference being measured. `_table` makes the same choice for the same
+    # reason; using the shipped arm's set here also reproduces §3.13's rows exactly.
+    faces = []
+    for x in LADDER_INTERFACES:
+        near = [f for f in ref if abs(x - f) < 0.5]
+        if not near:
+            print(f"\n  !! x={x} is not an interface of this stack; the arms are not the deck")
+            return 2
+        faces.append(near[0])
+
+    hdr = "".join(f"  x={x:<7.1f}" for x in faces)
+    print(f"\nTHE dx-ONLY EFFECT AT EACH RUNG (dx arm minus its dt partner, both at the")
+    print(f"same substep count — so this is `dx` alone, not `dx` and the clock — as a")
+    print(f"percentage of the SHIPPED arm, which is §3.13's convention and keeps the")
+    print("decomposition additive)")
+    print(f"  {'cells':>6} {'substeps':>18}  {hdr}   {'v_resid':>10} {'through':>10}")
+    eff = {}
+    base = arms[LADDER_BASELINE]
+    for cells, dx_cache, dt_cache, dx_sub, dt_sub in LADDER:
+        row = _rung_delta(arms[dx_cache], arms[dt_cache], base, faces)
+        eff[cells] = row
+        mism = "" if dx_sub == dt_sub else f"  ({_pct(dt_sub, dx_sub):+.1f} % mismatch)"
+        print(f"  {arms[dx_cache]['cells_across']:6.1f} {f'{dx_sub} vs {dt_sub}':>18}  "
+              + "".join(f"  {v:+7.2f} % " for v in row[:len(faces)])
+              + f"   {row[-2]:+9.1f} % {row[-1]:+9.1f} %{mism}")
+    print("  cells are MEASURED off the seeded lattice, not read from the deck label.")
+    print("  The 12- and 16-cell rows REPRODUCE §3.13's published table exactly; that")
+    print("  is this mode's regression check, not a coincidence to be admired.")
+    print("  The 24-cell rung is the family's FIRST EXACT pair (342 vs 342); §3.13's")
+    print("  16-cell rung carries a 0.9 % substep mismatch, the closest that deck grid")
+    print("  allowed. An exact rung is worth more than its position suggests.")
+
+    # THE POINT OF THE THIRD RUNG. With two rungs an increment can be computed but not
+    # read: there is one of them, and one number cannot say whether a sequence is
+    # settling. Three rungs give two increments and a ratio between them.
+    names = [f"x={x:.0f}" for x in faces] + ["v_resid", "through"]
+    order = [c for c, *_ in LADDER]
+    dxs = [arms[dx_cache]["dx"] for _, dx_cache, *_ in LADDER]
+    steps = [dxs[k - 1] - dxs[k] for k in range(1, len(dxs))]
+    print("\nIS IT SETTLING? — the increment between rungs, and the ratio BETWEEN")
+    print("INCREMENTS. The two rungs are EQUALLY SPACED IN dx "
+          f"({steps[0]:.4f} and {steps[1]:.4f} mm),")
+    print("which is what makes their ratio readable at all: over equal steps a")
+    print("first-order error gives 1.00, and anything well under 1 is decaying faster.")
+    print(f"  {'quantity':>10}  " + "  ".join(f"{int(c):>7}c" for c in order)
+          + "   " + "  ".join(f"{'d' + str(int(b)) + 'c':>8}" for b in order[1:])
+          + "   d24/d16")
+    suppressed = False
+    for i, q in enumerate(names):
+        vals = [eff[c][i] for c in order]
+        incs = [vals[k] - vals[k - 1] for k in range(1, len(vals))]
+        # A RATIO WITH A NEAR-ZERO DENOMINATOR IS NOT A SMALL RATIO, IT IS NOISE
+        # AMPLIFIED. Two consecutive rungs that happen to land on top of each other
+        # make the next ratio arbitrarily large, and printing it beside the real ones
+        # invites reading a divergence off an accident. Withheld, loudly, rather than
+        # printed with a caveat nobody reads — the same posture §3.13 took at x=160.
+        if abs(incs[0]) < 0.10 * abs(vals[0]):
+            cell, suppressed = "   (—)", True
+        else:
+            cell = f"{abs(incs[1] / incs[0]):6.2f}"
+            if incs[1] * incs[0] < 0:
+                cell += "  SIGN FLIP"
+        print(f"  {q:>10}  " + "  ".join(f"{v:+7.2f} " for v in vals)
+              + "   " + "  ".join(f"{v:+8.2f}" for v in incs) + "   " + cell)
+    if suppressed:
+        print("  (—) the first increment is under 10 % of the 12-cell value, so the")
+        print("      ratio is a near-zero denominator rather than a reading. Withheld.")
+
+    print("\n  A NOTE ON WHAT §3.13's '0.20 / 0.43 / 0.55' WERE, because they are NOT")
+    print("  the column above. With two rungs there is one increment, so the only ratio")
+    print("  available is increment-over-VALUE; with three there is a genuine")
+    print("  increment-over-INCREMENT. They are different quantities and must not be")
+    print("  read as a sequence. For the record this run reproduces §3.13's:")
+    for i, q in enumerate(names):
+        vals = [eff[c][i] for c in order]
+        if vals[0]:
+            print(f"      {q:>8}  increment/value at 16 cells "
+                  f"{abs((vals[1] - vals[0]) / vals[0]):.2f}")
+    print("  Neither column is a convergence ORDER. §3.8 measured the observed order in")
+    print("  this family as ill-conditioned (it swings ~0.7 to ~5 with the matching")
+    print("  point). Read the ratios; quote no exponent.")
+
+    # The verdict is COMPUTED, not typed. §3.8's table went two rebakes stale because
+    # a measurement was restated in prose; a milestone whose whole point is a third
+    # data point must not hardcode what that point said.
+    print("\n  THE VERDICT ON §3.13's CLOSING CLAIM — '16 cells is NOT enough for the")
+    print("  RESIDUAL STATE'. It named two quantities together. They do not agree.")
+    for i, q in enumerate(names):
+        if q not in ("v_resid", "through"):
+            continue
+        vals = [eff[c][i] for c in order]
+        incs = [vals[k] - vals[k - 1] for k in range(1, len(vals))]
+        r = abs(incs[1] / incs[0]) if incs[0] else float("nan")
+        if incs[1] * incs[0] < 0:
+            verdict = (f"STOPPED GROWING — the increment REVERSES ({incs[0]:+.2f} then "
+                       f"{incs[1]:+.2f} pp).\n        §3.13 said this was still growing "
+                       "at 16 cells; at 24 it is not. One\n        reversal is one point, "
+                       "so *stopped growing* is claimed and *turned over*\n        is named "
+                       "— the posture §3.14 took on its own saturating dt term.")
+        elif r >= 0.5:
+            verdict = (f"STILL NOT SETTLING — increments {incs[0]:+.2f} then {incs[1]:+.2f} pp, "
+                       f"ratio {r:.2f} over\n        EQUAL dx steps. §3.13's verdict holds at "
+                       "24 cells and the decay is\n        slower than its two points could "
+                       "show. Do not quote this quantity.")
+        else:
+            verdict = (f"SETTLING — increments {incs[0]:+.2f} then {incs[1]:+.2f} pp, ratio "
+                       f"{r:.2f}.")
+        print(f"    {q:>8}: {verdict}")
+    print("    So 'the residual state' was one phrase over two quantities that behave")
+    print("    differently, and two rungs could not tell them apart. That is the third")
+    print("    rung's deliverable — NOT a convergence claim for either of them.")
+
+    print("\n  WHAT THIS STILL CANNOT REACH — unchanged from §3.13, and not narrowed:")
+    print("    * the `dx` effect at the SHIPPED arm's 110 substeps. `dt = min(deck_dt,")
+    print("      cfl_dt)` only ever LOWERS dt, so fine `dx` at coarse `dt` is")
+    print("      unreachable by construction. Every row above is the dx effect at its")
+    print("      OWN rung's substep count, never at 110.")
+    print("    * the `dx` x `dt` interaction. Each row is clean at its own dt; the")
+    print("      TREND between rows mixes the grid ladder with any interaction term.")
+    print("      A third rung gives a second increment, not a second variable.")
+    return 0
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("cache_dirs", type=Path, nargs="*")
     ap.add_argument("--family", action="store_true", help="the heat_conv_* ladder")
+    ap.add_argument("--dt-ladder", action="store_true",
+                    help="milestone 19: the matched-dt dx ladder, 12 / 16 / 24 cells")
     ap.add_argument("--caches", type=Path, default=Path("caches"))
     ap.add_argument("--sensitivity", action="store_true", help="re-read at three percentiles")
     ap.add_argument("--plot", type=Path, help="write the front-vs-time curves to a PNG")
     args = ap.parse_args(argv)
+
+    if args.dt_ladder:
+        return _dt_ladder(args.caches)
 
     if args.family:
         dirs = [args.caches / d for d in FAMILY]

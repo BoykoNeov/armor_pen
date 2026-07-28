@@ -1,0 +1,93 @@
+# The 12-CELL ARM OF THE DIAMETER ROUTE — milestone 19, the third point milestone
+# 18 refused to interpolate between. Scenarios are DATA, not code (CLAUDE.md §9).
+# Representative / illustrative order-of-magnitude values, not any real system
+# (CLAUDE.md §10). Read `standoff_conv_dx250_s00.yaml`'s header for the family's
+# rationale and PHYSICS §3.15 for what this arm is answering.
+#
+# WHY THIS EXISTS. PHYSICS §3.8 reaches a given `cells across the jet` by two
+# routes from the shipped arm — refine `dx`, or fatten the jet at the shipped `dx` —
+# and calls that ratio "the controlling parameter". Milestone 18 pointed out that
+# `cells` IS NOT A VARIABLE: it is identically `diameter/dx`, so the claim is a
+# SCALE-INVARIANCE hypothesis, and a route difference is the amount by which it
+# fails. Two such differences have been measured:
+#
+#     at  8 cells   -4.10 % at f=0.30 (-12.28 % at f=0.15)   §3.15, dt-free
+#     at 16 cells   +2.50 %                                  §3.14, dt-CORRECTED
+#
+# Milestone 18's own closing words are that TWO POINTS ARE NOT A TREND — no
+# crossing, no zero-point, no extrapolation ([[convergence-claims-need-real-evidence]]).
+# This deck and its `_s90` twin are the third point, at 12 cells.
+#
+# THE PAIRING, AND WHY IT NEEDS NO dt CORRECTION. The 12-cell dx-route arm is
+# `standoff_conv_dx250_*`: a 3 mm jet at dx=0.2500 on grid 2160, CFL-bound to 513
+# substeps/frame. The diameter route to the same cell count is a 4.5 mm jet at the
+# shipped dx=0.3750 — 4.5/0.375 = 12 — which at grid 1440 would be CFL-bound to only
+# 342. So the deck `dt` below pins it to 513: dt = 1.169591e-6 ms, BIT-IDENTICAL to
+# what `standoff_conv_dx250_s00` runs. The two arms then differ in `dx` and
+# `diameter` and in NOTHING ELSE, and their difference is MEASURED.
+#
+#   grid 2160 (dx=0.2500), 3.0 mm jet, 513 substeps -> `standoff_conv_dx250_s00`
+#   grid 1440 (dx=0.3750), 4.5 mm jet, 513 substeps -> THIS DECK
+#
+# That matters more than it sounds. §3.14's 16-cell route difference is not a
+# measurement: it transfers a `dt` term measured at 8 cells onto the 16-cell arm,
+# i.e. it ASSUMES no `dx` x `dt` interaction — the one term that family cannot
+# reach. This row and §3.15's 8-cell row are dt-free by construction, so this is the
+# SECOND dt-free route-difference reading in the repo and the only one at 12 cells.
+#
+# PARTICLE RESOLUTION IS MATCHED TOO, so it is not a third variable.
+# `particles_per_cell: 4` lays two particles per cell per axis, so both arms seed
+# **24 rows across the jet**: 3.0 mm at pitch 0.1250, and 4.5 mm at pitch 0.1875 —
+# exactly 1.5x, the same factor as the grid. This mirrors §3.15's 16-particles-across
+# match, and like that one it is verified from the seeded lattice on the real caches
+# rather than from `diameter/(dx/2)`, because `_fill_rect` rounds each object's
+# lattice to fit and §3.13 caught that arithmetic disagreeing with the seed once.
+#
+# WHAT THIS ARM DOES NOT SETTLE, stated here so it is not claimed later. The scale
+# separation between the two routes is set by the cell count itself: reaching 12
+# cells from the shipped 8 moves each factor by 1.5x, where §3.15's 8-cell row and
+# §3.14's 16-cell row are both 2x rows. As a FALSIFICATION of scale invariance the
+# factor is irrelevant — an exact invariance reads 0.00 % at any factor. As a third
+# point on a TREND in cell count it is confounded, because a 1.5x perturbation is
+# generically smaller than a 2x one and this design cannot separate "the violation
+# shrinks with cells" from "it shrinks with the factor". A 6 mm jet at dx=0.5 would
+# be the 2x row at 12 cells; it is named, not baked.
+#
+# ISOLATE WITH THE DECK dt, NEVER WITH `cfl_p_margin` — the margin works through the
+# EOS design state and PHYSICS §3.11 forbids pushing the design `J` down (it
+# re-creates milestone 14's own defect). The `ceil` window is narrow: any deck dt in
+# [1.169591e-9, 1.171875e-9) s lands on 513, so verify the substep count with
+# `--dry-run` BEFORE baking, never after.
+#
+# DIAGNOSTIC deck, not for playback: `frame_count` is 75 to match the rest of the
+# `standoff_conv_*` family (cache size only — the measurement interpolates on
+# consumed fraction, not on frame index). Everything physical is identical to
+# `standoff_s00` except the jet diameter and the substep.
+name: standoff_conv_d4p5mm_dt513_s00
+
+domain: { xmin: 0, xmax: 540, ymin: 0, ymax: 120 }   # mm — identical to the shipped family
+
+projectile:
+  kind: heat_jet
+  material: copper_jet
+  length: 120.0
+  diameter: 4.5            # THE VARIABLE: 4.5 mm at dx=0.375 -> 12 cells across
+  velocity: 7000
+  tail_velocity: 2000
+  angle_deg: 0.0
+  nose_shape: blunt
+
+armor:
+  - { material: rha, thickness: 150.0, standoff: 0.0 }
+
+solver:
+  grid_resolution: 1440   # the SHIPPED dx = 0.375 mm — unchanged; the jet is what changes
+  particles_per_cell: 4
+  # THE SECOND PIN. Below the CFL bound (1.755040e-6 ms here), so `min(deck_dt,
+  # cfl_dt)` takes this: 6.0e-4 / 1.17e-6 = 512.8 -> ceil 513 substeps ->
+  # dt = 1.169591e-6 ms, bit-identical to `standoff_conv_dx250_s00`. Unpinned this
+  # arm would have run 342 and the route comparison would need a dt correction —
+  # which is exactly what §3.14's 16-cell reading has to do and this one does not.
+  dt: 1.17e-9
+  total_time: 4.5e-5
+  frame_count: 75     # diagnostic: cache size only, NOT the 2.0e-7 playback convention

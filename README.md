@@ -42,7 +42,7 @@ caches/       gitignored bake outputs (large)
 
 ## Status
 
-All sixteen solver milestones are done, and the Godot viewer plays real bakes back in
+All nineteen solver milestones are done, and the Godot viewer plays real bakes back in
 motion. Every deck bakes on the RTX 5090 (NVIDIA Warp, sm_120) and passes
 `validate_cache`.
 
@@ -278,7 +278,8 @@ reach is the grid effect at the *shipped* arm's timestep — `dt = min(deck_dt,
 cfl_dt)` makes *fine `dx` at coarse `dt`* unreachable by construction.
 The deliverable is that **§3.4's refusal to quote this deck's jet depth now stands
 on a measurement of this deck** rather than an inference from §3.8's half-space:
-nothing is converged at 16 cells, the residual state is still moving (+31.6 → +45.1 %),
+nothing is converged at 16 cells, the residual state is still moving (+31.6 → +45.1 %
+— but see §3.16: at 24 cells that one turns over while mass-through does not),
 and the shipped cache must not be quoted for breakout time or residual velocity.
 Its *kinematic* claims are untouched. **Zero kernel code** — five decks, one tool,
 ten tests, six mutations verified red.
@@ -346,14 +347,36 @@ on S=90) — the effect lives where the jet has flown 90 mm and thinned, which i
 mechanism, not a caveat. **Zero kernel code** — two decks, one tool mode, 14 tests,
 **seven mutations verified red**.
 
-**Next:** **(1)** Still open from §3.13: 16 cells is not enough for
-`heat_vs_composite`'s **residual state** — velocity and mass-through are still
-growing there, so a 24-cell arm (with its own `dt` partner, per §3.14) would say
-whether they turn over. **(2)** A **third point** on route-difference-vs-resolution:
-§3.15 has exactly two, at 8 and 16 cells, which is why it refuses to call the sign
-change a crossing. A **4.5 mm jet at `dx=0.375`** paired with `dx250`'s 513 substeps
-reaches 12 cells by both routes and would be that point. See the per-directory
-`CLAUDE.md` files for the build order.
+**Both of those Next items were built** (§3.16). The **24-cell rung** — the family's
+first *exact* `dt` pair, 342 substeps on both arms — answers §3.13's closing claim by
+splitting it: **residual velocity stops growing** (+45.1 → **+43.8 %**, the increment
+reversing), **mass-through does not** (−36.0 → **−44.2 %**, increments decaying at
+ratio **0.65 over equal `dx` steps**). One phrase had covered two quantities that
+behave differently, and two rungs could not tell them apart. The **third route point**
+— a 4.5 mm jet at the shipped `dx`, pinned to `dx250`'s substep so the pair is
+`dt`-free — reads **−4.48 %** at f=0.30 against §3.15's −4.10 % at 8 cells. That
+kills this section's own confound: reaching 12 cells from 8 is a **1.5× scale row**
+where the others are 2×, and a factor-driven violation would have been *smaller*; it
+is not, so the scale factor is not what sets the magnitude. Three points on a
+two-factor grid are still **not a trend** — no crossing, no zero-point, no order.
+A correction fell out on the way: **§3.14's +2.50 % residual is a *mean* over a
+window the per-fraction quantity runs −3.66 → +8.67 % across**, and §3.15 compared
+its per-fraction figure to that mean. Same-statistic, the 16-cell reading is
+**+8.67 %** — M18's conclusion reinforced ~3.5×, not weakened. *Apply a rule to both
+sides of a comparison or it is not a comparison.* **Zero kernel code** — four decks,
+two tool modes, 27 tests, **seventeen mutations verified red**.
+
+**Next:** **(1)** `heat_vs_composite`'s **mass-through is still not settling at 24
+cells**, and its increments decay more slowly than the two-rung view suggested — a
+32-cell arm with its own `dt` partner is the next rung, but it is also where the CFL
+budget trend (63 → 66 → 73 → **84 %** of `c_max`) would go looking for
+`EOS_CFL_P_MARGIN`'s ceiling, so it needs a **per-deck `cfl_p_margin`** rather than a
+bigger global P (§3.11). **(2)** The 16-cell route difference is the outlier of the
+three and it is the only `dt`-corrected one; separating "resolution" from "a `dt`
+correction that does not transfer" needs the `dx`×`dt` interaction term, which
+`dt = min(deck_dt, cfl_dt)` still puts out of reach. A **6 mm jet at `dx=0.5`** would
+at least add the 2× scale row at 12 cells. See the per-directory `CLAUDE.md` files
+for the build order.
 
 ## Quick start
 

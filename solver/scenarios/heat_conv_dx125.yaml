@@ -1,0 +1,75 @@
+# Jet GRID-RESOLUTION study on the SHIPPED composite deck — the 24-cell arm,
+# milestone 19. Read `heat_conv_dx250.yaml`'s header first: it carries the family's
+# rationale, the ladder, and why the metric is an arrival-time CURVE rather than
+# depth at the end of a window this stack perforates.
+#
+# WHY A FOURTH GRID, WHEN THREE WERE ALREADY "not two points". Milestone 16 closed
+# with a specific unfinished statement, not a vague one (PHYSICS §3.13):
+#
+#     "16 cells is NOT enough for the residual state"
+#
+# — residual velocity (+31.6 % -> +45.1 %) and mass-through (-23.3 % -> -36.0 %),
+# measured at MATCHED dt, are still GROWING IN ABSOLUTE TERMS at 16 cells, with
+# increments shrinking only slowly (0.43, 0.55). Two matched-dt rows can say that a
+# quantity has not settled; they cannot say whether it is heading somewhere. This
+# deck is the third row.
+#
+#   3 mm jet, grid_resolution  768 -> dx = 0.3906 ->  7.5 cells  (`heat_vs_composite`)
+#   3 mm jet, grid_resolution 1200 -> dx = 0.2500 -> 12.0 cells  (`heat_conv_dx250`)
+#   3 mm jet, grid_resolution 1600 -> dx = 0.1875 -> 16.0 cells  (`heat_conv_dx188`)
+#   3 mm jet, grid_resolution 2400 -> dx = 0.1250 -> 24.0 cells  (this deck)
+#
+# The cells figure is the SEEDED one, not `diameter/dx`: at dx=0.125 the lattice
+# pitch is 0.0625 and `_fill_rect` lays exactly 48 rows across a 3 mm jet = 24
+# cells. §3.13 caught that arithmetic disagreeing with the seed once (15 rows =
+# 7.5 cells where the domain implies 7.68), so the tool reads the lattice.
+#
+# 24 CELLS IS NOT A CONVERGENCE CLAIM EITHER, and must not be written as one. The
+# deliverable is a third point on a ladder whose increments can then be read; if
+# the residual state is still growing here, that is the finding, and §3.4's refusal
+# to quote this deck's depth stands on firmer ground rather than being retired.
+#
+# ITS dt PARTNER IS `heat_conv_dt342`, AND THE PAIRING IS EXACT. `dt` is CFL-bound,
+# so this deck's finer grid drags the clock from 110 to 342 substeps/frame — and
+# §3.13's transferable rule is that refining `dx` and refining `dt` move every
+# metric in OPPOSITE directions, so a lone dx arm measures their difference rather
+# than the grid effect. `heat_conv_dt342` holds `grid_resolution` at the shipped 768
+# and sets a deck `dt` that lands on 342 substeps too — dt = 5.847953e-7 ms on BOTH,
+# bit-identically, verified through `mpm.plan_substeps` before any GPU. That pair
+# differs in `dx` and in nothing else, so its difference is MEASURED.
+#
+# This is the first EXACT pair in this family: §3.13's 16-cell row carries a 0.9 %
+# substep mismatch (dx188's 228 vs dt_fine's 230), which was the closest the deck
+# grid allowed there. Here the two land on the same integer.
+#
+# NOTE THE PARTNER RUNS A LONGER WINDOW (170 frames vs the 150 here) and this deck
+# does NOT follow it. That is not a second variable — see `heat_conv_dt342`'s header
+# for why, and why extending BOTH would have been the worse choice.
+#
+# EVERYTHING ELSE IS IDENTICAL to `heat_vs_composite`: one variable, the shipped
+# frame_dt = 2.0e-7 s kept so the arms align frame-for-frame.
+name: heat_conv_dx125
+
+domain: { xmin: 0, xmax: 300, ymin: 0, ymax: 120 }   # mm — identical to the shipped deck
+
+projectile:
+  kind: heat_jet
+  material: copper_jet
+  length: 120.0
+  diameter: 3.0
+  velocity: 7000
+  tail_velocity: 2000
+  angle_deg: 0.0
+  nose_shape: blunt
+
+armor:
+  - { material: rha,     thickness: 10.0 }                 # front plate   x=150..160
+  - { material: ceramic, thickness: 25.0, standoff: 30.0 } # spaced ceramic x=190..215
+  - { material: rha,     thickness: 20.0 }                 # backing plate x=215..235
+
+solver:
+  grid_resolution: 2400   # THE VARIABLE: dx = 300/2400 = 0.1250 mm -> 24 cells across the jet
+  particles_per_cell: 4
+  dt: 5.0e-8          # far above the CFL bound, as on every arm here; CFL wins the min
+  total_time: 3.0e-5
+  frame_count: 150    # frame_dt = 2.0e-7 s — the shipped cadence, kept so the arms align

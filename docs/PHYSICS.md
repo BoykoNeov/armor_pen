@@ -2456,6 +2456,15 @@ against a 0.9 pp difference) as marginal.
   **growing in absolute terms at 16 cells**, with increments shrinking only slowly
   (0.43, 0.55). **16 cells is not enough for the residual state**, and §3.8's own
   warning applies unchanged: "converges toward" is not "converged".
+  > **✅ A THIRD RUNG AT 24 CELLS — milestone 19 (§3.16), and this bullet names two
+  > quantities that turn out to disagree.** **Residual velocity STOPS GROWING**
+  > (+45.1 → **+43.8 %**, the increment reversing +13.55 → −1.36 pp);
+  > **mass-through does not** (−36.0 → **−44.2 %**, increments decaying at ratio
+  > **0.65 over equal `dx` steps**), so for that one the verdict here holds and the
+  > decay is *slower* than two points could show. Also: **the 0.20 / 0.43 / 0.55
+  > above are increment-over-VALUE, not increment-over-increment** — with two rungs
+  > that is the only ratio available, and it must not be read as a sequence with the
+  > genuine ratios §3.16 reports.
 - **How wrong the shipped arm is, quantified:** on the raw ladder it breaks out
   ~4.4 % late with a ~33 % slow residual; measured at matched `dt` the grid's own
   contribution is ~9 % and ~45 %. Either way, **the shipped 8-cell cache must not
@@ -2670,6 +2679,15 @@ grid, a fixed damage threshold, and a fixed window.
 > numerically-dominated coarse pair cannot overturn a finer measurement. The last
 > sentence above is the part that survives, and M18 turned it into a measurement:
 > a 6 mm jet is not a scaled 3 mm jet, by **4–12 %**.
+>
+> **⚠️ THE +2.50 % IS A MEAN, AND M19 (§3.16) MEASURED WHAT IT IS A MEAN OF: the
+> per-fraction residual runs −3.66 % → +8.67 % across the matching window and
+> changes sign inside it.** Nothing above is retracted — this section's whole
+> decomposition is on means, consistently — but **M18 compared its per-fraction
+> f=0.30 figure against this mean**, which is two statistics. Same-statistic at
+> f=0.30 the 16-cell reading is **+8.67 %**, so M18's conclusion is *reinforced*,
+> not weakened. Quote the mean against means and the per-fraction figure against
+> per-fraction figures; §3.16 carries the matched table.
 
 #### One code change, and why it is not "zero code"
 
@@ -2829,6 +2847,14 @@ finer resolution. The honest statement is that the finite-diameter candidate is
   vanish, do not extrapolate. This repo has been bitten three times by exactly that
   ([[convergence-claims-need-real-evidence]]), and a sign flip between two points is
   the most inviting version of it.
+  > **✅ A THIRD READING AT 12 CELLS — milestone 19 (§3.16): −4.48 % at f=0.30,
+  > dt-free.** Three points on a **two-factor** grid are still not a trend, and the
+  > refusals above stand verbatim. What the third point *does* settle is this
+  > section's own confound: the 12-cell row is a **1.5× scale row** where these two
+  > are 2×, and a factor-driven violation would then be *smaller* — measured
+  > 4.48 % against 4.10 %, it is not. **The scale factor is not what sets the
+  > magnitude.** The 16-cell row remains the outlier, and whether that is resolution
+  > or a `dt` correction that does not transfer is still unreachable.
 - **Diameter-at-fixed-cells is inseparable in principle.** `cells ≡ diameter/dx`, so
   holding the ratio and moving one factor moves the other: the scale row is
   *(diameter + dx-at-fixed-cells)* and no deck can make it anything else. The two
@@ -2853,11 +2879,228 @@ rather than quoting it (§3.8 went two rebakes stale for exactly that reason) an
 reordering is a live hazard that would re-key the published decomposition and stay
 green. **Seven mutations verified RED first**; harness at
 `M:\claud_projects\temp\m18\red_check.py`, cited rather than shipped, as in §3.13.
+> **✅ HAZARD REMOVED at M19 (§3.16), not deferred a second time.** Every arm table
+> carries a stable `.key` and every lookup goes through it, so the lists may now be
+> sorted or extended freely; a test shuffles all three and asserts this section's
+> split is unchanged.
 
 One harness lesson worth carrying, the same shape as the defects being hunted: the
 `particles_per_cell` mutation first came back **green** because a `replace(…, 1)` hit
 the deck header's prose quoting `particles_per_cell: 4` rather than the YAML line.
 **A mutation that does not land reads exactly like a test that does not care.**
+
+---
+
+### 3.16 The third route point, and the 24-cell rung (milestone 19)
+
+Two open items, both left as *named experiments* rather than conclusions. §3.15
+closed with "two points are not a trend" and specified the third — a 4.5 mm jet at
+`dx=0.375` pinned to `standoff_conv_dx250`'s substep, 12 cells by both routes. §3.13
+closed with "16 cells is NOT enough for the residual state" and had only two
+matched-`dt` rungs to say it with. This milestone built both. **Zero kernel code**:
+four decks (`standoff_conv_d4p5mm_dt513_s00/s90`, `heat_conv_dx125`,
+`heat_conv_dt342`), a `--route-difference` mode, a `--dt-ladder` mode, and the
+de-positionalisation §3.15 flagged as a live hazard.
+
+All four sized through `plan_substeps` before any GPU (§3.14's gate) and all four
+audit clean at P=4.
+
+#### The 12-cell route pair, and why it needs no correction
+
+`standoff_conv_d4p5mm_dt513_*` is a 4.5 mm jet at the **shipped** `dx=0.3750`, so
+12 cells by the diameter route, with the deck `dt` pinned to
+`dt = 1.169591e-6 ms` — **bit-identical to `standoff_conv_dx250_*`**, which reaches
+12 cells by refining `dx` to 0.2500. The pin is load-bearing: unpinned this arm is
+CFL-bound at 342 substeps, and the row would have needed exactly the transferred
+correction §3.14's 16-cell row still needs. `particles_per_cell=4` puts **24 rows
+across the jet on both arms** (pitch 0.1875 vs 0.1250, exactly 1.5×), so particle
+resolution is matched and is not a third variable — the same match §3.15 made at 16
+rows. Both arms bake at 520 960 particles, **38 % / 30 %** of the `c_max=64101 mm/ms`
+budget, J-floor and resolution guard zero.
+
+#### The headline is a correction to how the older figures compare
+
+| f=0.30, fat-jet route against fine-`dx` route | route difference |
+|---|---|
+| 8 cells — 3 mm/0.3750 vs 6 mm/0.7500 (dt-free) | **−4.10 %** |
+| **12 cells — 3 mm/0.2500 vs 4.5 mm/0.3750 (dt-free)** | **−4.48 %** |
+| 16 cells — 3 mm/0.1875 vs 6 mm/0.3750 (dt-corrected) | **+8.67 %** |
+
+That last cell is the correction. **§3.14's residual is +2.50 % as a MEAN, and the
+quantity it means over runs −3.66 % → +8.67 % across the matching window, changing
+sign inside it.** §3.15 compared its own *per-fraction* f=0.30 figure (−4.10 %) to
+that *mean* (+2.50 %) — two different statistics. On the same statistic the
+16-cell reading is **+8.67 %**, so §3.15's sign-change finding is not weakened by
+the correction; it is roughly **3.5× larger** than the comparison it was built on.
+Neither figure is wrong. They answer different questions, and §3.15's own rule —
+quote per fraction at a stated fraction — was applied to its row and not to the row
+it compared against. **Apply a rule to both sides of a comparison or it is not a
+comparison.**
+
+#### The scale-factor confound makes a prediction, and it fails
+
+`cells ≡ diameter/dx`, so reaching *N* cells from the shipped 8 moves each factor by
+`N/8`: the 12-cell row is a **1.5× scale row** where the 8- and 16-cell rows are
+**2×**. That is not a design choice — no deck can make it otherwise — and it is a
+real limit on reading the three as a trend, since a smaller perturbation is
+generically a smaller violation.
+
+It is also testable. A violation whose size is set by the scale separation predicts
+**|12-cell| < |8-cell|**. Measured: **4.48 % vs 4.10 %** — *not* smaller. Across the
+whole window the two dt-free rows differ by 0.36–3.86 pp, the largest of that at
+f=0.15, the end §3.15 says is least trustworthy. So the scale factor is **not what
+sets the magnitude**, and the third point is not an artifact of being a 1.5× row.
+
+What it still cannot say is **which** of two things makes 16 cells the outlier: a
+genuine resolution dependence appearing between 12 and 16 cells, or a `dt`
+correction that does not transfer. The 16-cell row is an outlier **before** any
+correction (+8.94 % raw), so the second would need a `dt` term at 16 cells far larger
+than the one measured at 8 — which is precisely the `dx`×`dt` interaction §3.13 named
+as out of reach and this design does not reach either. **Still no crossing, no
+zero-point, no extrapolation, no order.** Three points on a two-factor grid are not a
+trend.
+
+#### The 24-cell rung splits §3.13's "residual state" in two
+
+`heat_conv_dx125` (grid 2400, `dx=0.1250`, 48 seeded rows = **24 cells**, 1 774 720
+particles) with `heat_conv_dt342` at the shipped grid — the family's **first exact
+`dt` pair**, 342 vs 342, where §3.13's 16-cell rung carries a 0.9 % mismatch (228 vs
+230) that was the closest that deck grid allowed.
+
+Each row is the `dx` arm **minus** its `dt` partner, as a percentage **of the shipped
+arm** — §3.13's convention, which is what keeps the decomposition additive. The 12-
+and 16-cell rows reproduce §3.13's published table exactly; that is the mode's own
+regression check.
+
+| cells | substeps | x=215 | breakout x=235 | v_resid | mass-through |
+|---|---|---|---|---|---|
+| 12 | 171 vs 171 | −4.23 % | −7.45 % | +31.6 % | −23.3 % |
+| 16 | 228 vs 230 | −4.24 % | −8.97 % | +45.1 % | −36.0 % |
+| **24** | **342 vs 342** | **−5.29 %** | **−9.51 %** | **+43.8 %** | **−44.2 %** |
+
+The rungs are **equally spaced in `dx`** (0.2500 / 0.1875 / 0.1250 — two steps of
+0.0625 mm), which is what makes an increment-to-increment ratio readable: over equal
+steps a first-order error gives 1.00.
+
+| | increment 12→16 | increment 16→24 | ratio |
+|---|---|---|---|
+| breakout | −1.52 pp | −0.54 pp | 0.35 |
+| residual velocity | +13.55 pp | **−1.36 pp** | 0.10, **sign flip** |
+| mass-through | −12.69 pp | −8.24 pp | **0.65** |
+
+**§3.13 named two quantities in one phrase and they do not agree.**
+
+- **Residual velocity has stopped growing.** §3.13 measured it "still growing in
+  absolute terms at 16 cells"; the third rung reverses the increment. *Stopped
+  growing* is claimed and *turned over* is **named, not claimed** — one reversal is
+  one point, the posture §3.14 took on its own saturating `dt` term.
+- **Mass-through has not.** Its increments decay at ratio **0.65 over equal `dx`
+  steps**, so §3.13's verdict holds at 24 cells and the decay is *slower* than its
+  two points could show. **Do not quote this quantity at any resolution in this
+  repo.**
+- **x=215 is not readable as a ladder at all**: the 12- and 16-cell rungs land on top
+  of each other (−4.23, −4.24) and the ratio is withheld, because a near-zero
+  denominator is not a small ratio, it is noise amplified. §3.13 said quote x=215;
+  that stands for a *single* comparison and not for an increment sequence.
+
+**So "the residual state" was one phrase over two quantities that behave
+differently, and two rungs could not tell them apart.** That is the rung's
+deliverable — not a convergence claim for either of them, and §3.4's refusal to
+quote this deck's jet depth is untouched.
+
+#### The sharpest demonstration of §3.13's rule this repo has
+
+Put the confounded ladder (`--family`, four arms now) beside the decomposed one, both
+at breakout, both against the shipped arm:
+
+| cells across | 7.5 | 12 | 16 | **24** |
+|---|---|---|---|---|
+| joint `dx`+`dt` ladder | — | −5.03 % | −4.42 % | **−1.74 %** |
+| `dx` alone, at matched `dt` | — | −7.45 % | −8.97 % | **−9.51 %** |
+
+**They run in opposite directions.** A reader of the confounded ladder alone watches
+the effect shrink toward zero and would call it converged — while the grid's own
+contribution is *growing* the whole way, and what shrinks is the difference between
+it and a `dt` error growing faster. §3.13 stated this rule from two rungs and §3.14
+reproduced it on a second family; four rungs make it visible as a picture rather than
+an argument. **A CFL-coupled ladder does not merely understate the grid effect — at
+enough refinement it can report the opposite sign of its trend.**
+
+#### Two by-product ladders extend, and one is approaching a limit
+
+§3.13's CFL-budget observation continues on both axes, at the shipped P=4:
+
+| | 7.5 cells | 12 | 16 | **24** |
+|---|---|---|---|---|
+| along the `dx` ladder | 63 % | 66 % | 73 % | **84 %** |
+| at fixed `dx`, refining `dt` (110 / 171 / 230 / **342**) | 63 % | 59 % | 57 % | **53 %** |
+
+**Opposite signs, confirmed on a third point each.** Spatial refinement spends
+`EOS_CFL_P_MARGIN`'s headroom and temporal refinement buys it. Nothing breached — but
+**84 % is the highest budget use any deck in this repo has recorded**, and on this
+trend a 32-cell arm is where it would go. §3.11's rule is unchanged and becomes
+practical rather than hypothetical: more headroom means a **per-deck
+`cfl_p_margin`**, never a bigger global P, which has a hard ceiling near 4.05
+(§3.11).
+
+#### One window is longer, deliberately, and the tool now refuses to average over it
+
+`heat_conv_dt342` records for **34 µs** where every other arm records 30. A finer
+`dt` breaks out *later* (§3.13: +2.42 % at 171 substeps, +4.55 % at 230), which
+extrapolates to ~26 µs at 342 against a window that must still contain
+breakout + 4 µs for the matched residual. That margin was ~0 or negative, and a
+missed residual would have cost the deck its entire reason to exist. Sized before
+baking rather than discovered after.
+
+**Its `dx` partner was NOT extended to match, and that asymmetry is the right one.**
+The two arms fail in opposite directions: `dx125` breaks out *earlier* and its
+residual is the *fast* one, so 34 µs would fly it to x ≈ 295 mm against the domain's
+x=300 wall — retiring §1.1.2's clean negative that nothing in this repo has ever
+reached `x_hi`, in exchange for symmetry in a number nobody should read. Instead
+`measure_jet_grid.py` now carries `window_us` and **refuses to compare `depth_end`
+across arms that do not share a window**. Every quantity it does report is read off
+the penetration-front curve or at a matched time after each arm's own breakout, and
+neither depends on the recording length. **A window is a recording length as long as
+`frame_dt` is untouched — and `frame_dt` is what the test asserts.**
+
+#### What is pinned
+
+`solver/tests/test_route_difference.py` — 27 tests, split the usual way by what can
+check what. The deck pairings go through `plan_substeps` because no cache can check
+them (CACHE_FORMAT §2 records `frame_dt` only), and every assertion states a
+**relation between decks** rather than re-deriving the sizing arithmetic, which a
+copied bug would satisfy.
+
+Three are worth naming:
+
+- **The `ceil` band is measured, not assumed.** The band that lands on 342 substeps
+  is found by **bisecting the real sizing path** — re-deriving `ceil(frame_dt/dt)` in
+  a test is the mistake `test_cfl_sizing` exists to avoid. It is **0.29 % wide**, and
+  the deck's `5.856e-10` sits at 47 % of it. The first draft of that test assumed a
+  0.5 % nudge would stay inside and went red; the band is narrower than §3.14's
+  warning implied.
+- **The rung delta's denominator is pinned.** Normalising by the partner rather than
+  the shipped arm gives +34.1 % where §3.13 published +31.6 % — the same measurement,
+  two figures. That defect was in the first draft of `--dt-ladder` and was caught by
+  reconciling against §3.13 rather than by the test; the test exists so it cannot
+  come back.
+- **Equal `dx` spacing is asserted**, because the printed increment ratio is only
+  readable over equal steps and a future rung chosen for a round cell count would
+  silently break it.
+
+**Instrument-side, milestone 18's named hazard is removed rather than deferred
+again.** Every arm table (`DT_ARMS`, `DIAM_ARMS`, the new `ROUTE_ARMS`, and
+`--convergence`'s `cfg`) now carries a stable `.key` and every lookup goes through
+it; the test shuffles all three and asserts §3.14's published split is unchanged.
+`--route-difference` also **computes** dt-matching from the arms' own `dt_ms` rather
+than reading a hand-written flag, so a row cannot be mislabelled "matched" and
+present a confounded comparison as a measurement.
+
+**Seventeen mutations verified RED first** ([[instruments-that-cannot-see-the-failure]]);
+the harness is `M:\claud_projects\temp\m19\red_check.py`, cited rather than shipped,
+as in §3.13, §3.14 and §3.15. It checks the tree is restored afterwards, and it
+refuses a mutation whose pattern does not occur exactly once — §3.15's lesson that a
+mutation which does not land reads exactly like a test that does not care.
 
 ---
 
