@@ -656,10 +656,19 @@ def _dt_ladder(caches: Path) -> int:
         print("     residual are NOT comparable across them and are WITHHELD below.")
         print("     Everything reported is read off the front CURVE (arrival at an x)")
         print("     or at a matched elapsed time after each arm's OWN breakout, and")
-        print("     neither depends on the recording length. `heat_conv_dt342` runs a")
-        print("     longer window on purpose — its deck header says why, and the")
-        print("     alternative (extending its dx partner to match) would have pushed")
-        print("     that arm's faster residual into the far wall, PHYSICS §1.1.2.")
+        print("     neither depends on the recording length. The 34 us arms run longer")
+        print("     ON PURPOSE — a finer `dt` breaks out LATER, and their deck headers")
+        print("     carry the sizing. `heat_conv_dt456`'s matched residual falls at")
+        print("     30.600 us, so at the family's 30 us window the exact 456-vs-456")
+        print("     pair would have yielded no residual at all: necessary by 0.8 us.")
+        # THE FAR WALL IS NOT THE REASON, and this block used to say it was. §3.16's
+        # first draft justified `dt342`'s long window by claiming the alternative would
+        # fly a residual into `x_hi`; its own bakes falsified that (dx125 reaches
+        # 258.21 mm at 30 us, ~24 mm clear) and §3.16 retracted it in as many words —
+        # while this print kept reciting the retracted draft to the reader. §3.17
+        # measures the same thing again: closest approach on any M20 arm is 27.00 mm,
+        # against the repo record of 10.65 mm. A tool that prints a superseded
+        # justification is [[section-38-was-two-rebakes-stale]] with a wider audience.
     else:
         print("  (all equal — `depth_end` would be comparable, though §3.13 says not to")
         print("   quote it: past the back face it is free flight, not depth.)")

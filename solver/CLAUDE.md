@@ -864,11 +864,16 @@ and the resolution guard **217 829 → 0** — neither was ever an EOS problem.
      published +31.6 %, and two figures for one cache is a mismatch until someone says
      why. That defect was in the first draft and was caught by reconciling against
      §3.13, not by a test; the test exists so it cannot come back.
-   - **Budget use hits 84 %, the highest any deck here has recorded** (63 → 66 → 73 →
-     **84 %** along `dx`; 63 → 59 → 57 → **53 %** refining `dt`). Nothing breached at
-     P=4, but §3.11's rule stops being hypothetical: a 32-cell arm is where the trend
-     goes, and more headroom means a **per-deck `cfl_p_margin`**, never a bigger
+   - **Budget use hits 84 %, ~~the highest any deck here has recorded~~** (63 → 66 →
+     73 → **84 %** along `dx`; 63 → 59 → 57 → **53 %** refining `dt`). Nothing breached
+     at P=4, but §3.11's rule stops being hypothetical: a 32-cell arm is where the
+     trend goes, and more headroom means a **per-deck `cfl_p_margin`**, never a bigger
      global P (hard ceiling ~4.05).
+     > **⚠️ THE SUPERLATIVE FELL AT M20 AND THE PREDICTION LANDED (§3.17).** The
+     > 32-cell arm reads **160 %** — the repo's first breach — so 84 % is no longer
+     > any kind of record; the `dt` column continues to **52 %**. "A 32-cell arm is
+     > where the trend goes" was right, but it did not approach a ceiling, it went
+     > through one. **A superlative is a measurement and goes stale like one.**
    - **One window is longer ON PURPOSE, and the bake says it was necessary by
      0.166 µs.** `heat_conv_dt342` records 34 µs because a finer `dt` breaks out LATER;
      it breaks out at **25.966 µs**, so its matched residual is read at 29.966 against

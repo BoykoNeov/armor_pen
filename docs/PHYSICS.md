@@ -3050,11 +3050,24 @@ enough refinement it can report the opposite sign of its trend.**
 
 **Opposite signs, confirmed on a third point each.** Spatial refinement spends
 `EOS_CFL_P_MARGIN`'s headroom and temporal refinement buys it. Nothing breached — but
-**84 % is the highest budget use any deck in this repo has recorded**, and on this
+~~84 % is the highest budget use any deck in this repo has recorded~~, and on this
 trend a 32-cell arm is where it would go. §3.11's rule is unchanged and becomes
 practical rather than hypothetical: more headroom means a **per-deck
 `cfl_p_margin`**, never a bigger global P, which has a hard ceiling near 4.05
 (§3.11).
+
+> **⚠️ THE RECORD FELL, AND THE PREDICTION LANDED — §3.17. The 84 % above is a
+> three-rung snapshot; the table is NOT extended in place.** Milestone 20's 32-cell
+> arm reads **160 %** and is the repo's first breach, so the struck-through
+> superlative is false and the `dt` column continues 53 % → **52 %**. The prediction
+> in the sentence after it was right — that arm *is* where the trend went — but "on
+> this trend" understates what happened: it did not approach a ceiling, it went
+> through one, because `copper_jet` compresses to **0.0025 above its own MG pole
+> switch**. §3.11's remedy is still the right one and is now **quantified**: this
+> deck demands P≈10 against its own ceiling of 11.5, so the headroom is **1.15×**.
+> *A superlative is a measurement and goes stale like one* —
+> [[section-38-was-two-rebakes-stale]], recorded for the third time and applied here
+> to prose rather than to a table.
 
 #### One window is longer, deliberately, and the tool now refuses to average over it
 
