@@ -74,18 +74,25 @@
 # THE RESULT (measured 2026-07-28, `python tools/measure_standoff.py
 # --diameter-decomposition`). Mean S90/S0: shipped 1.2643, fat jet 1.5587, THIS ARM
 # 1.1740. So dx alone at 6 mm is +32.77 %, diameter alone at dx=0.375 is +23.29 %,
-# and the SCALE row -- both doubled at fixed 8 cells -- is -7.14 % mean, varying
-# -12.28 % (f=0.15) to -4.10 % (f=0.30). It would read 0.00 % if `cells across the
-# jet` were sufficient, so §3.8's controlling-parameter claim is an APPROXIMATION
-# good to a few percent, not an identity.
+# and the SCALE row -- both doubled at fixed 8 cells -- is -4.10 % at f=0.30, rising
+# to -12.28 % at the least-converged f=0.15. QUOTE THE f=0.30 FIGURE: the earliest
+# matching point is where the decomposed cells swing most (PHYSICS §3.13's x=160
+# lesson), so the biggest number here is also the least trustworthy one. It would read
+# 0.00 % if `cells across the jet` were sufficient, so §3.8's controlling-parameter
+# claim is an APPROXIMATION good to a few percent, not an identity.
 #
-# READ 2's verdict on §3.14: the route difference is +2.50 % at 16 cells and
-# -4.10 %..-12.28 % here, i.e. it CHANGES SIGN AND SIZE with resolution -- the
+# READ 2's verdict on §3.14: the route difference is +2.50 % at 16 cells and negative
+# here, i.e. it CHANGES SIGN AND SIZE with resolution -- the
 # signature of discretization error, not of a physical finite-diameter offset. NOT a
 # refutation of the fine pair: both arms here are coarser than both arms there. And
 # the effect lives almost entirely in the S=90 arm (S=0 depths span 7 % across all
 # three configurations, S=90 spans 37 %), because that jet flies 90 mm and thins
 # before it arrives. Full writeup: PHYSICS §3.15.
+#
+# The 1.2643 shipped mean above is this mode's 225 -> 75 decimated reading; §3.8's
+# table quotes 1.2657 unstrided for the SAME cache. That -0.113 % is the documented
+# decimation cost, not a stale table -- both are current, and the effects here are
+# 20-100x it.
 #
 # DIAGNOSTIC deck, not for playback. Everything physical is identical to
 # `standoff_s00` except the two variables named in the deck name.

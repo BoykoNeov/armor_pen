@@ -782,7 +782,8 @@ and the resolution guard **217 829 → 0** — neither was ever an EOS problem.
      never been tested (every row in that table reaches a cell count by moving one
      factor). The new arm is a **third 8-cell configuration** — 6 mm at `dx=0.75`,
      the same discretization scaled 2× — and the scale row would read **0.00 %** if
-     the hypothesis held. It reads **−4.10 % at f=0.30 and −12.28 % at f=0.15**,
+     the hypothesis held. It reads **−4.10 %** at f=0.30 (−12.28 % at the
+     least-converged f=0.15 — **quote the f=0.30 figure**, §3.13's x=160 lesson),
      because the standoff, the plate and the process zone do **not** scale with the
      jet. **The claim survives as an approximation good to a few percent, not an
      identity** — and the residual is the same order as the 4.1 % it explained.
@@ -807,8 +808,10 @@ and the resolution guard **217 829 → 0** — neither was ever an EOS problem.
      which §3.14's two-route comparison could not say of itself. The pin is
      load-bearing: unpinned, `dx=0.75` is CFL-bound at **twice** the shipped substep.
      Isolate with the deck `dt`, never `cfl_p_margin` (§3.11). **`particles_per_cell`
-     also matches** — 16 particles across both 8-cell jets, so the scale row carries
-     no third variable. Verified via `--dry-run` **before** the GPU; both arms audit
+     also matches** — 16 particles across both 8-cell jets, **verified from the seeded
+     lattice on the real caches** (16 rows each, pitch 0.1875 vs 0.3750) rather than
+     from `diameter/(dx/2)`, since §3.13 caught that arithmetic disagreeing with the
+     seed once — so the scale row carries no third variable. Verified via `--dry-run` **before** the GPU; both arms audit
      clean at P=4 (43 % / 38 %), guards zero, 129 920 particles.
    - **TWO POINTS ARE NOT A TREND.** There are exactly two route-difference readings.
      No crossing, no zero-point, no extrapolation ([[convergence-claims-need-real-evidence]]).

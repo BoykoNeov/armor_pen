@@ -381,6 +381,9 @@ def _diameter_decomposition(caches: Path) -> int:
         print(f"  {label:<36} {a['cells']:5.1f} {sub:4d}  "
               + "".join(f"{r:7.4f} " for r in rs) + f"  {means[label]:6.4f}")
     print("\n  a-priori prediction (nothing fitted)                                        1.5357")
+    print("  (the shipped row reads 1.2657 in --convergence and §3.8's table: that mode")
+    print("   does not decimate 225 -> 75 frames. The -0.113 % is the documented cadence")
+    print("   cost, NOT a stale table — both are current, and the effects below are 20x it.)")
 
     # §3.14's lesson, applied rather than restated: a ratio is ~3x less dt-sensitive
     # than the depths under it, so a quotient-only instrument can report "no effect"

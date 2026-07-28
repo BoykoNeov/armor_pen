@@ -326,7 +326,8 @@ jet at `dx=0.75`**, the fat arm's diameter at the shipped arm's cell count, with
 deck `dt` pinned so all three arms run a bit-identical substep — separates *more
 cells* from *a bigger jet* for the first time. `dx` alone at 6 mm is **+32.77 %**,
 diameter alone at the shipped `dx` is **+23.29 %**, and the **scale** row (both
-doubled, cells held at 8) is **−4.10 % at f=0.30, −12.28 % at f=0.15**. That row is
+doubled, cells held at 8) is **−4.10 %** at f=0.30, rising to −12.28 % at the
+least-converged f=0.15 — quote the former. That row is
 the result: `cells ≡ diameter/dx`, so "cells across the jet is the controlling
 parameter" is a **scale-invariance hypothesis**, it would read 0.00 % if it held, and
 it doesn't — the two 8-cell arms are the same discretization scaled 2× against a

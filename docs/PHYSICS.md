@@ -1595,7 +1595,8 @@ than by the arithmetic that motivated them.
 > by moving one factor. A **third 8-cell arm** (6 mm jet at `dx=0.75`, `dt` pinned to
 > the shipped clock) is the same discretization scaled 2× against a standoff, a plate
 > and a process zone that do **not** scale with the jet. It disagrees with the shipped
-> 8-cell row by **−4.10 % at f=0.30 and −12.28 % at f=0.15**. So the claim is good to
+> 8-cell row by **−4.10 %** at f=0.30, rising to −12.28 % at the least-converged
+> f=0.15 (quote the former). So the claim is good to
 > a few percent and is **not an identity** — and the residual scale dependence is the
 > same order as the 4.1 % it was invoked to explain. Read the fourth row as
 > *consistent with* the prediction, never as reaching it.
@@ -2767,6 +2768,20 @@ on transferring a `dt` term measured at 8 cells onto the 16-cell arm. That asymm
 in trustworthiness is a real by-product of this design and is why the third row is
 worth more than its size suggests.
 
+> **Why the shipped arm reads 1.2643 here and 1.2657 in §3.8's table.** Same two
+> caches; this mode **decimates the shipped arm 225 → 75 frames** to put it on the
+> diagnostic arms' cadence, and that costs **−0.113 %** (§3.14 measured it). It is not
+> a stale table and not a rebake — both figures are current. The effects below are
+> 20–100× that, so nothing turns on which is quoted, but **do not read the two as a
+> disagreement.**
+
+The **16-particles-across** claim above is verified from the seeded lattice on the
+real caches, not from `diameter / (dx/2)`: `standoff_s00` and
+`standoff_conv_d6mm_dx750_s00` both seed **16 distinct jet rows** at pitch 0.1875 and
+0.3750 mm — exactly 2× — where `standoff_conv_d6mm_s00` seeds 32. `_fill_rect` rounds
+each object's lattice to fit and §3.13 already caught that arithmetic disagreeing with
+the seed once, so a claim asserted in three documents was checked against the bytes.
+
 #### The scale row is the test, and §3.8's claim is what it tests
 
 `cells across the jet` is **not an independent variable — it is the ratio
@@ -2779,10 +2794,13 @@ hypothesis held, the scale row would read 0.00 %.
 
 | scale row, per matched fraction | f=0.15 | f=0.20 | f=0.25 | f=0.30 |
 |---|---|---|---|---|
-| coarse fat vs shipped | **−12.28 %** | −6.75 % | −5.49 % | **−4.10 %** |
+| coarse fat vs shipped | −12.28 % | −6.75 % | −5.49 % | **−4.10 %** |
 
-**It varies 3× across the window and is not one number.** Quote it at a stated
-fraction — **−4.10 % at f=0.30**, still 20× the 0.2 % floor. This is §3.13's x=160
+**It varies 3× across the window and is not one number.** **Quote −4.10 %, at
+f=0.30** — the most-consumed, most-converged end — with the range in support. The
+f=0.15 end is both the largest and the least trustworthy, for the reason §3.13 gave
+at x=160: the earliest matching point is where the decomposed cells swing most. Even
+the conservative figure is **20× the 0.2 % floor**. This is §3.13's x=160
 lesson applied rather than restated: a mean over a quantity that is not constant
 reports one figure with no hint that the figure depends on where you stood, so
 `route_difference` is per-fraction by construction. §3.8's claim therefore survives
@@ -2792,8 +2810,8 @@ explain.
 
 #### The reading on §3.14's candidate — weaker than it looks, and better
 
-The same route comparison one scale coarser reads **−4.10 % to −12.28 %** where
-§3.14's dt-corrected residual reads **+2.50 %**. The route difference **changes sign
+The same route comparison one scale coarser reads **−4.10 %** (f=0.30; −12.28 % at
+f=0.15) where §3.14's dt-corrected residual reads **+2.50 %**. It **changes sign
 and changes size with resolution**, and a physical finite-diameter effect would be a
 roughly resolution-**independent** offset. So this behaves like discretization error —
 which *characterizes* the residual rather than merely ruling a candidate out.
